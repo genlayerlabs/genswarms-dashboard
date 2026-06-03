@@ -50,6 +50,11 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Read-only clients for the swarm/router (overridden by Mox in test).
+config :subzero_swarm_dashboard,
+  swarm_client: SubzeroSwarmDashboard.SwarmClient.Http,
+  router_client: SubzeroSwarmDashboard.RouterClient.Http
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

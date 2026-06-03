@@ -59,7 +59,11 @@ defmodule SubzeroSwarmDashboard.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      # Dashboard data layer: HTTP client to the swarm/router + WS client + test mocks
+      {:req, "~> 0.5"},
+      {:slipstream, "~> 1.1"},
+      {:mox, "~> 1.1", only: :test}
     ]
   end
 

@@ -21,7 +21,18 @@ if System.get_env("PHX_SERVER") do
 end
 
 config :subzero_swarm_dashboard, SubzeroSwarmDashboardWeb.Endpoint,
-  http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+  # default 4100 so it doesn't clash with the swarm's in-BEAM API on :4000
+  http: [port: String.to_integer(System.get_env("PORT", "4100"))]
+
+# Dashboard data sources (the swarm read surface + the LLM router usage endpoint).
+config :subzero_swarm_dashboard,
+  swarm_api_url: System.get_env("SWARM_API_URL", "http://127.0.0.1:4000"),
+  swarm_ws_url: System.get_env("SWARM_WS_URL"),
+  swarm_name: System.get_env("SWARM_NAME", "wingston"),
+  swarm_api_token: System.get_env("SWARM_API_TOKEN"),
+  router_usage_url: System.get_env("ROUTER_USAGE_URL"),
+  router_api_key: System.get_env("ROUTER_API_KEY"),
+  poll_interval_ms: String.to_integer(System.get_env("DASHBOARD_POLL_MS", "3000"))
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
