@@ -26,49 +26,56 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
 
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
-
-  attr :current_scope, :map,
-    default: nil,
-    doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
-
+  attr :active, :atom, default: nil, doc: "the active nav key"
+  attr :swarm, :string, default: nil, doc: "the swarm name shown in the sidebar"
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
+    <div class="flex min-h-screen">
+      <aside class="w-56 shrink-0 border-r border-base-300 bg-base-200 p-4 flex flex-col">
+        <div class="mb-6 flex items-center gap-2">
+          <img src={~p"/images/logo.svg"} width="28" />
+          <div class="leading-tight">
+            <div class="text-sm font-semibold">Swarm Dashboard</div>
+            <div class="text-xs opacity-60">{@swarm || "—"}</div>
+          </div>
+        </div>
+        <ul class="menu w-full gap-1">
+          <.nav_item active={@active} key={:overview} href={~p"/"} label="Overview" />
+          <.nav_item active={@active} key={:topology} href={~p"/topology"} label="Topology" />
+          <.nav_item active={@active} key={:sessions} href={~p"/sessions"} label="Sessions" />
+          <.nav_item active={@active} key={:events} href={~p"/events"} label="Events" />
+          <.nav_item active={@active} key={:usage} href={~p"/usage"} label="Usage" />
+          <.nav_item active={@active} key={:logs} href={~p"/logs"} label="Logs" />
         </ul>
-      </div>
-    </header>
+        <div class="mt-auto pt-6"><.theme_toggle /></div>
+      </aside>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+      <main class="flex-1 p-6 overflow-x-auto">
         {render_slot(@inner_block)}
-      </div>
-    </main>
+      </main>
+    </div>
 
     <.flash_group flash={@flash} />
+    """
+  end
+
+  attr :active, :atom, default: nil
+  attr :key, :atom, required: true
+  attr :href, :string, required: true
+  attr :label, :string, required: true
+
+  defp nav_item(assigns) do
+    ~H"""
+    <li>
+      <.link
+        navigate={@href}
+        class={["font-medium", @active == @key && "menu-active bg-primary text-primary-content"]}
+      >
+        {@label}
+      </.link>
+    </li>
     """
   end
 

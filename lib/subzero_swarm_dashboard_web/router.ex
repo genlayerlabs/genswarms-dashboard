@@ -8,6 +8,7 @@ defmodule SubzeroSwarmDashboardWeb.Router do
     plug :put_root_layout, html: {SubzeroSwarmDashboardWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug :dashboard_auth
   end
 
   pipeline :api do
@@ -17,27 +18,35 @@ defmodule SubzeroSwarmDashboardWeb.Router do
   scope "/", SubzeroSwarmDashboardWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live_session :dashboard, on_mount: {SubzeroSwarmDashboardWeb.DashHooks, :default} do
+      live "/", OverviewLive
+      live "/topology", TopologyLive
+      live "/sessions", SessionsLive
+      live "/sessions/:id", SessionDetailLive
+      live "/events", EventsLive
+      live "/usage", UsageLive
+      live "/logs", LogsLive
+    end
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", SubzeroSwarmDashboardWeb do
-  #   pipe_through :api
-  # end
+  # Read-only basic auth (spec §10). Active only when DASHBOARD_USER/PASS are set.
+  defp dashboard_auth(conn, _opts) do
+    user = System.get_env("DASHBOARD_USER")
+    pass = System.get_env("DASHBOARD_PASS")
 
-  # Enable LiveDashboard in development
+    if user && pass && user != "" do
+      Plug.BasicAuth.basic_auth(conn, username: user, password: pass)
+    else
+      conn
+    end
+  end
+
   if Application.compile_env(:subzero_swarm_dashboard, :dev_routes) do
-    # If you want to use the LiveDashboard in production, you should put
-    # it behind authentication and allow only admins to access it.
-    # If your application does not have an admins-only section yet,
-    # you can use Plug.BasicAuth to set up some basic authentication
-    # as long as you are also using SSL (which you should anyway).
     import Phoenix.LiveDashboard.Router
 
     scope "/dev" do
       pipe_through :browser
-
-      live_dashboard "/dashboard", metrics: SubzeroSwarmDashboardWeb.Telemetry
+      live_dashboard "/_dev", metrics: SubzeroSwarmDashboardWeb.Telemetry
     end
   end
 end
