@@ -7,20 +7,32 @@ defmodule SubzeroSwarmDashboard.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      SubzeroSwarmDashboardWeb.Telemetry,
-      {DNSCluster, query: Application.get_env(:subzero_swarm_dashboard, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: SubzeroSwarmDashboard.PubSub},
-      # Start a worker by calling: SubzeroSwarmDashboard.Worker.start_link(arg)
-      # {SubzeroSwarmDashboard.Worker, arg},
-      # Start to serve requests, typically the last entry
-      SubzeroSwarmDashboardWeb.Endpoint
-    ]
+    children =
+      [
+        SubzeroSwarmDashboardWeb.Telemetry,
+        {DNSCluster, query: Application.get_env(:subzero_swarm_dashboard, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: SubzeroSwarmDashboard.PubSub}
+      ] ++
+        feed_children() ++
+        [
+          # Start to serve requests, typically the last entry
+          SubzeroSwarmDashboardWeb.Endpoint
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: SubzeroSwarmDashboard.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  # The polling feed + WS client. Disabled in test (config :start_feed false) so the
+  # Mox swarm client isn't called without expectations.
+  defp feed_children do
+    if Application.get_env(:subzero_swarm_dashboard, :start_feed, true) do
+      [SubzeroSwarmDashboard.SwarmFeed, SubzeroSwarmDashboard.SwarmFeed.Socket]
+    else
+      []
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration
