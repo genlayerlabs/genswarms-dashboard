@@ -20,7 +20,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
           </p>
           <p class="text-sm opacity-60 mt-2">
             A dedicated raw-logs feed needs the swarm's <code>/sessions/:id/logs</code> route
-            (spec §6.2c, v2). Structured lifecycle events live under
+            (spec §7.2c, v2). Structured lifecycle events live under
             <.link navigate={~p"/events"} class="link">Events</.link>.
           </p>
           <.link navigate={~p"/sessions"} class="btn btn-sm btn-primary mt-3 w-fit">Go to Sessions</.link>

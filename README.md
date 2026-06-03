@@ -89,4 +89,15 @@ implementing `dashboard/1` on its session-holding object to emit
 - cytoscape is loaded from a CDN (`root.html.heex`). For production, add Subresource
   Integrity or vendor it locally.
 - Set `DASHBOARD_USER`/`DASHBOARD_PASS` and `SWARM_API_TOKEN`, and bind to
-  localhost/Tailscale.
+  localhost/Tailscale. The swarm should also set an explicit WS `check_origin` in prod
+  (the read token is the primary gate).
+
+## Toolchain gotcha (apt vs mise OTP)
+
+This project (and the `subzero-swarm` framework) builds cleanly on the **mise** OTP 27
+in `.tool-versions` because that source-built Erlang ships the `public_key` ASN.1
+headers and the full `ssh` app. On a minimal **apt** Erlang you may hit two unrelated
+compile breaks: Phoenix's `mix phx.gen.cert` needs `public_key/include/OTP-PUB-KEY.hrl`
+(install `erlang-dev`), and the framework drops `:ssh` from `extra_applications`
+(install `erlang-ssh` to restore the SSH backend). Stick to the pinned mise toolchain
+and neither bites.
