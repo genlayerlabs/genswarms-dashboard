@@ -23,7 +23,12 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       <div class="space-y-6 max-w-5xl">
         <div class="flex items-center justify-between">
           <h1 class="text-xl font-semibold">Overview</h1>
-          <.conn_badge status={@conn_status} snapshot={@snapshot} />
+          <div class="flex items-center gap-2">
+            <span :if={@snapshot} class={["text-xs", stale?(@snapshot) && "text-warning" || "opacity-60"]}>
+              updated {snapshot_age(@snapshot)}
+            </span>
+            <.conn_badge status={@conn_status} snapshot={@snapshot} />
+          </div>
         </div>
 
         <.banner :if={@conn_status == :disconnected} kind="error">
@@ -156,6 +161,30 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   # ── helpers ──────────────────────────────────────────────────────────────────
   defp consumers_count(snap), do: get_in(snap, ["extensions", "consumers", "count"]) || 0
+
+  # Staleness from the server-side snapshot time (spec §12).
+  defp snapshot_age(snap) do
+    case parse_dt(snap["generated_at"]) do
+      {:ok, dt} -> "#{max(DateTime.diff(DateTime.utc_now(), dt), 0)}s ago"
+      _ -> "—"
+    end
+  end
+
+  defp stale?(snap) do
+    case parse_dt(snap["generated_at"]) do
+      {:ok, dt} -> DateTime.diff(DateTime.utc_now(), dt) > 10
+      _ -> false
+    end
+  end
+
+  defp parse_dt(s) when is_binary(s) do
+    case DateTime.from_iso8601(s) do
+      {:ok, dt, _} -> {:ok, dt}
+      _ -> :error
+    end
+  end
+
+  defp parse_dt(_), do: :error
 
   defp fmt_uptime(nil), do: "—"
 

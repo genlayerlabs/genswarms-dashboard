@@ -7,24 +7,29 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    socket = assign(socket, page_title: "Events", events: :loading, level: "", timer: nil)
     if connected?(socket), do: send(self(), :load)
-    {:ok, assign(socket, page_title: "Events", events: :loading, level: "")}
+    {:ok, socket}
   end
 
   @impl true
   def handle_event("filter", %{"level" => level}, socket) do
-    send(self(), :load)
-    {:noreply, assign(socket, level: level, events: :loading)}
+    # Reload now; reload/1 cancels the pending timer so we never start a second
+    # self-perpetuating refresh chain.
+    {:noreply, socket |> assign(level: level, events: :loading) |> reload()}
   end
 
   @impl true
-  def handle_info(:load, socket) do
-    opts = if socket.assigns.level != "", do: %{level: socket.assigns.level, limit: 100}, else: %{limit: 100}
-    Process.send_after(self(), :load, @refresh_ms)
-    {:noreply, assign(socket, events: SwarmClient.events(socket.assigns.swarm, opts))}
-  end
-
+  def handle_info(:load, socket), do: {:noreply, reload(socket)}
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Single recurring refresh: cancel any pending timer, fetch, reschedule one.
+  defp reload(socket) do
+    if ref = socket.assigns[:timer], do: Process.cancel_timer(ref)
+    opts = if socket.assigns.level != "", do: %{level: socket.assigns.level, limit: 100}, else: %{limit: 100}
+    timer = Process.send_after(self(), :load, @refresh_ms)
+    assign(socket, events: SwarmClient.events(socket.assigns.swarm, opts), timer: timer)
+  end
 
   @impl true
   def render(assigns) do

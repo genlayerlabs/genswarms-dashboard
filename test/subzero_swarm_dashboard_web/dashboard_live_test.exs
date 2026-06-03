@@ -72,6 +72,17 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "telegram"
   end
 
+  test "sessions search filters by session_id / transport_ref", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/sessions")
+    push_snap(view)
+    # "telegram" is the per-session transport badge — only in the sessions table,
+    # not the consumers panel (which would also show the session_id).
+    assert render(view) =~ "telegram"
+
+    assert view |> element("form") |> render_change(%{"q" => "999999"}) =~ "No sessions match"
+    assert view |> element("form") |> render_change(%{"q" => "1"}) =~ "telegram"
+  end
+
   test "session detail loads a transcript", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/sessions/tg:1:0")
     assert html =~ "Transcript"
