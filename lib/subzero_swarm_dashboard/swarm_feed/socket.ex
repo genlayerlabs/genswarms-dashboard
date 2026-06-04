@@ -38,16 +38,23 @@ defmodule SubzeroSwarmDashboard.SwarmFeed.Socket do
 
   # ── config ───────────────────────────────────────────────────────────────────
   defp ws_uri do
-    base = Application.get_env(:subzero_swarm_dashboard, :swarm_ws_url) || derive_ws()
-    token = Application.get_env(:subzero_swarm_dashboard, :swarm_api_token)
-    uri = String.trim_trailing(base, "/") <> "/swarm/websocket"
-    if token, do: uri <> "?token=" <> token, else: uri
+    base =
+      Application.get_env(:subzero_swarm_dashboard, :swarm_ws_url) ||
+        Application.fetch_env!(:subzero_swarm_dashboard, :swarm_api_url)
+
+    build_uri(base, Application.get_env(:subzero_swarm_dashboard, :swarm_api_token))
   end
 
-  defp derive_ws do
-    Application.fetch_env!(:subzero_swarm_dashboard, :swarm_api_url)
-    |> String.replace_prefix("https://", "wss://")
-    |> String.replace_prefix("http://", "ws://")
+  @doc false
+  def build_uri(base, token) do
+    uri =
+      base
+      |> String.replace_prefix("https://", "wss://")
+      |> String.replace_prefix("http://", "ws://")
+      |> String.trim_trailing("/")
+      |> Kernel.<>("/swarm/websocket")
+
+    if token in [nil, ""], do: uri, else: uri <> "?token=" <> token
   end
 
   defp swarm_name, do: Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")

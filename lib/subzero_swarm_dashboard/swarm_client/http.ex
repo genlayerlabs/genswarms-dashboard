@@ -30,7 +30,11 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
     token = Application.get_env(:subzero_swarm_dashboard, :swarm_api_token)
     headers = if token, do: [{"authorization", "Bearer #{token}"}], else: []
 
-    case Req.get(base <> path, params: params, headers: headers, receive_timeout: 8_000) do
+    opts =
+      [params: params, headers: headers, receive_timeout: 8_000] ++
+        Application.get_env(:subzero_swarm_dashboard, :req_options, [])
+
+    case Req.get(base <> path, opts) do
       {:ok, %{status: 200, body: body}} -> {:ok, body}
       {:ok, %{status: status}} -> {:error, {:http, status}}
       {:error, reason} -> {:error, reason}

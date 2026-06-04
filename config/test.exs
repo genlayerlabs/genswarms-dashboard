@@ -1,10 +1,12 @@
 import Config
 
 # Read-only clients are mocked in tests (Mox); don't auto-start the polling feed.
+# `req_options` injects a Req.Test stub so the real HTTP impls can be tested.
 config :subzero_swarm_dashboard,
   swarm_client: SubzeroSwarmDashboard.SwarmClientMock,
   router_client: SubzeroSwarmDashboard.RouterClientMock,
-  start_feed: false
+  start_feed: false,
+  req_options: [plug: {Req.Test, SubzeroSwarmDashboard.HttpStub}]
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.

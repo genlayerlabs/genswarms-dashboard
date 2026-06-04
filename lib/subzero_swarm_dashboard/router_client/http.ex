@@ -12,11 +12,11 @@ defmodule SubzeroSwarmDashboard.RouterClient.Http do
     else
       params = Map.take(opts, [:since, :until, :bucket])
 
-      case Req.get(url,
-             params: params,
-             headers: [{"authorization", "Bearer #{key}"}],
-             receive_timeout: 8_000
-           ) do
+      req_opts =
+        [params: params, headers: [{"authorization", "Bearer #{key}"}], receive_timeout: 8_000] ++
+          Application.get_env(:subzero_swarm_dashboard, :req_options, [])
+
+      case Req.get(url, req_opts) do
         {:ok, %{status: 200, body: body}} -> {:ok, body}
         {:ok, %{status: 404}} -> {:unavailable, :not_found}
         {:ok, %{status: s}} -> {:unavailable, {:http, s}}
