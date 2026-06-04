@@ -13,10 +13,19 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     "uptime_s" => 5821,
     "data_source" => "in_process",
     "generated_at" => "2026-06-03T15:22:01Z",
-    "summary" => %{"agents" => 1, "objects" => 6, "pool" => %{"size" => 2048, "leased" => 1, "idle" => 2047}},
+    "summary" => %{
+      "agents" => 1,
+      "objects" => 6,
+      "pool" => %{"size" => 2048, "leased" => 1, "idle" => 2047}
+    },
     "nodes" => [
       %{"name" => "ingress", "type" => "object", "subtype" => "ingress"},
-      %{"name" => "wingston_agent_0", "type" => "agent", "state" => "active", "session_id" => "tg:1:0"}
+      %{
+        "name" => "wingston_agent_0",
+        "type" => "agent",
+        "state" => "active",
+        "session_id" => "tg:1:0"
+      }
     ],
     "edges" => [%{"from" => "ingress", "to" => "policy"}],
     "sessions" => [
@@ -31,18 +40,27 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
       }
     ],
     "extensions" => %{
-      "consumers" => %{"count" => 1, "items" => [%{"session_id" => "tg:1:0", "mode" => "scout", "opt_out" => false}]}
+      "consumers" => %{
+        "count" => 1,
+        "items" => [%{"session_id" => "tg:1:0", "mode" => "scout", "opt_out" => false}]
+      }
     },
     "warnings" => []
   }
 
   setup do
     stub(SwarmClientMock, :dashboard, fn _ -> {:ok, @snap} end)
+
     stub(SwarmClientMock, :session_history, fn _, _ ->
       {:ok, %{"session_id" => "tg:1:0", "turns" => [], "source" => "unavailable"}}
     end)
+
     stub(SwarmClientMock, :events, fn _, _ -> {:ok, []} end)
-    stub(SwarmClientMock, :session_logs, fn _, _ -> {:ok, %{"logs" => [], "source" => "unavailable"}} end)
+
+    stub(SwarmClientMock, :session_logs, fn _, _ ->
+      {:ok, %{"logs" => [], "source" => "unavailable"}}
+    end)
+
     stub(RouterClientMock, :usage, fn _ -> {:unavailable, :not_configured} end)
     :ok
   end
@@ -117,6 +135,28 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Transcript"
   end
 
+  test "session detail renders the per-session activity timeline from session_logs", %{conn: conn} do
+    stub(SwarmClientMock, :session_logs, fn _swarm, "tg:1:0" ->
+      {:ok,
+       %{
+         "source" => "agent_server",
+         "logs" => [
+           %{"timestamp" => "2026-06-04T10:00:00Z", "role" => "user", "content" => "ping"},
+           %{"timestamp" => "2026-06-04T10:00:01Z", "role" => "assistant", "content" => "pong"}
+         ]
+       }}
+    end)
+
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    html = render(view)
+
+    assert html =~ "Activity"
+    assert html =~ "agent_server"
+    assert html =~ "ping"
+    assert html =~ "pong"
+    assert html =~ "2026-06-04T10:00:01Z"
+  end
+
   test "events page mounts", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/events")
     assert html =~ "Events"
@@ -130,8 +170,20 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
       {:ok,
        [
-         %{"timestamp" => "t1", "level" => "info", "category" => "agent", "agent" => "a0", "message" => "spawned agent"},
-         %{"timestamp" => "t2", "level" => "error", "category" => "router", "agent" => "r", "message" => "invalid route"}
+         %{
+           "timestamp" => "t1",
+           "level" => "info",
+           "category" => "agent",
+           "agent" => "a0",
+           "message" => "spawned agent"
+         },
+         %{
+           "timestamp" => "t2",
+           "level" => "error",
+           "category" => "router",
+           "agent" => "r",
+           "message" => "invalid route"
+         }
        ]}
     end)
 
@@ -139,7 +191,15 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert render(view) =~ "spawned agent"
 
     # server-side filters reach SwarmClient.events
-    view |> element("form") |> render_change(%{"level" => "error", "category" => "router", "agent" => "r", "minutes" => "60"})
+    view
+    |> element("form")
+    |> render_change(%{
+      "level" => "error",
+      "category" => "router",
+      "agent" => "r",
+      "minutes" => "60"
+    })
+
     assert_receive {:events_opts, %{level: "error", category: "router", agent: "r", minutes: 60}}
 
     # client-side "contains" narrows the rendered rows
@@ -160,7 +220,11 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
   test "logs: selecting a session loads its raw slot output", %{conn: conn} do
     stub(SwarmClientMock, :session_logs, fn _swarm, "tg:1:0" ->
-      {:ok, %{"source" => "slot", "logs" => [%{"timestamp" => "t1", "role" => "user", "content" => "hello there"}]}}
+      {:ok,
+       %{
+         "source" => "slot",
+         "logs" => [%{"timestamp" => "t1", "role" => "user", "content" => "hello there"}]
+       }}
     end)
 
     {:ok, view, _} = live(conn, "/logs")

@@ -6,7 +6,7 @@
     <meta name="csrf-token" content={get_csrf_token()} />
     <.live_title default="SubzeroSwarmDashboard" suffix=" · Phoenix Framework" phx-no-format>{assigns[:page_title]}</.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js">
+    <script defer phx-track-static type="text/javascript" src={~p"/vendor/cytoscape.min.js"}>
     </script>
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>

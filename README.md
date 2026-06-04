@@ -86,8 +86,9 @@ implementing `dashboard/1` on its session-holding object to emit
 
 ## Production notes
 
-- cytoscape is loaded from a CDN (`root.html.heex`). For production, add Subresource
-  Integrity or vendor it locally.
+- cytoscape is vendored locally at `priv/static/vendor/cytoscape.min.js` (served via the
+  `vendor` static path) — no runtime CDN dependency, so the dashboard works air-gapped.
+  To upgrade, replace that file from `unpkg.com/cytoscape@<ver>/dist/cytoscape.min.js`.
 - Set `DASHBOARD_USER`/`DASHBOARD_PASS` and `SWARM_API_TOKEN`, and bind to
   localhost/Tailscale. The swarm should also set an explicit WS `check_origin` in prod
   (the read token is the primary gate).

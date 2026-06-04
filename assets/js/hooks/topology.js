@@ -1,4 +1,4 @@
-// Renders the swarm topology with cytoscape (loaded from CDN as window.cytoscape).
+// Renders the swarm topology with cytoscape (vendored locally, exposed as window.cytoscape).
 // Objects (deterministic) and agents (LLM, per-session) get distinct shapes/colors.
 // The LiveView pushes the graph via the "topology:graph" event on each snapshot.
 export const Topology = {
