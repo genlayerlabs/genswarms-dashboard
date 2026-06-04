@@ -77,13 +77,22 @@ defmodule SubzeroSwarmDashboard.SwarmFeed do
   def handle_info(_other, state), do: {:noreply, state}
 
   defp maybe_warn_silent(snap, state) do
-    agents = get_in(snap, ["summary", "agents"]) || 0
-    running_ms = now_ms() - state.started_at
-    silent? = is_nil(state.last_event_at) or now_ms() - state.last_event_at > @silent_after_ms
+    now = now_ms()
 
-    if agents > 0 and running_ms > @silent_after_ms and silent? do
+    if warn_silent?(snap, state.last_event_at, now - state.started_at, now, @silent_after_ms) do
       PubSub.broadcast(@pubsub, @topic, {:warning, :endpoint_not_colocated})
     end
+  end
+
+  @doc """
+  Pure guard decision: warn when the snapshot reports agents, the feed has been
+  running past `threshold`, and no WS event has arrived within `threshold`.
+  """
+  @spec warn_silent?(map(), integer() | nil, integer(), integer(), integer()) :: boolean()
+  def warn_silent?(snap, last_event_at, running_ms, now, threshold) do
+    agents = get_in(snap, ["summary", "agents"]) || 0
+    silent? = is_nil(last_event_at) or now - last_event_at > threshold
+    agents > 0 and running_ms > threshold and silent?
   end
 
   defp now_ms, do: System.monotonic_time(:millisecond)

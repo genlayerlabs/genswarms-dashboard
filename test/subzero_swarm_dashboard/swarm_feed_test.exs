@@ -24,4 +24,25 @@ defmodule SubzeroSwarmDashboard.SwarmFeedTest do
 
     assert_receive {:disconnected, :econnrefused}, 2_000
   end
+
+  describe "warn_silent?/5 (silent-empty guard)" do
+    @snap %{"summary" => %{"agents" => 1}}
+
+    test "warns: agents present, running past threshold, no events" do
+      assert SwarmFeed.warn_silent?(@snap, nil, 20_000, 0, 15_000)
+    end
+
+    test "no warn at startup (running below threshold)" do
+      refute SwarmFeed.warn_silent?(@snap, nil, 5_000, 0, 15_000)
+    end
+
+    test "no warn when WS events are recent" do
+      # now - last_event_at = 100ms < threshold
+      refute SwarmFeed.warn_silent?(@snap, 100, 20_000, 200, 15_000)
+    end
+
+    test "no warn when there are no agents" do
+      refute SwarmFeed.warn_silent?(%{"summary" => %{"agents" => 0}}, nil, 20_000, 0, 15_000)
+    end
+  end
 end
