@@ -121,6 +121,32 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Events"
   end
 
+  test "events: server filters pass through + client contains filter narrows rows", %{conn: conn} do
+    parent = self()
+
+    stub(SwarmClientMock, :events, fn _swarm, opts ->
+      send(parent, {:events_opts, opts})
+
+      {:ok,
+       [
+         %{"timestamp" => "t1", "level" => "info", "category" => "agent", "agent" => "a0", "message" => "spawned agent"},
+         %{"timestamp" => "t2", "level" => "error", "category" => "router", "agent" => "r", "message" => "invalid route"}
+       ]}
+    end)
+
+    {:ok, view, _} = live(conn, "/events")
+    assert render(view) =~ "spawned agent"
+
+    # server-side filters reach SwarmClient.events
+    view |> element("form") |> render_change(%{"level" => "error", "category" => "router", "agent" => "r", "minutes" => "60"})
+    assert_receive {:events_opts, %{level: "error", category: "router", agent: "r", minutes: 60}}
+
+    # client-side "contains" narrows the rendered rows
+    html = view |> element("form") |> render_change(%{"contains" => "invalid"})
+    assert html =~ "invalid route"
+    refute html =~ "spawned agent"
+  end
+
   test "usage shows unavailable when the router has no usage endpoint", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/usage")
     assert html =~ "Usage"
