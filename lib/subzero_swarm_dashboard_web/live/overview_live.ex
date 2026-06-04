@@ -19,10 +19,10 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:overview} swarm={@swarm}>
+    <Layouts.app flash={@flash} active={:overview} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
       <div class="space-y-6 max-w-5xl">
         <div class="flex items-center justify-between">
-          <h1 class="text-xl font-semibold">Overview</h1>
+          <h1 class="text-2xl">Overview</h1>
           <div class="flex items-center gap-2">
             <span :if={@snapshot} class={["text-xs", stale?(@snapshot) && "text-warning" || "opacity-60"]}>
               updated {snapshot_age(@snapshot)}

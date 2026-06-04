@@ -9,6 +9,7 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   import Phoenix.Component
 
   alias SubzeroSwarmDashboard.SwarmFeed
+  alias SubzeroSwarmDashboard.SwarmClient
 
   def on_mount(:default, _params, _session, socket) do
     swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
@@ -19,11 +20,53 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
       |> assign_new(:snapshot, fn -> nil end)
       |> assign_new(:conn_status, fn -> :connecting end)
       |> assign_new(:feed_warning, fn -> nil end)
+      # the shared slide-over inspector (any page can open it via phx-click="inspect")
+      |> assign_new(:inspect, fn -> nil end)
+      |> assign_new(:inspect_transcript, fn -> nil end)
       |> assign(:swarm, swarm)
       |> attach_hook(:dash_feed, :handle_info, &handle_feed/2)
+      |> attach_hook(:dash_inspect_evt, :handle_event, &handle_inspect_event/3)
+      |> attach_hook(:dash_inspect_info, :handle_info, &handle_inspect_info/2)
 
     {:cont, socket}
   end
+
+  # ── shared inspector: open on any page, close on Esc / click-away ────────────
+  defp handle_inspect_event("inspect", %{"session_id" => sid}, socket)
+       when is_binary(sid) and sid != "" do
+    case find_session(socket.assigns[:snapshot], sid) do
+      nil ->
+        {:halt, socket}
+
+      session ->
+        if connected?(socket), do: send(self(), {:load_inspect_transcript, sid})
+        {:halt, assign(socket, inspect: session, inspect_transcript: :loading)}
+    end
+  end
+
+  defp handle_inspect_event("inspect_close", _params, socket),
+    do: {:halt, assign(socket, inspect: nil, inspect_transcript: nil)}
+
+  # Not an inspector event — let the page's own handle_event run.
+  defp handle_inspect_event(_event, _params, socket), do: {:cont, socket}
+
+  # Lazily fetch the transcript peek; ignore if the user already moved on.
+  defp handle_inspect_info({:load_inspect_transcript, sid}, socket) do
+    transcript = SwarmClient.session_history(socket.assigns.swarm, sid)
+
+    if socket.assigns[:inspect] && socket.assigns.inspect["session_id"] == sid do
+      {:halt, assign(socket, inspect_transcript: transcript)}
+    else
+      {:halt, socket}
+    end
+  end
+
+  defp handle_inspect_info(_msg, socket), do: {:cont, socket}
+
+  defp find_session(%{"sessions" => sessions}, sid) when is_list(sessions),
+    do: Enum.find(sessions, &(&1["session_id"] == sid))
+
+  defp find_session(_snapshot, _sid), do: nil
 
   # {:cont} so pages that need a side-effect on new snapshots (e.g. Topology pushing
   # the graph to its JS hook) can also react; @snapshot is assigned here regardless.

@@ -102,4 +102,103 @@
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   "Telemetry console" design layer — fonts, the live-signal accent, motion.
+   Built on top of daisyUI (we keep its themes); this only adds character.
+   ────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: "Bricolage Grotesque", "Hanken Grotesk", ui-sans-serif, sans-serif;
+}
+
+/* The one memorable accent: reserved for "live / active". Tuned per theme. */
+:root,
+[data-theme="light"] {
+  --signal: oklch(64% 0.17 150);
+  --signal-soft: oklch(64% 0.17 150 / 0.14);
+}
+[data-theme="dark"] {
+  --signal: oklch(82% 0.19 148);
+  --signal-soft: oklch(82% 0.19 148 / 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --signal: oklch(82% 0.19 148);
+    --signal-soft: oklch(82% 0.19 148 / 0.16);
+  }
+}
+
+html, body { font-family: var(--font-sans); }
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+.font-display { font-family: var(--font-display); letter-spacing: -0.02em; }
+
+/* Headings adopt the display face automatically. */
+h1, h2 { font-family: var(--font-display); letter-spacing: -0.02em; }
+
+/* Tabular, condensed numerals for telemetry (token counts, ages, pool stats). */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ── the live signal dot ─────────────────────────────────────────────────── */
+.signal-dot {
+  width: 0.5rem; height: 0.5rem; border-radius: 9999px;
+  background: var(--signal);
+  box-shadow: 0 0 0 0.2rem var(--signal-soft);
+  animation: signal-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.signal-dot--idle {
+  background: color-mix(in oklch, currentColor 40%, transparent);
+  box-shadow: none; animation: none;
+}
+@keyframes signal-pulse {
+  0%, 100% { box-shadow: 0 0 0 0.18rem var(--signal-soft); }
+  50%      { box-shadow: 0 0 0 0.36rem transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .signal-dot { animation: none; } }
+
+/* identity monogram chip */
+.monogram {
+  display: inline-grid; place-items: center;
+  width: 2rem; height: 2rem; border-radius: 0.6rem;
+  font-family: var(--font-display); font-weight: 700; font-size: 0.8rem;
+  color: var(--color-base-content);
+  background: linear-gradient(140deg,
+    color-mix(in oklch, var(--color-primary) 26%, var(--color-base-100)),
+    color-mix(in oklch, var(--color-base-300) 80%, transparent));
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+
+/* clickable telemetry rows get a quiet, deliberate hover */
+.row-press { transition: background-color .12s ease, box-shadow .12s ease; cursor: pointer; }
+.row-press:hover { background: color-mix(in oklch, var(--color-base-content) 5%, transparent); }
+
+/* ── slide-over inspector ────────────────────────────────────────────────── */
+.inspector-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  background: color-mix(in oklch, var(--color-base-300) 55%, transparent);
+  backdrop-filter: blur(2px);
+  animation: fade-in .15s ease both;
+}
+.inspector-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 50;
+  width: min(30rem, 92vw);
+  background: var(--color-base-100);
+  border-left: 1px solid var(--color-base-300);
+  box-shadow: -24px 0 60px -30px rgba(0,0,0,0.6);
+  overflow-y: auto;
+  animation: slide-over .22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes slide-over { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* the swarm "spine" sidebar gets a subtle instrument gradient + grain */
+.console-rail {
+  background:
+    radial-gradient(120% 60% at 0% 0%, color-mix(in oklch, var(--color-primary) 10%, transparent), transparent 60%),
+    var(--color-base-200);
+}
+
+/* tidy thin scrollbars inside scroll regions */
+.scroll-thin { scrollbar-width: thin; scrollbar-color: var(--color-base-300) transparent; }
+
 /* This file is for your main application CSS */

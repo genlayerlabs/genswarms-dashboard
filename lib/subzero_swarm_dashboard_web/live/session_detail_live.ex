@@ -35,22 +35,26 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     assigns = assign(assigns, :session, find_session(assigns[:snapshot], assigns.session_id))
 
     ~H"""
-    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm}>
-      <div class="space-y-4 max-w-3xl">
+    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+      <div class="space-y-5 max-w-3xl">
         <div class="flex items-center gap-2">
-          <.link navigate={~p"/sessions"} class="link text-sm">&larr; Sessions</.link>
+          <.link navigate={~p"/sessions"} class="btn btn-ghost btn-xs gap-1">
+            <.icon name="hero-arrow-left" class="size-3.5" /> Sessions
+          </.link>
         </div>
-        <h1 class="text-xl font-semibold font-mono">{@session_id}</h1>
+
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <.identity user={@session && @session["user"]} session_id={@session_id} size={:lg} />
+          <.live_dot :if={@session} state={@session["state"]} label />
+        </div>
 
         <div :if={@session} class="flex flex-wrap gap-2 text-sm">
+          <span class="badge badge-ghost font-mono text-xs">{@session_id}</span>
           <span class="badge badge-ghost">{@session["transport"]}</span>
           <span class="badge badge-ghost">agent {@session["agent"]}</span>
-          <span class={["badge", @session["state"] == "active" && "badge-success"]}>
-            {@session["state"]}
-          </span>
           <span
             :for={{k, v} <- @session["transport_ref"] || %{}}
-            class="badge badge-outline font-mono"
+            class="badge badge-outline font-mono text-xs"
           >
             {k}={v}
           </span>

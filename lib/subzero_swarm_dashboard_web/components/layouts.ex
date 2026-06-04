@@ -28,35 +28,46 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   attr :flash, :map, required: true, doc: "the map of flash messages"
   attr :active, :atom, default: nil, doc: "the active nav key"
   attr :swarm, :string, default: nil, doc: "the swarm name shown in the sidebar"
+  attr :inspect, :any, default: nil, doc: "the session currently open in the inspector"
+  attr :inspect_transcript, :any, default: nil, doc: "lazily-loaded transcript peek"
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
     <div class="flex min-h-screen">
-      <aside class="w-56 shrink-0 border-r border-base-300 bg-base-200 p-4 flex flex-col">
-        <div class="mb-6 flex items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="28" />
-          <div class="leading-tight">
-            <div class="text-sm font-semibold">Swarm Dashboard</div>
-            <div class="text-xs opacity-60">{@swarm || "—"}</div>
+      <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
+        <div class="px-2 mb-7 flex items-center gap-2.5">
+          <img src={~p"/images/logo.svg"} width="30" class="drop-shadow" />
+          <div class="leading-none">
+            <div class="font-display font-extrabold text-lg tracking-tight">SWARM</div>
+            <div class="text-[0.65rem] uppercase tracking-[0.22em] opacity-50 mt-0.5">console</div>
           </div>
         </div>
-        <ul class="menu w-full gap-1">
-          <.nav_item active={@active} key={:overview} href={~p"/"} label="Overview" />
-          <.nav_item active={@active} key={:topology} href={~p"/topology"} label="Topology" />
-          <.nav_item active={@active} key={:sessions} href={~p"/sessions"} label="Sessions" />
-          <.nav_item active={@active} key={:events} href={~p"/events"} label="Events" />
-          <.nav_item active={@active} key={:usage} href={~p"/usage"} label="Usage" />
-          <.nav_item active={@active} key={:logs} href={~p"/logs"} label="Logs" />
+
+        <div class="px-2 mb-5">
+          <div class="flex items-center gap-2 rounded-lg bg-base-100/60 border border-base-300 px-2.5 py-1.5">
+            <span class="signal-dot"></span>
+            <span class="font-mono text-xs truncate">{@swarm || "—"}</span>
+          </div>
+        </div>
+
+        <ul class="menu w-full gap-0.5 px-0">
+          <.nav_item active={@active} key={:overview} href={~p"/"} icon="hero-squares-2x2" label="Overview" />
+          <.nav_item active={@active} key={:topology} href={~p"/topology"} icon="hero-cpu-chip" label="Topology" />
+          <.nav_item active={@active} key={:sessions} href={~p"/sessions"} icon="hero-chat-bubble-left-right" label="Sessions" />
+          <.nav_item active={@active} key={:events} href={~p"/events"} icon="hero-bolt" label="Events" />
+          <.nav_item active={@active} key={:usage} href={~p"/usage"} icon="hero-chart-bar" label="Usage" />
+          <.nav_item active={@active} key={:logs} href={~p"/logs"} icon="hero-document-text" label="Logs" />
         </ul>
-        <div class="mt-auto pt-6"><.theme_toggle /></div>
+        <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
       </aside>
 
-      <main class="flex-1 p-6 overflow-x-auto">
+      <main class="flex-1 p-6 lg:p-8 overflow-x-auto">
         {render_slot(@inner_block)}
       </main>
     </div>
 
+    <.inspector inspect={@inspect} transcript={@inspect_transcript} />
     <.flash_group flash={@flash} />
     """
   end
@@ -65,14 +76,20 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   attr :key, :atom, required: true
   attr :href, :string, required: true
   attr :label, :string, required: true
+  attr :icon, :string, default: nil
 
   defp nav_item(assigns) do
     ~H"""
     <li>
       <.link
         navigate={@href}
-        class={["font-medium", @active == @key && "menu-active bg-primary text-primary-content"]}
+        class={[
+          "font-medium gap-2.5 rounded-lg",
+          @active == @key && "bg-primary/15 text-primary border border-primary/25",
+          @active != @key && "border border-transparent opacity-75 hover:opacity-100"
+        ]}
       >
+        <.icon :if={@icon} name={@icon} class="size-4 shrink-0" />
         {@label}
       </.link>
     </li>

@@ -16,9 +16,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:usage} swarm={@swarm}>
-      <div class="space-y-4 max-w-4xl">
-        <h1 class="text-xl font-semibold">Usage <span class="text-xs opacity-50">LLM tokens / cost (router)</span></h1>
+    <Layouts.app flash={@flash} active={:usage} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+      <div class="space-y-5 max-w-4xl">
+        <h1 class="text-2xl">Usage <span class="text-xs opacity-50 font-sans align-middle">LLM tokens / cost (router)</span></h1>
         <.usage usage={@usage} />
       </div>
     </Layouts.app>

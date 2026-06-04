@@ -12,55 +12,85 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :sessions, filter(assigns[:snapshot], assigns.q))
+    sessions = filter(assigns[:snapshot], assigns.q)
+    assigns = assign(assigns, sessions: sessions, live_count: Enum.count(sessions, &(&1["state"] == "active")))
 
     ~H"""
-    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm}>
-      <div class="space-y-4">
-        <div class="flex items-center justify-between gap-4">
-          <h1 class="text-xl font-semibold">Sessions</h1>
-          <form phx-change="search" class="flex-1 max-w-md">
-            <input
-              type="text"
-              name="q"
-              value={@q}
-              placeholder="search session_id / chat_id / user_id"
-              class="input input-bordered input-sm w-full"
-            />
+    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+      <div class="space-y-5">
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <div class="flex items-baseline gap-3">
+            <h1 class="text-2xl">Sessions</h1>
+            <span :if={@snapshot} class="text-sm opacity-60 tnum">
+              {length(@sessions)} total · <span class="text-[var(--signal)]">{@live_count} live</span>
+            </span>
+          </div>
+          <form phx-change="search" class="w-full max-w-sm">
+            <label class="input input-bordered input-sm flex items-center gap-2 w-full">
+              <.icon name="hero-magnifying-glass" class="size-4 opacity-50" />
+              <input
+                type="text"
+                name="q"
+                value={@q}
+                placeholder="search @handle · name · session · chat id"
+                class="grow bg-transparent outline-none"
+                autocomplete="off"
+              />
+            </label>
           </form>
         </div>
 
-        <table :if={@snapshot} class="table table-sm">
-          <thead>
-            <tr><th>session</th><th>transport</th><th>agent</th><th>state</th><th>last activity</th></tr>
-          </thead>
-          <tbody>
-            <tr :for={s <- @sessions} class="hover">
-              <td>
-                <.link navigate={~p"/sessions/#{s["session_id"]}"} class="link link-primary font-mono text-xs">
-                  {s["session_id"]}
-                </.link>
-                <div class="text-xs opacity-50">{ref_str(s["transport_ref"])}</div>
-              </td>
-              <td><span class="badge badge-ghost badge-sm">{s["transport"]}</span></td>
-              <td class="font-mono text-xs">{s["agent"]}</td>
-              <td>
-                <span class={["badge badge-sm", s["state"] == "active" && "badge-success"]}>{s["state"]}</span>
-              </td>
-              <td class="text-xs opacity-70">{s["last_activity"]}</td>
-            </tr>
-            <tr :if={@sessions == []}><td colspan="5" class="opacity-60">No sessions{if @q != "", do: " match"}.</td></tr>
-          </tbody>
-        </table>
+        <div :if={@snapshot} class="rounded-box border border-base-300 overflow-hidden">
+          <table class="table">
+            <thead>
+              <tr class="text-xs uppercase tracking-wide">
+                <th>User</th><th>State</th><th>Agent</th><th>Last seen</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                :for={s <- @sessions}
+                class="row-press"
+                phx-click="inspect"
+                phx-value-session_id={s["session_id"]}
+              >
+                <td>
+                  <.identity user={s["user"]} session_id={s["session_id"]} />
+                </td>
+                <td><.live_dot state={s["state"]} label /></td>
+                <td class="font-mono text-xs opacity-70">{s["agent"]}</td>
+                <td class="text-sm opacity-70 tnum whitespace-nowrap">{relative_time(s["last_activity"])}</td>
+                <td class="text-right">
+                  <.link
+                    navigate={~p"/sessions/#{s["session_id"]}"}
+                    class="btn btn-ghost btn-xs btn-circle"
+                    onclick="event.stopPropagation()"
+                    title="Open full session"
+                  >
+                    <.icon name="hero-arrow-up-right" class="size-4 opacity-60" />
+                  </.link>
+                </td>
+              </tr>
+              <tr :if={@sessions == []}>
+                <td colspan="5" class="text-center opacity-55 py-8">
+                  No sessions{if @q != "", do: " match \"#{@q}\""}.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-        <div :if={consumers(@snapshot)} class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-2">Consumers ({consumers(@snapshot)["count"]})</h2>
+        <div :if={consumers(@snapshot)} class="card bg-base-200/60 border border-base-300 p-4">
+          <h2 class="font-semibold mb-2 flex items-center gap-2">
+            Consumers
+            <span class="badge badge-ghost badge-sm tnum">{consumers(@snapshot)["count"]}</span>
+          </h2>
           <table class="table table-xs">
             <tbody>
               <tr :for={c <- consumers(@snapshot)["items"] || []}>
                 <td class="font-mono text-xs">{c["session_id"]}</td>
                 <td>{c["mode"]}</td>
-                <td>{if c["opt_out"], do: "opted out"}</td>
+                <td class="opacity-60">{if c["opt_out"], do: "opted out"}</td>
               </tr>
             </tbody>
           </table>
@@ -81,21 +111,23 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     if q == "" do
       sessions
     else
-      Enum.filter(sessions, fn s ->
-        String.contains?(String.downcase(s["session_id"] || ""), q) or ref_match?(s["transport_ref"], q)
-      end)
+      Enum.filter(sessions, &session_matches?(&1, q))
     end
   end
 
-  defp ref_match?(ref, q) when is_map(ref),
-    do: ref |> Map.values() |> Enum.any?(&String.contains?(String.downcase(to_string(&1)), q))
+  defp session_matches?(s, q) do
+    haystack =
+      [
+        s["session_id"],
+        get_in(s, ["user", "handle"]),
+        get_in(s, ["user", "name"]),
+        s["agent"]
+      ]
+      |> Enum.concat(Map.values(s["transport_ref"] || %{}))
+      |> Enum.map(&String.downcase(to_string(&1)))
 
-  defp ref_match?(_, _), do: false
-
-  defp ref_str(ref) when is_map(ref),
-    do: ref |> Enum.map(fn {k, v} -> "#{k}=#{v}" end) |> Enum.join(" ")
-
-  defp ref_str(_), do: ""
+    Enum.any?(haystack, &String.contains?(&1, q))
+  end
 
   defp consumers(nil), do: nil
   defp consumers(snap), do: get_in(snap, ["extensions", "consumers"])

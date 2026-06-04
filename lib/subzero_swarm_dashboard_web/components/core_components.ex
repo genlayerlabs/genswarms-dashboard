@@ -498,4 +498,228 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   def translate_errors(errors, field) when is_list(errors) do
     for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
   end
+
+  # ── Telemetry-console components ────────────────────────────────────────────
+
+  @doc """
+  A user identity chip: a per-user color monogram + the handle/name, with a
+  graceful fallback to the raw conversation id when we don't know the user yet.
+
+  `user` is the dashboard's `session["user"]` map (`%{"handle", "name"}`) or nil.
+  """
+  attr :user, :any, default: nil
+  attr :session_id, :string, default: nil
+  attr :size, :atom, default: :md, values: [:sm, :md, :lg]
+  attr :class, :any, default: nil
+
+  def identity(assigns) do
+    lines = identity_lines(assigns.user, assigns.session_id)
+
+    size_class =
+      case {assigns.size, lines.primary_mono} do
+        {:lg, _} -> "text-base"
+        {_, true} -> "text-sm"
+        _ -> nil
+      end
+
+    assigns = assign(assigns, lines: lines, size_class: size_class)
+
+    ~H"""
+    <div class={["flex items-center gap-2.5 min-w-0", @class]}>
+      <span
+        class={["monogram shrink-0", @size == :sm && "!w-7 !h-7 !text-xs", @size == :lg && "!w-10 !h-10 !text-base"]}
+        style={monogram_style(@user, @session_id)}
+      >
+        {@lines.monogram}
+      </span>
+      <div class="min-w-0 leading-tight">
+        <div class={["truncate", @size_class, @lines.primary_mono && "font-mono", !@lines.primary_mono && "font-medium"]}>
+          {@lines.primary}
+        </div>
+        <div :if={@lines.secondary} class="text-xs opacity-55 font-mono truncate">{@lines.secondary}</div>
+      </div>
+    </div>
+    """
+  end
+
+  @doc "A pulsing signal dot for `active`, a quiet hollow dot otherwise."
+  attr :state, :any, required: true
+  attr :label, :boolean, default: false
+  attr :class, :any, default: nil
+
+  def live_dot(assigns) do
+    active = to_string(assigns.state) == "active"
+    assigns = assign(assigns, active: active)
+
+    ~H"""
+    <span class={["inline-flex items-center gap-1.5", @class]}>
+      <span class={["signal-dot", !@active && "signal-dot--idle"]}></span>
+      <span :if={@label} class={["text-xs", @active && "text-[var(--signal)] font-medium", !@active && "opacity-55"]}>
+        {if @active, do: "live", else: "idle"}
+      </span>
+    </span>
+    """
+  end
+
+  @doc """
+  The shared slide-over inspector. Driven by the global `@inspect` assign (a
+  session map) wired in `DashHooks`; renders nothing when nil. `@inspect_transcript`
+  carries the lazily-loaded transcript peek.
+  """
+  attr :inspect, :any, default: nil
+  attr :transcript, :any, default: nil
+
+  def inspector(assigns) do
+    ~H"""
+    <div :if={@inspect}>
+      <div class="inspector-backdrop" phx-click="inspect_close" phx-window-keydown="inspect_close" phx-key="Escape">
+      </div>
+      <aside class="inspector-panel scroll-thin">
+        <div class="p-5 space-y-5">
+          <div class="flex items-start justify-between gap-3">
+            <.identity user={@inspect["user"]} session_id={@inspect["session_id"]} size={:lg} />
+            <button class="btn btn-ghost btn-sm btn-circle -mr-1" phx-click="inspect_close" aria-label="Close">
+              <.icon name="hero-x-mark" class="size-5" />
+            </button>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <.live_dot state={@inspect["state"]} label />
+            <span class="badge badge-ghost badge-sm">{@inspect["transport"]}</span>
+            <span :if={chat_type(@inspect)} class="badge badge-outline badge-sm">{chat_type(@inspect)}</span>
+          </div>
+
+          <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 text-sm">
+            <dt class="opacity-50">session</dt>
+            <dd class="col-span-2 font-mono text-xs break-all">{@inspect["session_id"]}</dd>
+            <dt class="opacity-50">agent slot</dt>
+            <dd class="col-span-2 font-mono text-xs">{@inspect["agent"] || "—"}</dd>
+            <dt class="opacity-50">last seen</dt>
+            <dd class="col-span-2 tnum">{relative_time(@inspect["last_activity"])}</dd>
+            <%= for {k, v} <- transport_ref(@inspect) do %>
+              <dt class="opacity-50 font-mono text-xs">{k}</dt>
+              <dd class="col-span-2 font-mono text-xs break-all">{v}</dd>
+            <% end %>
+          </dl>
+
+          <div class="border-t border-base-300 pt-4">
+            <div class="text-xs uppercase tracking-wide opacity-50 mb-2">Recent transcript</div>
+            <.inspector_transcript transcript={@transcript} />
+          </div>
+
+          <.link
+            navigate={"/sessions/#{@inspect["session_id"]}"}
+            class="btn btn-sm btn-block btn-outline gap-1"
+          >
+            Open full session <.icon name="hero-arrow-up-right" class="size-3.5" />
+          </.link>
+        </div>
+      </aside>
+    </div>
+    """
+  end
+
+  attr :transcript, :any, default: nil
+
+  defp inspector_transcript(%{transcript: {:ok, %{"turns" => [_ | _] = turns}}} = assigns) do
+    assigns = assign(assigns, :turns, Enum.take(turns, -6))
+
+    ~H"""
+    <div class="space-y-2">
+      <div :for={t <- @turns} class="text-sm">
+        <span class={["badge badge-xs mr-1 align-middle", t["role"] == "user" && "badge-primary", t["role"] != "user" && "badge-ghost"]}>
+          {t["role"]}
+        </span>
+        <span class="opacity-80 whitespace-pre-wrap break-words">{truncate(t["content"], 240)}</span>
+      </div>
+    </div>
+    """
+  end
+
+  defp inspector_transcript(%{transcript: :loading} = assigns),
+    do: ~H"""
+    <div class="text-sm opacity-50">loading…</div>
+    """
+
+  defp inspector_transcript(assigns),
+    do: ~H"""
+    <div class="text-sm opacity-50">No transcript yet.</div>
+    """
+
+  # ── identity / formatting helpers ───────────────────────────────────────────
+
+  @doc false
+  def identity_lines(user, session_id) do
+    handle = present(user && user["handle"])
+    name = present(user && user["name"])
+    at = handle && "@#{handle}"
+    cid = short_cid(session_id)
+
+    cond do
+      name && handle -> %{monogram: initial(name), primary: name, secondary: at, primary_mono: false}
+      name -> %{monogram: initial(name), primary: name, secondary: cid, primary_mono: false}
+      handle -> %{monogram: initial(handle), primary: at, secondary: cid, primary_mono: false}
+      # group/topic chat with no known speaker — the negative chat id isn't a person.
+      group_cid?(cid) -> %{monogram: "⌗", primary: "Group chat", secondary: cid, primary_mono: false}
+      true -> %{monogram: "#", primary: cid || "unknown", secondary: nil, primary_mono: true}
+    end
+  end
+
+  defp group_cid?("-" <> _), do: true
+  defp group_cid?(_), do: false
+
+  @doc false
+  def monogram_style(user, session_id) do
+    seed = (present(user && user["handle"]) || present(user && user["name"]) || to_string(session_id) || "x")
+    hue = :erlang.phash2(seed, 360)
+
+    "background: linear-gradient(145deg, oklch(0.62 0.13 #{hue}), oklch(0.42 0.09 #{hue})); color: white; border-color: oklch(0.7 0.12 #{hue} / 0.5);"
+  end
+
+  defp initial(nil), do: "#"
+  defp initial(s) do
+    s |> String.trim() |> String.first() |> to_string() |> String.upcase()
+  end
+
+  # "tg:903489662:0" -> "903489662"
+  defp short_cid("tg:" <> rest), do: rest |> String.split(":") |> List.first()
+  defp short_cid(cid) when is_binary(cid), do: cid
+  defp short_cid(_), do: nil
+
+  defp chat_type(%{"metadata" => %{"chat_type" => t}}) when is_binary(t), do: t
+  defp chat_type(_), do: nil
+
+  defp transport_ref(%{"transport_ref" => ref}) when is_map(ref), do: ref
+  defp transport_ref(_), do: %{}
+
+  defp present(nil), do: nil
+  defp present(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)
+  defp present(_), do: nil
+
+  defp truncate(nil, _), do: ""
+  defp truncate(s, n) when is_binary(s) do
+    if String.length(s) > n, do: String.slice(s, 0, n) <> "…", else: s
+  end
+  defp truncate(s, _), do: to_string(s)
+
+  @doc "Human relative time from an ISO8601 string (or `—`)."
+  def relative_time(nil), do: "—"
+  def relative_time(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} ->
+        secs = DateTime.diff(DateTime.utc_now(), dt)
+        cond do
+          secs < 5 -> "just now"
+          secs < 60 -> "#{secs}s ago"
+          secs < 3600 -> "#{div(secs, 60)}m ago"
+          secs < 86_400 -> "#{div(secs, 3600)}h ago"
+          true -> "#{div(secs, 86_400)}d ago"
+        end
+
+      _ ->
+        iso
+    end
+  end
+
+  def relative_time(_), do: "—"
 end

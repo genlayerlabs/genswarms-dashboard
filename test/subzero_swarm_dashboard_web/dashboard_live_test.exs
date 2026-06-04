@@ -20,6 +20,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     },
     "nodes" => [
       %{"name" => "ingress", "type" => "object", "subtype" => "ingress"},
+      %{"name" => "policy", "type" => "object", "subtype" => "policy"},
       %{
         "name" => "wingston_agent_0",
         "type" => "agent",
@@ -116,18 +117,54 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     {:ok, view, _} = live(conn, "/sessions")
     html = push_snap(view)
     assert html =~ "tg:1:0"
-    assert html =~ "telegram"
+    # the agent slot appears only in the sessions row (not the consumers panel).
+    assert html =~ "wingston_agent_0"
   end
 
   test "sessions search filters by session_id / transport_ref", %{conn: conn} do
     {:ok, view, _} = live(conn, "/sessions")
     push_snap(view)
-    # "telegram" is the per-session transport badge — only in the sessions table,
-    # not the consumers panel (which would also show the session_id).
-    assert render(view) =~ "telegram"
+    # the agent slot is rendered only in the sessions table row, so it's a clean
+    # signal that the row itself is shown (the consumers panel omits the agent).
+    assert render(view) =~ "wingston_agent_0"
 
     assert view |> element("form") |> render_change(%{"q" => "999999"}) =~ "No sessions match"
-    assert view |> element("form") |> render_change(%{"q" => "1"}) =~ "telegram"
+    refute view |> element("form") |> render_change(%{"q" => "999999"}) =~ "wingston_agent_0"
+    assert view |> element("form") |> render_change(%{"q" => "1"}) =~ "wingston_agent_0"
+  end
+
+  test "sessions lead with the user handle + name when known", %{conn: conn} do
+    snap =
+      put_in(@snap, ["sessions"], [
+        %{
+          "session_id" => "tg:1:0",
+          "transport" => "telegram",
+          "agent" => "wingston_agent_0",
+          "state" => "active",
+          "last_activity" => "2026-06-03T15:22:01Z",
+          "transport_ref" => %{"chat_id" => "1", "thread_id" => "0"},
+          "metadata" => %{"chat_type" => "dm"},
+          "user" => %{"handle" => "alberto", "name" => "Alberto C"}
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/sessions")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    assert html =~ "@alberto"
+    assert html =~ "Alberto C"
+  end
+
+  test "clicking a session opens the shared inspector, Esc-close clears it", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/sessions")
+    push_snap(view)
+
+    html = view |> element("tr[phx-value-session_id='tg:1:0']") |> render_click()
+    assert html =~ "Recent transcript"
+    assert html =~ "Open full session"
+
+    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Recent transcript"
   end
 
   test "session detail loads a transcript", %{conn: conn} do

@@ -25,11 +25,11 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:logs} swarm={@swarm}>
-      <div class="space-y-4 max-w-3xl">
+    <Layouts.app flash={@flash} active={:logs} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+      <div class="space-y-5 max-w-3xl">
         <div class="flex items-center justify-between gap-4">
-          <h1 class="text-xl font-semibold">
-            Logs <span class="text-xs opacity-50">raw per-session output (ephemeral)</span>
+          <h1 class="text-2xl">
+            Logs <span class="text-xs opacity-50 font-sans align-middle">raw per-session output (ephemeral)</span>
           </h1>
           <form phx-change="select">
             <select name="session_id" class="select select-bordered select-sm">
