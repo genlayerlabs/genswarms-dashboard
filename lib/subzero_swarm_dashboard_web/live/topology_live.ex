@@ -9,9 +9,15 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   def handle_event("toggle_idle", _p, socket),
     do: {:noreply, assign(socket, show_idle: !socket.assigns.show_idle)}
 
+  @live_events ~w(agent_status message_routed message_broadcast agent_added agent_removed topology_changed)
+
   @impl true
   def handle_info({:snapshot, snap}, socket),
     do: {:noreply, push_event(socket, "topology:graph", graph_map(snap))}
+
+  # Live WS events → instant incremental graph updates (no wait for the 3s poll).
+  def handle_info({:event, type, payload}, socket) when type in @live_events,
+    do: {:noreply, push_event(socket, "topology:event", %{type: type, payload: payload})}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 

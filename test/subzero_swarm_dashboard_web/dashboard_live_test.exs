@@ -65,6 +65,34 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert push_snap(view) =~ "ingress"
   end
 
+  test "snapshot pushes the classified graph to the topology hook", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/topology")
+    push_snap(view)
+    assert_push_event(view, "topology:graph", %{nodes: nodes, edges: edges})
+    assert Enum.any?(nodes, &(&1.data.id == "ingress" and &1.data.type == "object"))
+    assert Enum.any?(nodes, &(&1.data.id == "wingston_agent_0" and &1.data.type == "agent"))
+    assert Enum.any?(edges, &match?(%{data: %{source: "ingress", target: "policy"}}, &1))
+  end
+
+  test "live agent_status event pushes an incremental update (and crashes no page)", %{conn: conn} do
+    {:ok, topo, _} = live(conn, "/topology")
+    {:ok, overview, _} = live(conn, "/")
+
+    Phoenix.PubSub.broadcast(
+      SubzeroSwarmDashboard.PubSub,
+      "feed",
+      {:event, "agent_status", %{"agent" => "wingston_agent_0", "state" => "idle"}}
+    )
+
+    # Topology forwards it to the hook; other pages safely ignore it (catch-all).
+    assert_push_event(topo, "topology:event", %{
+      type: "agent_status",
+      payload: %{"agent" => "wingston_agent_0", "state" => "idle"}
+    })
+
+    assert render(overview) =~ "Overview"
+  end
+
   test "sessions lists from the snapshot", %{conn: conn} do
     {:ok, view, _} = live(conn, "/sessions")
     html = push_snap(view)

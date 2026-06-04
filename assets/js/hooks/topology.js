@@ -5,6 +5,42 @@ export const Topology = {
   mounted() {
     this.cy = null;
     this.handleEvent("topology:graph", (graph) => this.render(graph));
+    this.handleEvent("topology:event", (ev) => this.applyEvent(ev));
+  },
+  // Incremental live update from a swarm WS event.
+  applyEvent({ type, payload }) {
+    if (!this.cy) return;
+    switch (type) {
+      case "agent_status": {
+        const n = this.cy.getElementById(payload.agent);
+        if (n.nonempty()) n.data("state", payload.state);
+        break;
+      }
+      case "agent_removed": {
+        const n = this.cy.getElementById(payload.name);
+        if (n.nonempty()) n.remove();
+        break;
+      }
+      case "agent_added": {
+        if (payload.name && this.cy.getElementById(payload.name).empty()) {
+          this.cy.add({ data: { id: payload.name, label: payload.name, type: "agent", state: "active" } });
+          this.cy.layout(this.layout()).run();
+        }
+        break;
+      }
+      case "message_routed":
+      case "message_broadcast":
+        this.flashEdge(payload.from, payload.to);
+        break;
+      // topology_changed: the next 3s snapshot reloads nodes/edges.
+    }
+  },
+  flashEdge(from, to) {
+    if (!from || !to) return;
+    const e = this.cy.edges(`[source = "${from}"][target = "${to}"]`);
+    if (e.empty()) return;
+    e.animate({ style: { "line-color": "#22c55e", width: 3, opacity: 1 } }, { duration: 150 })
+      .animate({ style: { "line-color": "#94a3b8", width: 1.5, opacity: 0.6 } }, { duration: 500 });
   },
   destroyed() {
     if (this.cy) this.cy.destroy();

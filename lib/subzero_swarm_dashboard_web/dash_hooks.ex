@@ -36,10 +36,9 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   defp handle_feed({:warning, w}, socket),
     do: {:halt, assign(socket, feed_warning: w)}
 
-  # v1: 3s snapshots drive the UI; live WS events are observed by SwarmFeed for the
-  # silent-empty guard but not pushed into pages here.
-  defp handle_feed({:event, _type, _payload}, socket), do: {:halt, socket}
-
-  # Non-feed messages (e.g. a page's own :load_usage) pass through to the LiveView.
+  # Live WS events flow through to pages (every page has a catch-all handle_info/2;
+  # Topology consumes them for instant graph updates). SwarmFeed also observes them
+  # (it subscribes to "feed") for the silent-empty guard.
+  # Non-feed messages (e.g. a page's own :load_usage) also pass through.
   defp handle_feed(_other, socket), do: {:cont, socket}
 end
