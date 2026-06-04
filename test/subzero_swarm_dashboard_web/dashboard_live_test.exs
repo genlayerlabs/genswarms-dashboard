@@ -42,6 +42,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
       {:ok, %{"session_id" => "tg:1:0", "turns" => [], "source" => "unavailable"}}
     end)
     stub(SwarmClientMock, :events, fn _, _ -> {:ok, []} end)
+    stub(SwarmClientMock, :session_logs, fn _, _ -> {:ok, %{"logs" => [], "source" => "unavailable"}} end)
     stub(RouterClientMock, :usage, fn _ -> {:unavailable, :not_configured} end)
     :ok
   end
@@ -155,5 +156,18 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
   test "logs page mounts", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/logs")
     assert html =~ "Logs"
+  end
+
+  test "logs: selecting a session loads its raw slot output", %{conn: conn} do
+    stub(SwarmClientMock, :session_logs, fn _swarm, "tg:1:0" ->
+      {:ok, %{"source" => "slot", "logs" => [%{"timestamp" => "t1", "role" => "user", "content" => "hello there"}]}}
+    end)
+
+    {:ok, view, _} = live(conn, "/logs")
+    push_snap(view)
+    view |> element("form") |> render_change(%{"session_id" => "tg:1:0"})
+    html = render(view)
+    assert html =~ "hello there"
+    assert html =~ "slot"
   end
 end

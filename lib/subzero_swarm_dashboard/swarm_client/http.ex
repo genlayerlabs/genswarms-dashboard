@@ -10,6 +10,10 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
     do: get("/api/swarms/#{swarm}/sessions/#{session_id}/history")
 
   @impl true
+  def session_logs(swarm, session_id),
+    do: get("/api/swarms/#{swarm}/sessions/#{session_id}/logs")
+
+  @impl true
   def events(swarm, opts) do
     params = Map.take(opts, [:level, :category, :agent, :minutes, :limit])
 
