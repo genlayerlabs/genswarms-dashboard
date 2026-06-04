@@ -30,7 +30,7 @@ its read API listens on `http://127.0.0.1:4000`.
 Elixir 1.18 / OTP 27 (pinned in `.tool-versions` for [mise](https://mise.jdx.dev/)).
 `mise install` to match.
 
-## Run
+## Run (local toolchain)
 
 ```bash
 mise install            # erlang 27 + elixir 1.18 (first time)
@@ -38,6 +38,27 @@ mix setup               # deps + assets
 SWARM_API_URL=http://127.0.0.1:4000 SWARM_NAME=wingston mix phx.server
 # → http://127.0.0.1:4100
 ```
+
+## Deploy (Docker)
+
+A self-contained multi-stage `Dockerfile` (mix release) and a `docker-compose.yml`
+ship in the repo — build & run, nothing to author:
+
+```bash
+cp .env.docker.example .env      # then fill SECRET_KEY_BASE + SWARM_API_TOKEN
+docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopback)
+```
+
+- `SECRET_KEY_BASE` is required (`mix phx.gen.secret`); `SWARM_API_TOKEN` must equal
+  the swarm's `DASHBOARD_API_TOKEN`.
+- `SWARM_API_URL` must be reachable **from the container**. The default
+  `http://host.docker.internal:4000` (with `extra_hosts: host-gateway`) reaches a
+  swarm BEAM running on the host. If the swarm is another compose service, set
+  `SWARM_API_URL=http://<swarm-service>:4000` and attach to its network (commented
+  block in `docker-compose.yml`).
+- The image exposes `4100` and has a `HEALTHCHECK` against the unauthenticated
+  `/healthz` endpoint. Assets (incl. the vendored cytoscape) are built and digested
+  inside the image.
 
 ## Configuration (env)
 

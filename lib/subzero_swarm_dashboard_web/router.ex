@@ -15,6 +15,12 @@ defmodule SubzeroSwarmDashboardWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # Unauthenticated liveness probe (for Docker/compose healthchecks).
+  scope "/", SubzeroSwarmDashboardWeb do
+    pipe_through :api
+    get "/healthz", HealthController, :show
+  end
+
   scope "/", SubzeroSwarmDashboardWeb do
     pipe_through :browser
 

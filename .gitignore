@@ -35,3 +35,6 @@ subzero_swarm_dashboard-*.tar
 npm-debug.log
 /assets/node_modules/
 
+
+# Local docker env (secrets)
+.env

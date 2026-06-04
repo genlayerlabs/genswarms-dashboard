@@ -1,0 +1,55 @@
+# Standalone deploy for the read-only subzero-swarm dashboard.
+#
+#   cp .env.docker.example .env && edit .env
+#   docker compose up -d --build
+#   → http://127.0.0.1:4100
+#
+# The dashboard is a pure HTTP/WS client of the swarm's in-BEAM read API. It must
+# be able to reach SWARM_API_URL. Defaults assume the swarm BEAM listens on the
+# HOST's :4000 (host-gateway), which is the Wingston dev/prod launcher case. If the
+# swarm runs as another compose service, point SWARM_API_URL at its service name
+# and attach this service to that network (see the commented `networks` block).
+services:
+  dashboard:
+    build: .
+    image: subzero-swarm-dashboard:latest
+    restart: unless-stopped
+    # Internal ops tool: publish on loopback only and front it with your existing
+    # Tailscale/reverse proxy. Change to "4100:4100" only if you really want it on
+    # all interfaces (then rely on DASHBOARD_USER/PASS + SWARM_API_TOKEN).
+    ports:
+      - "127.0.0.1:4100:4100"
+    env_file:
+      - .env
+    environment:
+      # Phoenix
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE (mix phx.gen.secret)}
+      PHX_HOST: ${PHX_HOST:-localhost}
+      PORT: "4100"
+      # Swarm read surface (the in-BEAM API). host.docker.internal => the swarm on the host.
+      SWARM_API_URL: ${SWARM_API_URL:-http://host.docker.internal:4000}
+      SWARM_WS_URL: ${SWARM_WS_URL:-}
+      SWARM_NAME: ${SWARM_NAME:-wingston}
+      # MUST equal the swarm's DASHBOARD_API_TOKEN (gates HTTP reads + the WS socket).
+      SWARM_API_TOKEN: ${SWARM_API_TOKEN:-}
+      # UI basic-auth (active only when BOTH are set).
+      DASHBOARD_USER: ${DASHBOARD_USER:-}
+      DASHBOARD_PASS: ${DASHBOARD_PASS:-}
+      # Optional LLM-router usage panel.
+      ROUTER_USAGE_URL: ${ROUTER_USAGE_URL:-}
+      ROUTER_API_KEY: ${ROUTER_API_KEY:-}
+      DASHBOARD_POLL_MS: ${DASHBOARD_POLL_MS:-3000}
+    # Lets SWARM_API_URL=http://host.docker.internal:4000 reach a swarm on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+# If the swarm runs as a compose service on its own network, drop the extra_hosts
+# above, set SWARM_API_URL=http://<swarm-service>:4000, and attach here:
+#
+#   services:
+#     dashboard:
+#       networks: [swarm_net]
+#   networks:
+#     swarm_net:
+#       external: true
+#       name: <wingston_compose_network_name>
