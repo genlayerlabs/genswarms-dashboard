@@ -25,7 +25,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:logs} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+    <Layouts.app flash={@flash} active={:logs} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
       <div class="space-y-5 max-w-3xl">
         <div class="flex items-center justify-between gap-4">
           <h1 class="text-2xl">
@@ -55,17 +55,11 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   attr :logs, :any, required: true
   attr :selected, :any, default: nil
 
-  defp logs(%{logs: {:ok, %{"logs" => [_ | _] = entries, "source" => source}}} = assigns) do
-    text =
-      Enum.map_join(entries, "\n", fn e ->
-        "[#{e["timestamp"]}] #{e["role"]}: #{e["content"]}"
-      end)
-
-    assigns = assign(assigns, text: text, source: source)
-
+  defp logs(%{logs: {:ok, %{"logs" => [_ | _]}}} = assigns) do
     ~H"""
-    <div class="text-xs opacity-60">source: {@source}</div>
-    <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap">{@text}</pre>
+    <div class="card bg-base-200 p-4">
+      <.activity_timeline activity={@logs} />
+    </div>
     """
   end
 

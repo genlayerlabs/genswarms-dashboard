@@ -563,11 +563,13 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   @doc """
   The shared slide-over inspector. Driven by the global `@inspect` assign (a
-  session map) wired in `DashHooks`; renders nothing when nil. `@inspect_transcript`
-  carries the lazily-loaded transcript peek.
+  session map) wired in `DashHooks`; renders nothing when nil. `transcript` carries
+  the lazily-loaded durable conversation and `activity` the raw slot output — the
+  inspector shows the full detail, so there is no separate "open full session" step.
   """
   attr :inspect, :any, default: nil
   attr :transcript, :any, default: nil
+  attr :activity, :any, default: nil
 
   def inspector(assigns) do
     ~H"""
@@ -603,16 +605,16 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
           </dl>
 
           <div class="border-t border-base-300 pt-4">
-            <div class="text-xs uppercase tracking-wide opacity-50 mb-2">Recent transcript</div>
+            <div class="text-xs uppercase tracking-wide opacity-50 mb-2">Transcript</div>
+            <p class="text-xs opacity-50 mb-2">Durable conversation (survives slot recycling).</p>
             <.inspector_transcript transcript={@transcript} />
           </div>
 
-          <.link
-            navigate={"/sessions/#{@inspect["session_id"]}"}
-            class="btn btn-sm btn-block btn-outline gap-1"
-          >
-            Open full session <.icon name="hero-arrow-up-right" class="size-3.5" />
-          </.link>
+          <div class="border-t border-base-300 pt-4">
+            <div class="text-xs uppercase tracking-wide opacity-50 mb-2">Activity</div>
+            <p class="text-xs opacity-50 mb-2">Raw slot output for the bound agent — ephemeral, wiped on recycle.</p>
+            <.activity_timeline activity={@activity} />
+          </div>
         </div>
       </aside>
     </div>
@@ -621,18 +623,27 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   attr :transcript, :any, default: nil
 
-  defp inspector_transcript(%{transcript: {:ok, %{"turns" => [_ | _] = turns}}} = assigns) do
-    assigns = assign(assigns, :turns, Enum.take(turns, -6))
+  # Full durable transcript — every turn, untruncated, as chat bubbles (mirrors the
+  # dedicated session page so the inspector is a complete view, not a peek).
+  defp inspector_transcript(%{transcript: {:ok, %{"turns" => [_ | _] = turns} = body}} = assigns) do
+    assigns = assign(assigns, turns: turns, source: body["source"])
 
     ~H"""
+    <div :if={@source} class="text-xs opacity-50 mb-2">source: {@source}</div>
     <div class="space-y-2">
-      <div :for={t <- @turns} class="text-sm">
-        <span class={["badge badge-xs mr-1 align-middle", t["role"] == "user" && "badge-primary", t["role"] != "user" && "badge-ghost"]}>
-          {t["role"]}
-        </span>
-        <span class="opacity-80 whitespace-pre-wrap break-words">{truncate(t["content"], 240)}</span>
+      <div :for={t <- @turns} class={["chat", (t["role"] == "user" && "chat-start") || "chat-end"]}>
+        <div class="chat-header text-xs opacity-60">{t["role"]}</div>
+        <div class="chat-bubble whitespace-pre-wrap break-words">{t["content"]}</div>
       </div>
     </div>
+    """
+  end
+
+  defp inspector_transcript(%{transcript: {:ok, %{"source" => source}}} = assigns) do
+    assigns = assign(assigns, :source, source)
+
+    ~H"""
+    <div class="text-sm opacity-50">No transcript ({@source}).</div>
     """
   end
 
@@ -645,6 +656,156 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     do: ~H"""
     <div class="text-sm opacity-50">No transcript yet.</div>
     """
+
+  @doc """
+  Shared raw-slot **activity timeline**. Renders the per-agent slot output on a
+  vertical timeline, but classifies each entry so the *conversation* reads cleanly
+  while the *machinery* stays out of the way:
+
+    - real user / assistant turns → colored chat lines (the orchestrator relay
+      prefix is stripped; an outgoing `reply` payload shows its `text`, not the
+      `swarm-msg` plumbing);
+    - everything else (tool shell calls, exit results, inter-object `[From …]`
+      messages, raw JSON) → a small `<details>` badge that expands to the raw text.
+
+  Accepts the same `{:ok, %{"logs" => […]}}` / `:loading` / other shapes the swarm
+  read API returns, so the session page, the inspector, and the Logs page all share it.
+  """
+  attr :activity, :any, required: true
+
+  def activity_timeline(%{activity: {:ok, %{"logs" => [_ | _] = entries} = body}} = assigns) do
+    assigns = assign(assigns, rows: Enum.map(entries, &classify_activity/1), source: body["source"])
+
+    ~H"""
+    <div :if={@source} class="text-xs opacity-50 mb-2">source: {@source}</div>
+    <ol class="relative border-l border-base-300 ml-2 space-y-3">
+      <li :for={r <- @rows} class="ml-4">
+        <span class={["absolute -left-1.5 top-1 w-3 h-3 rounded-full", activity_dot(r.kind)]}></span>
+        <.activity_row row={r} />
+      </li>
+    </ol>
+    """
+  end
+
+  def activity_timeline(%{activity: {:ok, _}} = assigns),
+    do: ~H"""
+    <div class="text-sm opacity-50">No raw output (slot recycled or never ran).</div>
+    """
+
+  def activity_timeline(%{activity: :loading} = assigns),
+    do: ~H"""
+    <div class="text-sm opacity-50">loading…</div>
+    """
+
+  def activity_timeline(assigns),
+    do: ~H"""
+    <div class="text-sm opacity-50">Activity unavailable.</div>
+    """
+
+  # A real conversation turn — colored chat line on the timeline.
+  defp activity_row(%{row: %{kind: kind}} = assigns) when kind in [:user, :assistant] do
+    ~H"""
+    <div class="flex items-baseline gap-2 text-xs opacity-60">
+      <time class="font-mono">{@row.ts}</time>
+      <span class={["badge badge-xs", (@row.kind == :user && "badge-primary") || "badge-secondary"]}>
+        {@row.kind}
+      </span>
+    </div>
+    <div class="text-sm whitespace-pre-wrap break-words mt-0.5">{@row.text}</div>
+    """
+  end
+
+  # System noise — a small badge that expands to the raw text.
+  defp activity_row(assigns) do
+    ~H"""
+    <details class="group">
+      <summary class="flex items-baseline gap-2 cursor-pointer list-none text-xs opacity-50 hover:opacity-90">
+        <time class="font-mono">{@row.ts}</time>
+        <span class="badge badge-ghost badge-xs">{@row.label}</span>
+        <span class="truncate max-w-[18rem] opacity-70">{@row.preview}</span>
+        <span class="opacity-40 group-open:rotate-90 transition-transform">›</span>
+      </summary>
+      <pre class="mt-1 text-xs whitespace-pre-wrap break-words bg-base-300/40 rounded p-2 overflow-x-auto">{@row.content}</pre>
+    </details>
+    """
+  end
+
+  # ── activity classification (pure) ──────────────────────────────────────────
+
+  @doc """
+  Classify one raw activity entry into a timeline row. Pure; public for tests.
+  Returns a map with `:kind` (`:user` | `:assistant` | `:noise`) plus the fields
+  the row renderer needs (cleaned `:text` for chat, `:label`/`:preview`/`:content`
+  for noise).
+  """
+  def classify_activity(e) do
+    role = to_string(e["role"] || "")
+    content = to_string(e["content"] || "")
+    ts = e["timestamp"]
+    trimmed = String.trim_leading(content)
+
+    cond do
+      # The orchestrator relays the human's Telegram messages — that IS the user.
+      role == "user" and String.starts_with?(trimmed, "[From orchestrator]") ->
+        %{kind: :user, ts: ts, text: clean_chat(content)}
+
+      # Any other inter-object hop ([From policy], [From sender], …) is plumbing.
+      Regex.match?(~r/^\[From \w+\]/, trimmed) ->
+        noise_row(role, content, ts)
+
+      role == "user" ->
+        %{kind: :user, ts: ts, text: clean_chat(content)}
+
+      # An outgoing reply payload (in an asst or tool entry) → show the message text.
+      text = reply_text(content) ->
+        %{kind: :assistant, ts: ts, text: text}
+
+      # A plain natural-language assistant turn (not a tool/JSON blob).
+      role in ["asst", "assistant"] and not machinery?(content) ->
+        %{kind: :assistant, ts: ts, text: String.trim(content)}
+
+      true ->
+        noise_row(role, content, ts)
+    end
+  end
+
+  defp noise_row(role, content, ts) do
+    %{kind: :noise, ts: ts, label: noise_label(role, content), preview: one_line(content), content: content}
+  end
+
+  # Strip the orchestrator/relay prefix so the user's words stand alone.
+  defp clean_chat(content), do: content |> String.replace(~r/^\s*\[From \w+\]\s*/, "") |> String.trim()
+
+  # Pull the human-facing `text` out of a `{"action":"reply",…,"text":"…"}` payload,
+  # tolerating the escaped form inside a `{"cmd":"…"}` / heredoc blob. nil if absent.
+  defp reply_text(content) do
+    unescaped = content |> String.replace("\\\"", "\"") |> String.replace("\\n", "\n")
+
+    case Regex.run(~r/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/, unescaped) do
+      [_, t] -> t |> String.replace("\\n", "\n") |> String.replace("\\t", "\t") |> String.trim()
+      _ -> nil
+    end
+  end
+
+  # Does this assistant content look like tooling rather than a spoken reply?
+  defp machinery?(content) do
+    t = String.trim_leading(content)
+    String.starts_with?(t, "{") or String.starts_with?(t, "shell:") or
+      String.starts_with?(t, "cat ") or String.contains?(t, "swarm-msg")
+  end
+
+  defp noise_label(role, content) do
+    case Regex.run(~r/^\s*\[From (\w+)\]/, content) do
+      [_, from] -> "#{from} →"
+      _ -> if role == "", do: "log", else: role
+    end
+  end
+
+  defp one_line(content), do: content |> String.replace(~r/\s+/, " ") |> String.trim() |> String.slice(0, 90)
+
+  defp activity_dot(:user), do: "bg-primary"
+  defp activity_dot(:assistant), do: "bg-secondary"
+  defp activity_dot(_), do: "bg-base-content/20"
 
   # ── identity / formatting helpers ───────────────────────────────────────────
 
@@ -695,12 +856,6 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp present(nil), do: nil
   defp present(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)
   defp present(_), do: nil
-
-  defp truncate(nil, _), do: ""
-  defp truncate(s, n) when is_binary(s) do
-    if String.length(s) > n, do: String.slice(s, 0, n) <> "…", else: s
-  end
-  defp truncate(s, _), do: to_string(s)
 
   @doc "Human relative time from an ISO8601 string (or `—`)."
   def relative_time(nil), do: "—"

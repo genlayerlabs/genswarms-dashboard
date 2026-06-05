@@ -161,10 +161,13 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     push_snap(view)
 
     html = view |> element("tr[phx-value-session_id='tg:1:0']") |> render_click()
-    assert html =~ "Recent transcript"
-    assert html =~ "Open full session"
+    # The inspector now shows the FULL detail inline — durable transcript + raw
+    # activity — so there is no separate "open full session" step in the panel.
+    # (The sessions table keeps its own row deep-link, hence no global refute here.)
+    assert html =~ "Durable conversation"
+    assert html =~ "Activity"
 
-    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Recent transcript"
+    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Durable conversation"
   end
 
   test "session detail loads a transcript", %{conn: conn} do
@@ -250,9 +253,115 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Usage"
   end
 
+  defp v2_usage do
+    %{
+      "schema_version" => 2,
+      "detail_level" => "full",
+      "totals" => %{
+        "requests" => 1240,
+        "errors" => 0,
+        "tokens_in" => 1_000_000,
+        "tokens_out" => 2_100_000,
+        "tokens_total" => 3_100_000,
+        "latency_ms_avg" => 420.0,
+        "latency_ms_max" => 980.0,
+        "error_rate" => 0.0,
+        "last_seen" => System.os_time(:second) - 120
+      },
+      "by_served_model" => %{
+        "gpt-5.5" => %{"requests" => 1240, "tokens_total" => 3_100_000, "error_rate" => 0.0, "latency_ms_avg" => 420.0, "latency_ms_max" => 980.0}
+      },
+      "by_provider" => %{"openai" => %{"requests" => 1240, "tokens_total" => 3_100_000}},
+      "by_route" => %{"profile:medium" => %{"requests" => 1240, "tokens_total" => 3_100_000}},
+      "by_model_family" => %{"gpt-5.5-codex" => %{"requests" => 1240, "tokens_total" => 3_100_000}},
+      "consumer_settings" => %{"status" => "active", "allowed_routes" => [], "effective_per_min" => 600, "burst" => 60},
+      "key" => %{"sha256_prefix" => "ab12cd34", "status" => "active"},
+      "health_summary" => %{"state" => "healthy", "success_rate" => 1.0, "success_count" => 1240, "request_count" => 1240, "status_counts" => %{"200" => 1240}, "route_failures" => 0},
+      "route_health" => [%{"route" => "profile:medium", "state" => "healthy", "served_model_id" => "gpt-5.5"}],
+      "recent" => [%{"ts" => System.os_time(:second) - 60, "status" => 200, "served_model_id" => "gpt-5.5", "path" => "/v1/chat/completions", "latency_ms" => 420.0, "tokens_total" => 2537}],
+      "security" => %{"sanitized" => true, "raw_api_key_exposed" => false}
+    }
+  end
+
+  test "usage renders schema v2 detail (totals, breakdowns, health, key, recent)", %{conn: conn} do
+    payload = v2_usage()
+    stub(SwarmClientMock, :dashboard, fn _ -> {:ok, @snap} end)
+    stub(RouterClientMock, :usage, fn _ -> {:ok, payload} end)
+
+    {:ok, view, _} = live(conn, "/usage")
+    html = render(view)
+
+    assert html =~ "Requests"
+    # tokens formatted with thousands separators
+    assert html =~ "3,100,000"
+    # all four breakdown tables + a served-model row
+    assert html =~ "By served model"
+    assert html =~ "By provider"
+    assert html =~ "By route"
+    assert html =~ "By model family"
+    assert html =~ "gpt-5.5"
+    # health + key metadata + recent
+    assert html =~ "healthy"
+    assert html =~ "ab12cd34"
+    assert html =~ "Recent requests"
+    assert html =~ "schema v2"
+  end
+
+  test "usage range buttons re-query the router with a since bound", %{conn: conn} do
+    test_pid = self()
+
+    stub(RouterClientMock, :usage, fn opts ->
+      send(test_pid, {:usage_opts, opts})
+      {:ok, v2_usage()}
+    end)
+
+    {:ok, view, _} = live(conn, "/usage")
+    # initial load uses the default "all" window → no since bound
+    assert_receive {:usage_opts, opts_all}
+    refute Map.has_key?(opts_all, :since)
+
+    view |> element("button[phx-value-window='1h']") |> render_click()
+    assert_receive {:usage_opts, %{since: since}}
+    assert is_integer(since)
+  end
+
   test "logs page mounts", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/logs")
     assert html =~ "Logs"
+  end
+
+  describe "activity classification (CoreComponents.classify_activity/1)" do
+    alias SubzeroSwarmDashboardWeb.CoreComponents
+
+    test "an orchestrator-relayed user message is the user, prefix stripped" do
+      assert %{kind: :user, text: "what campaigns"} =
+               CoreComponents.classify_activity(%{"role" => "user", "content" => "[From orchestrator] what campaigns", "timestamp" => "t"})
+    end
+
+    test "an inter-object [From policy] message is noise, labeled by source" do
+      row = CoreComponents.classify_activity(%{"role" => "user", "content" => ~s([From policy] {"campaigns":[]})})
+      assert row.kind == :noise
+      assert row.label == "policy →"
+    end
+
+    test "a tool shell call is noise" do
+      assert %{kind: :noise} =
+               CoreComponents.classify_activity(%{"role" => "tool", "content" => ~s(shell: swarm-msg send policy '{"action":"campaigns"}')})
+    end
+
+    test "an exit result is noise" do
+      assert %{kind: :noise} = CoreComponents.classify_activity(%{"role" => "res", "content" => "[exit:0] "})
+    end
+
+    test "a natural-language assistant turn is chat" do
+      assert %{kind: :assistant, text: "Sent! Here's the full list"} =
+               CoreComponents.classify_activity(%{"role" => "asst", "content" => "Sent! Here's the full list"})
+    end
+
+    test "an assistant reply payload shows its text, not the swarm-msg plumbing" do
+      blob = ~s({"cmd": "cat > /workspace/reply.json <<JSON\\n{\\"action\\":\\"reply\\",\\"text\\":\\"Yo welcome\\"}\\nJSON\\nswarm-msg send sender -f /workspace/reply.json"})
+      assert %{kind: :assistant, text: "Yo welcome"} = CoreComponents.classify_activity(%{"role" => "asst", "content" => blob})
+    end
   end
 
   test "logs: selecting a session loads its raw slot output", %{conn: conn} do

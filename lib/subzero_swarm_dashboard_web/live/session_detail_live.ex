@@ -35,7 +35,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     assigns = assign(assigns, :session, find_session(assigns[:snapshot], assigns.session_id))
 
     ~H"""
-    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
       <div class="space-y-5 max-w-3xl">
         <div class="flex items-center gap-2">
           <.link navigate={~p"/sessions"} class="btn btn-ghost btn-xs gap-1">
@@ -71,7 +71,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
           <p class="text-xs opacity-50 mb-2">
             Raw slot output for the bound agent — ephemeral, wiped on recycle.
           </p>
-          <.activity activity={@activity} />
+          <.activity_timeline activity={@activity} />
         </div>
       </div>
     </Layouts.app>
@@ -112,44 +112,6 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   defp transcript(assigns) do
     ~H"""
     <div class="text-sm opacity-60">Transcript unavailable.</div>
-    """
-  end
-
-  attr :activity, :any, required: true
-
-  defp activity(%{activity: {:ok, %{"logs" => [_ | _] = entries} = body}} = assigns) do
-    assigns = assign(assigns, entries: entries, source: body["source"])
-
-    ~H"""
-    <div class="text-xs opacity-60 mb-2">source: {@source}</div>
-    <ol class="relative border-l border-base-300 ml-2 space-y-3">
-      <li :for={e <- @entries} class="ml-4">
-        <span class="absolute -left-1.5 w-3 h-3 rounded-full bg-base-content/30"></span>
-        <div class="flex items-baseline gap-2 text-xs opacity-60">
-          <time class="font-mono">{e["timestamp"]}</time>
-          <span class="badge badge-ghost badge-xs">{e["role"]}</span>
-        </div>
-        <div class="text-sm whitespace-pre-wrap">{e["content"]}</div>
-      </li>
-    </ol>
-    """
-  end
-
-  defp activity(%{activity: {:ok, _}} = assigns) do
-    ~H"""
-    <div class="text-sm opacity-60">No raw output (slot recycled or never ran).</div>
-    """
-  end
-
-  defp activity(%{activity: :loading} = assigns) do
-    ~H"""
-    <div class="text-sm opacity-60">loading…</div>
-    """
-  end
-
-  defp activity(assigns) do
-    ~H"""
-    <div class="text-sm opacity-60">Activity unavailable.</div>
     """
   end
 

@@ -23,6 +23,7 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
       # the shared slide-over inspector (any page can open it via phx-click="inspect")
       |> assign_new(:inspect, fn -> nil end)
       |> assign_new(:inspect_transcript, fn -> nil end)
+      |> assign_new(:inspect_activity, fn -> nil end)
       |> assign(:swarm, swarm)
       |> attach_hook(:dash_feed, :handle_info, &handle_feed/2)
       |> attach_hook(:dash_inspect_evt, :handle_event, &handle_inspect_event/3)
@@ -39,23 +40,27 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
         {:halt, socket}
 
       session ->
-        if connected?(socket), do: send(self(), {:load_inspect_transcript, sid})
-        {:halt, assign(socket, inspect: session, inspect_transcript: :loading)}
+        if connected?(socket), do: send(self(), {:load_inspect_detail, sid})
+        {:halt, assign(socket, inspect: session, inspect_transcript: :loading, inspect_activity: :loading)}
     end
   end
 
   defp handle_inspect_event("inspect_close", _params, socket),
-    do: {:halt, assign(socket, inspect: nil, inspect_transcript: nil)}
+    do: {:halt, assign(socket, inspect: nil, inspect_transcript: nil, inspect_activity: nil)}
 
   # Not an inspector event — let the page's own handle_event run.
   defp handle_inspect_event(_event, _params, socket), do: {:cont, socket}
 
-  # Lazily fetch the transcript peek; ignore if the user already moved on.
-  defp handle_inspect_info({:load_inspect_transcript, sid}, socket) do
-    transcript = SwarmClient.session_history(socket.assigns.swarm, sid)
+  # Lazily fetch the full session detail (durable transcript + raw slot activity),
+  # so the inspector shows everything the dedicated page does. Ignore if the user
+  # already moved on (closed it or opened a different session).
+  defp handle_inspect_info({:load_inspect_detail, sid}, socket) do
+    swarm = socket.assigns.swarm
+    transcript = SwarmClient.session_history(swarm, sid)
+    activity = SwarmClient.session_logs(swarm, sid)
 
     if socket.assigns[:inspect] && socket.assigns.inspect["session_id"] == sid do
-      {:halt, assign(socket, inspect_transcript: transcript)}
+      {:halt, assign(socket, inspect_transcript: transcript, inspect_activity: activity)}
     else
       {:halt, socket}
     end

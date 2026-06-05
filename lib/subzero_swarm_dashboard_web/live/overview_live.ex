@@ -19,7 +19,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:overview} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+    <Layouts.app flash={@flash} active={:overview} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
       <div class="space-y-6 max-w-5xl">
         <div class="flex items-center justify-between">
           <h1 class="text-2xl">Overview</h1>

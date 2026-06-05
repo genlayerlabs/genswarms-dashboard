@@ -77,7 +77,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:events} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+    <Layouts.app flash={@flash} active={:events} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
       <div class="space-y-5">
         <h1 class="text-2xl">
           Events <span class="text-xs opacity-50 font-sans align-middle">structured lifecycle facts</span>

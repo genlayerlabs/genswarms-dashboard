@@ -16,7 +16,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     assigns = assign(assigns, sessions: sessions, live_count: Enum.count(sessions, &(&1["state"] == "active")))
 
     ~H"""
-    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
       <div class="space-y-5">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <div class="flex items-baseline gap-3">

@@ -35,7 +35,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     assigns = assign(assigns, :nodes, table_nodes(assigns[:snapshot], assigns.show_idle))
 
     ~H"""
-    <Layouts.app flash={@flash} active={:topology} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript}>
+    <Layouts.app flash={@flash} active={:topology} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
       <div class="space-y-4">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <h1 class="text-2xl">Topology</h1>

@@ -29,7 +29,8 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   attr :active, :atom, default: nil, doc: "the active nav key"
   attr :swarm, :string, default: nil, doc: "the swarm name shown in the sidebar"
   attr :inspect, :any, default: nil, doc: "the session currently open in the inspector"
-  attr :inspect_transcript, :any, default: nil, doc: "lazily-loaded transcript peek"
+  attr :inspect_transcript, :any, default: nil, doc: "lazily-loaded durable transcript"
+  attr :inspect_activity, :any, default: nil, doc: "lazily-loaded raw slot activity"
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -67,7 +68,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       </main>
     </div>
 
-    <.inspector inspect={@inspect} transcript={@inspect_transcript} />
+    <.inspector inspect={@inspect} transcript={@inspect_transcript} activity={@inspect_activity} />
     <.flash_group flash={@flash} />
     """
   end
