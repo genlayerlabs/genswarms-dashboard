@@ -15,7 +15,12 @@ defmodule SubzeroSwarmDashboard.SwarmFeed.Socket do
   def start_link(opts), do: Slipstream.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl Slipstream
-  def init(_opts), do: {:ok, connect!(uri: ws_uri())}
+  def init(_opts) do
+    # The read token rides in the x-dashboard-token HEADER, not the URL query
+    # string — so the secret can't leak via access/proxy logs or a Referer.
+    token = Application.get_env(:subzero_swarm_dashboard, :swarm_api_token)
+    {:ok, connect!(uri: ws_uri(), headers: auth_headers(token))}
+  end
 
   @impl Slipstream
   def handle_connect(socket) do
@@ -42,20 +47,21 @@ defmodule SubzeroSwarmDashboard.SwarmFeed.Socket do
       Application.get_env(:subzero_swarm_dashboard, :swarm_ws_url) ||
         Application.fetch_env!(:subzero_swarm_dashboard, :swarm_api_url)
 
-    build_uri(base, Application.get_env(:subzero_swarm_dashboard, :swarm_api_token))
+    build_uri(base)
   end
 
-  @doc false
-  def build_uri(base, token) do
-    uri =
-      base
-      |> String.replace_prefix("https://", "wss://")
-      |> String.replace_prefix("http://", "ws://")
-      |> String.trim_trailing("/")
-      |> Kernel.<>("/swarm/websocket")
-
-    if token in [nil, ""], do: uri, else: uri <> "?token=" <> token
+  @doc "The ws(s) URI for the swarm socket. The token is NOT here — it's a header."
+  def build_uri(base) do
+    base
+    |> String.replace_prefix("https://", "wss://")
+    |> String.replace_prefix("http://", "ws://")
+    |> String.trim_trailing("/")
+    |> Kernel.<>("/swarm/websocket")
   end
+
+  @doc "Read-token header for the WS upgrade, or [] when no token is configured."
+  def auth_headers(token) when token in [nil, ""], do: []
+  def auth_headers(token), do: [{"x-dashboard-token", token}]
 
   defp swarm_name, do: Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
 end

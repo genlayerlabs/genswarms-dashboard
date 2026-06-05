@@ -161,9 +161,14 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     |> Map.new(fn d -> {d["session_id"], d} end)
   end
 
-  # Did we answer the last inbound? Compares ingress's last_activity (inbound) with
-  # the sender's last delivery (outbound) for this conversation.
-  defp reply_status(session, deliveries, now) do
+  @doc """
+  Did we answer the last inbound? Compares ingress's `last_activity` (inbound)
+  with the sender's last delivery (outbound) for this conversation. ALL times are
+  unix SECONDS: `now` and the delivery `at` are `System.os_time(:second)`-scale,
+  and `last_activity` is an ISO8601 string parsed with `to_unix/1`. Keeping every
+  side in seconds is the contract this guards. Public for unit tests.
+  """
+  def reply_status(session, deliveries, now) do
     last_in = to_unix(session["last_activity"])
     last_send = (deliveries[session["session_id"]] || %{})["at"]
 

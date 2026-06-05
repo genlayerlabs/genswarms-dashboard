@@ -51,15 +51,29 @@ if config_env() == :prod do
 
   config :subzero_swarm_dashboard, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
+  # Bind address. Default is all interfaces (IPv6) — unchanged. Set PHX_IP to lock
+  # it down when the dashboard is NOT already behind a private network / reverse
+  # proxy (it is read-only but exposes session/usage data):
+  #   PHX_IP=loopback  (or ::1)  -> IPv6 loopback only
+  #   PHX_IP=127.0.0.1           -> IPv4 loopback only
+  #   PHX_IP=0.0.0.0             -> all IPv4 interfaces
+  bind_ip =
+    case System.get_env("PHX_IP") do
+      blank when blank in [nil, ""] -> {0, 0, 0, 0, 0, 0, 0, 0}
+      "loopback" -> {0, 0, 0, 0, 0, 0, 0, 1}
+      addr ->
+        case :inet.parse_address(String.to_charlist(addr)) do
+          {:ok, ip} -> ip
+          _ -> {0, 0, 0, 0, 0, 0, 0, 0}
+        end
+    end
+
   config :subzero_swarm_dashboard, SubzeroSwarmDashboardWeb.Endpoint,
     url: [host: host, port: String.to_integer(System.get_env("PHX_PORT", "443")), scheme: System.get_env("PHX_SCHEME", "https")],
     check_origin: false,
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+      # Bind address (see `bind_ip` above; default all-interfaces, PHX_IP overrides).
+      ip: bind_ip
     ],
     secret_key_base: secret_key_base
 
