@@ -28,6 +28,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
      )}
   end
 
+  # Live refresh: re-fetch transcript + activity on every snapshot tick (same pulse
+  # as the rest of the page). :load re-assigns without a loading flash.
+  def handle_info({:snapshot, _snap}, socket) do
+    if connected?(socket), do: send(self(), :load)
+    {:noreply, socket}
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
@@ -61,15 +68,19 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         </div>
 
         <div class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-2">Transcript</h2>
-          <p class="text-xs opacity-50 mb-2">Durable conversation (survives slot recycling).</p>
+          <h2 class="font-semibold mb-1">Conversation</h2>
+          <p class="text-xs opacity-50 mb-2">
+            The clean user ↔ Wingston back-and-forth, saved to the database — it
+            <strong>survives agent restarts</strong>. (Empty if persistence is off.)
+          </p>
           <.transcript transcript={@transcript} />
         </div>
 
         <div class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-2">Activity</h2>
+          <h2 class="font-semibold mb-1">Agent activity <span class="text-xs font-normal opacity-50">· live</span></h2>
           <p class="text-xs opacity-50 mb-2">
-            Raw slot output for the bound agent — ephemeral, wiped on recycle.
+            The agent's raw working log for this slot right now — messages in, tool
+            calls, results, sends. <strong>Ephemeral</strong>: wiped when the slot is recycled.
           </p>
           <.activity_timeline activity={@activity} />
         </div>

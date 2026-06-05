@@ -605,14 +605,14 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
           </dl>
 
           <div class="border-t border-base-300 pt-4">
-            <div class="text-xs uppercase tracking-wide opacity-50 mb-2">Transcript</div>
-            <p class="text-xs opacity-50 mb-2">Durable conversation (survives slot recycling).</p>
+            <div class="text-xs uppercase tracking-wide opacity-50 mb-1">Conversation</div>
+            <p class="text-xs opacity-50 mb-2">Clean user ↔ bot history, saved to the DB — survives restarts.</p>
             <.inspector_transcript transcript={@transcript} />
           </div>
 
           <div class="border-t border-base-300 pt-4">
-            <div class="text-xs uppercase tracking-wide opacity-50 mb-2">Activity</div>
-            <p class="text-xs opacity-50 mb-2">Raw slot output for the bound agent — ephemeral, wiped on recycle.</p>
+            <div class="text-xs uppercase tracking-wide opacity-50 mb-1">Agent activity · live</div>
+            <p class="text-xs opacity-50 mb-2">The agent's raw working log for this slot — tool calls, results, sends. Ephemeral.</p>
             <.activity_timeline activity={@activity} />
           </div>
         </div>
@@ -715,6 +715,37 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     """
   end
 
+  # An outbound reply that was actually executed (swarm-msg send ran) → delivered.
+  defp activity_row(%{row: %{kind: :sent}} = assigns) do
+    ~H"""
+    <div class="flex items-baseline gap-2 text-xs opacity-60">
+      <time class="font-mono">{@row.ts}</time>
+      <span class="badge badge-success badge-xs">sent →</span>
+    </div>
+    <div class="text-sm whitespace-pre-wrap break-words mt-0.5">{@row.text}</div>
+    """
+  end
+
+  # An assistant turn that is a tool-call emitted AS TEXT — never executed, so the
+  # reply was never sent. This is the signal that was previously masked.
+  defp activity_row(%{row: %{kind: :tool_intent}} = assigns) do
+    ~H"""
+    <details class="group">
+      <summary class="flex items-baseline gap-2 cursor-pointer list-none text-xs">
+        <time class="font-mono opacity-60">{@row.ts}</time>
+        <span class="badge badge-warning badge-xs">⚠ not delivered</span>
+        <span class="opacity-70 truncate max-w-[18rem]">{@row.text}</span>
+        <span class="opacity-40 group-open:rotate-90 transition-transform">›</span>
+      </summary>
+      <div class="mt-1 text-xs text-warning">
+        Model emitted a tool call as text — it was NOT executed, so this reply never sent
+        (native tool-calling not returned by the router/model).
+      </div>
+      <pre class="mt-1 text-xs whitespace-pre-wrap break-words bg-base-300/40 rounded p-2 overflow-x-auto">{@row.content}</pre>
+    </details>
+    """
+  end
+
   # System noise — a small badge that expands to the raw text.
   defp activity_row(assigns) do
     ~H"""
@@ -734,9 +765,13 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   @doc """
   Classify one raw activity entry into a timeline row. Pure; public for tests.
-  Returns a map with `:kind` (`:user` | `:assistant` | `:noise`) plus the fields
-  the row renderer needs (cleaned `:text` for chat, `:label`/`:preview`/`:content`
-  for noise).
+  Returns a map with `:kind`:
+    - `:user` / `:assistant` — a real conversation turn (colored chat);
+    - `:sent` — an outbound reply that was actually executed (delivered);
+    - `:tool_intent` — an assistant turn that is a tool call emitted AS TEXT and
+      therefore NEVER executed/delivered (the previously-masked failure signal);
+    - `:noise` — tool plumbing, results, inter-object hops.
+  plus the fields the row renderer needs.
   """
   def classify_activity(e) do
     role = to_string(e["role"] || "")
@@ -756,17 +791,37 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
       role == "user" ->
         %{kind: :user, ts: ts, text: clean_chat(content)}
 
-      # An outgoing reply payload (in an asst or tool entry) → show the message text.
-      text = reply_text(content) ->
-        %{kind: :assistant, ts: ts, text: text}
+      # An assistant turn that is a tool-call blob = emitted as TEXT, NOT executed.
+      # The reply was never sent — flag it, don't render it as a delivered message.
+      role in ["asst", "assistant"] and tool_call_text?(content) ->
+        %{kind: :tool_intent, ts: ts, text: reply_text(content) || one_line(content), content: content}
 
-      # A plain natural-language assistant turn (not a tool/JSON blob).
+      # Tool plumbing: an executed reply (the shell ran swarm-msg send with a
+      # reply payload) shows as delivered; anything else is noise.
+      role in ["tool", "result", "res"] ->
+        case reply_text(content) do
+          nil -> noise_row(role, content, ts)
+          txt -> %{kind: :sent, ts: ts, text: txt}
+        end
+
+      # A plain natural-language assistant turn.
       role in ["asst", "assistant"] and not machinery?(content) ->
         %{kind: :assistant, ts: ts, text: String.trim(content)}
 
       true ->
         noise_row(role, content, ts)
     end
+  end
+
+  # An assistant message that is really a tool call rendered as text: explicit
+  # <tool_call> wrapper, or a bare JSON object carrying cmd/command/action.
+  defp tool_call_text?(content) do
+    t = String.trim_leading(content)
+
+    String.starts_with?(t, "<tool_call>") or
+      (String.starts_with?(t, "{") and
+         (String.contains?(t, "\"cmd\"") or String.contains?(t, "\"command\"") or
+            String.contains?(t, "\"action\"")))
   end
 
   defp noise_row(role, content, ts) do
@@ -805,6 +860,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   defp activity_dot(:user), do: "bg-primary"
   defp activity_dot(:assistant), do: "bg-secondary"
+  defp activity_dot(:sent), do: "bg-success"
+  defp activity_dot(:tool_intent), do: "bg-warning"
   defp activity_dot(_), do: "bg-base-content/20"
 
   # ── identity / formatting helpers ───────────────────────────────────────────

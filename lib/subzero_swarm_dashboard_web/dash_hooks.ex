@@ -75,8 +75,16 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
   # {:cont} so pages that need a side-effect on new snapshots (e.g. Topology pushing
   # the graph to its JS hook) can also react; @snapshot is assigned here regardless.
-  defp handle_feed({:snapshot, snap}, socket),
-    do: {:cont, assign(socket, snapshot: snap, conn_status: :connected)}
+  defp handle_feed({:snapshot, snap}, socket) do
+    socket = assign(socket, snapshot: snap, conn_status: :connected)
+
+    # Keep the open inspector live: re-fetch its transcript + activity on every
+    # snapshot tick (reuses the lazy loader, which assigns without a loading flash).
+    if connected?(socket) and socket.assigns[:inspect],
+      do: send(self(), {:load_inspect_detail, socket.assigns.inspect["session_id"]})
+
+    {:cont, socket}
+  end
 
   defp handle_feed({:disconnected, _reason}, socket),
     do: {:halt, assign(socket, conn_status: :disconnected)}

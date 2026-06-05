@@ -1,6 +1,12 @@
 defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
+  # Reply-health thresholds: a conversation whose last inbound has gone this long
+  # with no outbound delivery is flagged "no reply"; the skew absorbs clock drift
+  # between ingress (inbound) and the sender (outbound).
+  @reply_grace_s 120
+  @reply_skew_s 5
+
   @impl true
   def mount(_params, _session, socket), do: {:ok, assign(socket, page_title: "Sessions", q: "")}
 
@@ -13,7 +19,17 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   @impl true
   def render(assigns) do
     sessions = filter(assigns[:snapshot], assigns.q)
-    assigns = assign(assigns, sessions: sessions, live_count: Enum.count(sessions, &(&1["state"] == "active")))
+    now = System.os_time(:second)
+    deliveries = deliveries(assigns[:snapshot])
+
+    assigns =
+      assign(assigns,
+        sessions: sessions,
+        live_count: Enum.count(sessions, &(&1["state"] == "active")),
+        deliveries: deliveries,
+        now: now,
+        unanswered: Enum.count(sessions, &(reply_status(&1, deliveries, now) == :unanswered))
+      )
 
     ~H"""
     <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
@@ -23,6 +39,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
             <h1 class="text-2xl">Sessions</h1>
             <span :if={@snapshot} class="text-sm opacity-60 tnum">
               {length(@sessions)} total · <span class="text-[var(--signal)]">{@live_count} live</span>
+            </span>
+            <span :if={@snapshot && @unanswered > 0} class="badge badge-warning badge-sm gap-1" title="conversations that received a message but got no reply">
+              ⚠ {@unanswered} unanswered
             </span>
           </div>
           <form phx-change="search" class="w-full max-w-sm">
@@ -44,7 +63,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
           <table class="table">
             <thead>
               <tr class="text-xs uppercase tracking-wide">
-                <th>User</th><th>State</th><th>Agent</th><th>Last seen</th><th></th>
+                <th>User</th><th>State</th><th>Reply</th><th>Agent</th><th>Last seen</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -58,6 +77,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   <.identity user={s["user"]} session_id={s["session_id"]} />
                 </td>
                 <td><.live_dot state={s["state"]} label /></td>
+                <td><.reply_badge status={reply_status(s, @deliveries, @now)} /></td>
                 <td class="font-mono text-xs opacity-70">{s["agent"]}</td>
                 <td class="text-sm opacity-70 tnum whitespace-nowrap">{relative_time(s["last_activity"])}</td>
                 <td class="text-right">
@@ -72,7 +92,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                 </td>
               </tr>
               <tr :if={@sessions == []}>
-                <td colspan="5" class="text-center opacity-55 py-8">
+                <td colspan="6" class="text-center opacity-55 py-8">
                   No sessions{if @q != "", do: " match \"#{@q}\""}.
                 </td>
               </tr>
@@ -131,4 +151,47 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   defp consumers(nil), do: nil
   defp consumers(snap), do: get_in(snap, ["extensions", "consumers"])
+
+  # ── reply-delivery health ───────────────────────────────────────────────────
+  # cid => latest delivery (%{"at", "status"}), from the sender's dashboard extension.
+  defp deliveries(nil), do: %{}
+
+  defp deliveries(snap) do
+    (get_in(snap, ["extensions", "deliveries", "items"]) || [])
+    |> Map.new(fn d -> {d["session_id"], d} end)
+  end
+
+  # Did we answer the last inbound? Compares ingress's last_activity (inbound) with
+  # the sender's last delivery (outbound) for this conversation.
+  defp reply_status(session, deliveries, now) do
+    last_in = to_unix(session["last_activity"])
+    last_send = (deliveries[session["session_id"]] || %{})["at"]
+
+    cond do
+      is_nil(last_in) -> :idle
+      is_integer(last_send) and last_send >= last_in - @reply_skew_s -> :answered
+      now - last_in <= @reply_grace_s -> :pending
+      true -> :unanswered
+    end
+  end
+
+  defp to_unix(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} -> DateTime.to_unix(dt)
+      _ -> nil
+    end
+  end
+
+  defp to_unix(_), do: nil
+
+  attr :status, :atom, required: true
+
+  defp reply_badge(assigns) do
+    ~H"""
+    <span :if={@status == :answered} class="badge badge-success badge-xs" title="replied to the last message">answered</span>
+    <span :if={@status == :pending} class="badge badge-ghost badge-xs" title="received — reply in flight">replying…</span>
+    <span :if={@status == :unanswered} class="badge badge-warning badge-xs" title="received a message but never replied">⚠ no reply</span>
+    <span :if={@status == :idle} class="opacity-40 text-xs">—</span>
+    """
+  end
 end

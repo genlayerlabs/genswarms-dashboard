@@ -156,23 +156,42 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Alberto C"
   end
 
+  test "sessions show a reply-health badge from the sender's deliveries extension", %{conn: conn} do
+    in_unix = "2026-06-03T15:22:01Z" |> DateTime.from_iso8601() |> elem(1) |> DateTime.to_unix()
+
+    {:ok, view, _} = live(conn, "/sessions")
+
+    # answered: a delivery AFTER the last inbound
+    answered = put_in(@snap, ["extensions", "deliveries"],
+      %{"items" => [%{"session_id" => "tg:1:0", "at" => in_unix + 10, "status" => "sent"}]})
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, answered})
+    assert render(view) =~ "answered"
+
+    # unanswered: old inbound, no delivery at all -> flagged + counted in the header
+    unanswered = put_in(@snap, ["extensions", "deliveries"], %{"items" => []})
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, unanswered})
+    html = render(view)
+    assert html =~ "no reply"
+    assert html =~ "unanswered"
+  end
+
   test "clicking a session opens the shared inspector, Esc-close clears it", %{conn: conn} do
     {:ok, view, _} = live(conn, "/sessions")
     push_snap(view)
 
     html = view |> element("tr[phx-value-session_id='tg:1:0']") |> render_click()
-    # The inspector now shows the FULL detail inline — durable transcript + raw
-    # activity — so there is no separate "open full session" step in the panel.
+    # The inspector now shows the FULL detail inline — durable Conversation + live
+    # Agent activity — so there is no separate "open full session" step in the panel.
     # (The sessions table keeps its own row deep-link, hence no global refute here.)
-    assert html =~ "Durable conversation"
-    assert html =~ "Activity"
+    assert html =~ "Conversation"
+    assert html =~ "Agent activity"
 
-    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Durable conversation"
+    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Agent activity"
   end
 
   test "session detail loads a transcript", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/sessions/tg:1:0")
-    assert html =~ "Transcript"
+    assert html =~ "Conversation"
   end
 
   test "session detail renders the per-session activity timeline from session_logs", %{conn: conn} do
@@ -190,7 +209,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     {:ok, view, _} = live(conn, "/sessions/tg:1:0")
     html = render(view)
 
-    assert html =~ "Activity"
+    assert html =~ "Agent activity"
     assert html =~ "agent_server"
     assert html =~ "ping"
     assert html =~ "pong"
@@ -358,9 +377,22 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
                CoreComponents.classify_activity(%{"role" => "asst", "content" => "Sent! Here's the full list"})
     end
 
-    test "an assistant reply payload shows its text, not the swarm-msg plumbing" do
+    test "an assistant tool-call emitted as text is flagged not-delivered, not shown as a reply" do
       blob = ~s({"cmd": "cat > /workspace/reply.json <<JSON\\n{\\"action\\":\\"reply\\",\\"text\\":\\"Yo welcome\\"}\\nJSON\\nswarm-msg send sender -f /workspace/reply.json"})
-      assert %{kind: :assistant, text: "Yo welcome"} = CoreComponents.classify_activity(%{"role" => "asst", "content" => blob})
+      # Previously this masked as a clean :assistant reply; now it must surface as
+      # an un-executed tool call (the reply was never actually sent).
+      assert %{kind: :tool_intent, text: "Yo welcome"} = CoreComponents.classify_activity(%{"role" => "asst", "content" => blob})
+    end
+
+    test "a <tool_call>-wrapped assistant turn is flagged not-delivered" do
+      assert %{kind: :tool_intent} =
+               CoreComponents.classify_activity(%{"role" => "assistant", "content" => ~s(<tool_call>\n{"cmd": "echo hi"}\n</tool_call>)})
+    end
+
+    test "an executed reply (shell tool actually ran swarm-msg send) shows as sent" do
+      tool = ~s(shell: cat > /workspace/reply.json <<JSON\n{"action":"reply","text":"Hello there"}\nJSON\nswarm-msg send sender -f /workspace/reply.json)
+      assert %{kind: :sent, text: "Hello there"} =
+               CoreComponents.classify_activity(%{"role" => "tool", "content" => tool})
     end
   end
 
