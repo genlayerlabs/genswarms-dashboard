@@ -27,8 +27,8 @@ defmodule GenswarmsDashboard.MixProject do
     [
       {:phoenix, "~> 1.7.10"},
       {:phoenix_pubsub, "~> 2.1"},
-      {:bandit, "~> 1.0"},
-      {:plug, "~> 1.15"},
+      {:bandit, "~> 1.10"},
+      {:plug, "~> 1.19"},
       {:jason, "~> 1.4"}
     ]
   end
