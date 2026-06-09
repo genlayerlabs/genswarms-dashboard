@@ -23,14 +23,14 @@ The library is designed to be `Code.require_file`d into the genswarms BEAM (whic
 has Phoenix, Bandit, Plug, and Jason loaded). The files must be required in this exact order:
 
 ```
-vendor/genswarms-dashboard/lib/genswarms_dashboard/config.ex
-vendor/genswarms-dashboard/lib/genswarms_dashboard/data_source.ex
-vendor/genswarms-dashboard/lib/genswarms_dashboard/aggregate.ex
-vendor/genswarms-dashboard/lib/genswarms_dashboard/plug.ex
-vendor/genswarms-dashboard/lib/genswarms_dashboard/socket.ex
-vendor/genswarms-dashboard/lib/genswarms_dashboard/channel.ex
-vendor/genswarms-dashboard/lib/genswarms_dashboard/endpoint.ex
-vendor/genswarms-dashboard/lib/genswarms_dashboard.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/config.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/data_source.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/aggregate.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/plug.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/socket.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/channel.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/endpoint.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard.ex
 ```
 
 **Why the order matters:** `Plug.Builder` runs a module plug's `init/1` at compile time,
