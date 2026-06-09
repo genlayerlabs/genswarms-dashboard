@@ -26,4 +26,9 @@ defmodule GenswarmsDashboard.SocketTest do
     assert :error = connect(%{})
     assert :error = connect(%{uri: %URI{query: "token="}})
   end
+
+  test "carrier precedence is fail-closed: a wrong x-dashboard-token is NOT rescued by a correct Bearer" do
+    Config.put(%{token: "s3cret"})
+    assert :error = connect(%{x_headers: [{"x-dashboard-token", "wrong"}, {"authorization", "Bearer s3cret"}]})
+  end
 end
