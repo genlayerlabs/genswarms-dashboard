@@ -63,6 +63,8 @@ defmodule GenswarmsDashboard.Plug do
   end
 
   # CORS preflight for the browser UI (read-only GETs from another origin/port).
+  # NOTE: this sits AFTER :auth, so preflight is token-gated too. Intentional: the real
+  # frontend is a server-side Phoenix app sending the header — no browser preflight path.
   options _ do
     conn |> put_resp_header("access-control-allow-methods", "GET, OPTIONS") |> send_resp(204, "")
   end
@@ -111,9 +113,12 @@ defmodule GenswarmsDashboard.Plug do
     |> send_resp(status, Jason.encode!(body))
   end
 
+  # Positive-int parse with a generous cap: query params size result sets / time windows
+  # (limit, max_turns, minutes) — never let an attacker-sized integer reach the stores.
+  @int_cap 10_000
   defp to_int(s, default) do
     case Integer.parse(to_string(s)) do
-      {n, _} when n > 0 -> n
+      {n, _} when n > 0 -> min(n, @int_cap)
       _ -> default
     end
   end

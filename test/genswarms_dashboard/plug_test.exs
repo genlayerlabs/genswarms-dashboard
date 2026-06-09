@@ -140,6 +140,13 @@ defmodule GenswarmsDashboard.PlugTest do
     refute Keyword.has_key?(opts, :level)
   end
 
+  test "attacker-sized integer query params are capped at 10_000" do
+    conn = call(conn(:get, "/api/swarms/fix/events?limit=99999999999999999"))
+    assert conn.status == 200
+    opts = Application.get_env(:genswarms_dashboard, :stub_last_events_query)
+    assert opts[:limit] == 10_000
+  end
+
   test "OPTIONS preflight is 204" do
     conn = call(conn(:options, "/api/swarms/fix/dashboard"))
     assert conn.status == 204
