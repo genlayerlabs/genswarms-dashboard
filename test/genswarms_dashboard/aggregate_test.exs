@@ -116,6 +116,19 @@ defmodule GenswarmsDashboard.AggregateTest do
     assert s.state == "idle" and s.agent == nil
   end
 
+  test "duplicate session_ids are dropped (first row wins); row order is preserved" do
+    rows = [
+      %{session_id: "s1", transport: "first"},
+      %{session_id: "s2"},
+      %{session_id: "s1", transport: "second"}
+    ]
+
+    agg = Aggregate.assemble(status(), [], data(%{sessions: rows}), now())
+    assert Enum.map(agg.sessions, & &1.session_id) == ["s1", "s2"]
+    assert hd(agg.sessions).transport == "first"
+    assert agg.summary.sessions == 2
+  end
+
   test "empty everything yields a well-formed, empty aggregate with the default label" do
     agg = Aggregate.assemble(status(), [], Map.delete(data(), :label), now())
     assert agg.data_source == "genswarms"

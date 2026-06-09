@@ -94,7 +94,11 @@ defmodule GenswarmsDashboard.Aggregate do
   end
 
   # ── sessions: union of durable rows + currently-leased live cids ─────────────
+  # Row order is preserved as the wire `sessions` array order (adapter-controlled);
+  # fabricated pool-only rows are appended. Duplicate session_ids are dropped
+  # (first row wins) — the legacy map-keyed aggregate guaranteed uniqueness for free.
   defp build_sessions(rows, pool, fabricate) do
+    rows = Enum.uniq_by(rows, & &1.session_id)
     assigned = Map.get(pool, :assigned, %{})
     pool_seen = Map.get(pool, :last_seen, %{})
     durable_cids = MapSet.new(rows, & &1.session_id)

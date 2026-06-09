@@ -8,6 +8,9 @@ defmodule GenswarmsDashboard.DataSource do
   extensions.consumers and sessions; one SQL pass per request).
   Session rows MAY include `last_activity` (durable) — the aggregate uses it as the fallback
   when the cid is not in the live pool. Zero-vs-nil timestamp shaping is the adapter's job.
+  Rows must have unique `session_id`s (duplicates are dropped, first wins); the row list
+  order is preserved as the wire `sessions` array order, with pool-only fabricated rows
+  appended after.
   """
   @callback snapshot(swarm :: String.t()) ::
               %{sessions: [map()],
