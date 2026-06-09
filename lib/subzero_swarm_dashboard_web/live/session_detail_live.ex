@@ -5,15 +5,26 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
+    cid = decode_id(id)
     if connected?(socket), do: send(self(), :load)
 
     {:ok,
      assign(socket,
-       page_title: "Session #{id}",
-       session_id: id,
+       page_title: "Session #{cid}",
+       session_id: cid,
        transcript: :loading,
        activity: :loading
      )}
+  end
+
+  # Session cids are "tg:<chat>:<thread>" — the colons trip Plug.Static (InvalidPathError) when
+  # used as a raw path segment, so SessionsLive URL-safe-base64-encodes them in the link. Decode
+  # here; fall back to the raw value for any link that wasn't encoded.
+  defp decode_id(id) do
+    case Base.url_decode64(id, padding: false) do
+      {:ok, cid} -> if String.printable?(cid) and String.contains?(cid, ":"), do: cid, else: id
+      :error -> id
+    end
   end
 
   @impl true

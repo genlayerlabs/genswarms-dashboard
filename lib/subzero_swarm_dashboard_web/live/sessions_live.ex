@@ -82,7 +82,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                 <td class="text-sm opacity-70 tnum whitespace-nowrap">{relative_time(s["last_activity"])}</td>
                 <td class="text-right">
                   <.link
-                    navigate={~p"/sessions/#{s["session_id"]}"}
+                    navigate={~p"/sessions/#{Base.url_encode64(s["session_id"], padding: false)}"}
                     class="btn btn-ghost btn-xs btn-circle"
                     onclick="event.stopPropagation()"
                     title="Open full session"
