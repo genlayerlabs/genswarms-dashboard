@@ -19,6 +19,11 @@ defmodule GenswarmsDashboard do
     * `:secret_key_base` — ≥64 bytes for stability across restarts; per-boot random if unset
     * `:data_source_label` — the envelope's `data_source` field, default "genswarms"
     * `:heartbeat_ms` — WS heartbeat interval, default 5000
+
+  Lifecycle: links the endpoint to the caller; there is NO supervisor and no restart on
+  crash. Suits a boot-script host that wraps the call in try/rescue (a dashboard failure
+  must not take the host down). To supervise instead, put the injected config in place
+  and start `GenswarmsDashboard.Endpoint` as a child spec under your own supervisor.
   """
   @spec start(keyword()) :: {:ok, pid()} | {:error, term()}
   def start(opts) do
