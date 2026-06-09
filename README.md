@@ -8,6 +8,13 @@ host-app or transport specifics. The genswarms engine is a **runtime-only** depe
 The host app injects all app-specific knowledge through `GenswarmsDashboard.DataSource`
 and all runtime config through `GenswarmsDashboard.start/1`.
 
+**Runtime dependencies:** the host BEAM must provide these genswarms engine modules
+(the library calls them as plain remote calls): `Genswarms.SwarmManager.status/1`,
+`Genswarms.Routing.Router.get_topology/1`, `Genswarms.Observability.LogStore.query/1`,
+`Genswarms.Agents.AgentServer.get_logs/2`, plus a running `Phoenix.PubSub` (passed as
+`pubsub_server:`). Phoenix/Bandit/Plug/Jason must already be loaded (they are, in the
+engine BEAM).
+
 ---
 
 ## Vendoring / require order
@@ -164,7 +171,8 @@ Call `GenswarmsDashboard.start/1` after requiring the library files. Options:
 - `:pubsub_server` (required) — the engine's `Phoenix.PubSub` name
 - `:token` — auth token (see fail-closed rule below)
 - `:port` — string or integer, default `4001`
-- `:host` — URL host, default `"localhost"`
+- `:host` — URL host, default `"localhost"` (URL hint only — the actual bind address is
+  controlled by `:token`: loopback without one, `0.0.0.0` with one)
 - `:secret_key_base` — ≥64 bytes for stability across restarts; per-boot random if unset
 - `:data_source_label` — the envelope's `data_source` field, default `"genswarms"`
 - `:heartbeat_ms` — WS heartbeat interval, default `5000`
