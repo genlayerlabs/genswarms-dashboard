@@ -1,7 +1,11 @@
-# subzero-swarm-dashboard
+# genswarms-dashboard frontend
+
+> Lives in the `frontend/` half of the [genswarms-dashboard monorepo](../README.md);
+> the in-BEAM read-API it consumes is [`backend/`](../backend/README.md).
+> (Formerly the standalone `subzero-swarm-dashboard` repo.)
 
 A reusable, **read-only** web dashboard for observing a single swarm built on the
-[`subzero-swarm`](https://github.com/jmlago/subzero-swarm) runtime. It shows swarm
+[`genswarms`](https://github.com/genlayerlabs/genswarms) runtime. It shows swarm
 health, the live agent/object **topology** (agents vs objects), **sessions** and
 their transcripts, events, logs, and LLM usage.
 
