@@ -148,7 +148,7 @@ defmodule GenswarmsDashboard.AggregateTest do
         data_source_label: "fixture_sql"
       })
 
-      Application.put_env(:genswarms_dashboard, :stub_status, status())
+      Application.put_env(:genswarms_dashboard, :stub_status, %{status() | name: "fix"})
       Application.put_env(:genswarms_dashboard, :stub_topology, [%{from: :ingress, targets: [:agent_1]}])
 
       on_exit(fn ->
@@ -164,13 +164,16 @@ defmodule GenswarmsDashboard.AggregateTest do
       # fix:1 + fix:2 durable, fix:pool fabricated (default row — fixture has no override)
       assert agg.summary.sessions == 3
       pool_row = Enum.find(agg.sessions, &(&1.session_id == "fix:pool"))
-      assert pool_row.transport == "unknown" and pool_row.state == "active" and pool_row.agent == "agent_2"
+      assert pool_row.transport == "unknown"
+      assert pool_row.state == "active"
+      assert pool_row.agent == "agent_2"
       assert agg.summary.pool == %{leased: 2, size: 8}
       assert %{from: "ingress", to: "agent_1"} in agg.edges
       assert agg.extensions["deliveries"].count == 1
     end
 
     test "fabricate override is used when the DataSource implements it" do
+      # overrides Config for this test only; the shared setup's on_exit deletes :config after
       GenswarmsDashboard.Config.put(%{
         swarm: "fix",
         data_source: GenswarmsDashboard.FabricatingFixtureDataSource,
@@ -183,8 +186,8 @@ defmodule GenswarmsDashboard.AggregateTest do
       assert pool_row.transport_ref == %{from: "override"}
     end
 
-    test "unknown swarm returns {:error, :not_found}" do
-      Application.delete_env(:genswarms_dashboard, :stub_status)
+    test "a swarm name SwarmManager doesn't know returns {:error, :not_found}" do
+      # stub_status is still set (for "fix") — the name-discriminating stub rejects "nope"
       assert Aggregate.build("nope") == {:error, :not_found}
     end
   end

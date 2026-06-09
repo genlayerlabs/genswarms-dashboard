@@ -9,7 +9,9 @@ defmodule Genswarms.SwarmManager do
     case Application.get_env(:genswarms_dashboard, :stub_status) do
       nil -> {:error, :not_found}
       fun when is_function(fun, 1) -> fun.(name)
-      status when is_map(status) -> {:ok, status}
+      # name-discriminating, like the real SwarmManager: only the stubbed swarm exists
+      %{name: ^name} = status -> {:ok, status}
+      %{} -> {:error, :not_found}
     end
   end
 end
