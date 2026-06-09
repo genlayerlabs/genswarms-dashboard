@@ -1,5 +1,5 @@
 defmodule GenswarmsDashboard.AggregateTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias GenswarmsDashboard.Aggregate
 
   defp status do
@@ -138,5 +138,54 @@ defmodule GenswarmsDashboard.AggregateTest do
     assert agg.extensions == %{}
     assert agg.warnings == []
     assert length(agg.nodes) == 4
+  end
+
+  describe "build/1 (live wrapper via stubs + fixture DataSource)" do
+    setup do
+      GenswarmsDashboard.Config.put(%{
+        swarm: "fix",
+        data_source: GenswarmsDashboard.FixtureDataSource,
+        data_source_label: "fixture_sql"
+      })
+
+      Application.put_env(:genswarms_dashboard, :stub_status, status())
+      Application.put_env(:genswarms_dashboard, :stub_topology, [%{from: :ingress, targets: [:agent_1]}])
+
+      on_exit(fn ->
+        Application.delete_env(:genswarms_dashboard, :config)
+        Application.delete_env(:genswarms_dashboard, :stub_status)
+        Application.delete_env(:genswarms_dashboard, :stub_topology)
+      end)
+    end
+
+    test "assembles from DataSource.snapshot + pool_snapshot with the configured label" do
+      {:ok, agg} = Aggregate.build("fix")
+      assert agg.data_source == "fixture_sql"
+      # fix:1 + fix:2 durable, fix:pool fabricated (default row — fixture has no override)
+      assert agg.summary.sessions == 3
+      pool_row = Enum.find(agg.sessions, &(&1.session_id == "fix:pool"))
+      assert pool_row.transport == "unknown" and pool_row.state == "active" and pool_row.agent == "agent_2"
+      assert agg.summary.pool == %{leased: 2, size: 8}
+      assert %{from: "ingress", to: "agent_1"} in agg.edges
+      assert agg.extensions["deliveries"].count == 1
+    end
+
+    test "fabricate override is used when the DataSource implements it" do
+      GenswarmsDashboard.Config.put(%{
+        swarm: "fix",
+        data_source: GenswarmsDashboard.FabricatingFixtureDataSource,
+        data_source_label: "fixture_sql"
+      })
+
+      {:ok, agg} = Aggregate.build("fix")
+      pool_row = Enum.find(agg.sessions, &(&1.session_id == "fix:pool"))
+      assert pool_row.transport == "fabricated"
+      assert pool_row.transport_ref == %{from: "override"}
+    end
+
+    test "unknown swarm returns {:error, :not_found}" do
+      Application.delete_env(:genswarms_dashboard, :stub_status)
+      assert Aggregate.build("nope") == {:error, :not_found}
+    end
   end
 end
