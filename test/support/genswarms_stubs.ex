@@ -2,6 +2,8 @@
 # The real engine is NOT a dependency of this repo (calls are runtime-only remote calls
 # into the host BEAM); tests steer these via Application env under :genswarms_dashboard.
 # Compiled ONLY in the test env (see elixirc_paths in mix.exs).
+# NOTE: steering state is global (Application env), and LogStore.query/1 WRITES on every
+# call — any test touching these stubs must be `async: false`.
 defmodule Genswarms.SwarmManager do
   def status(name) do
     case Application.get_env(:genswarms_dashboard, :stub_status) do
@@ -27,6 +29,7 @@ end
 defmodule Genswarms.Agents.AgentServer do
   def get_logs(_swarm, slot) do
     case Application.get_env(:genswarms_dashboard, :stub_logs) do
+      nil -> []
       fun when is_function(fun, 1) -> fun.(slot)
       other -> other
     end
