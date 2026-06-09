@@ -3,6 +3,9 @@ defmodule GenswarmsDashboard.Config do
   Stash for the host-injected runtime config. The library never reads env vars;
   the host app reads env and calls `GenswarmsDashboard.start/1`, which `put/1`s the
   resolved map here. Stored in Application env under `:genswarms_dashboard`.
+
+  Intended to be `put/1` exactly once at startup; a `put` replaces the whole map
+  (no merging) and concurrent writes are last-write-wins.
   """
 
   @app :genswarms_dashboard
