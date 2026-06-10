@@ -32,7 +32,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :nodes, table_nodes(assigns[:snapshot], assigns.show_idle))
+    assigns =
+      assigns
+      |> assign(:nodes, table_nodes(assigns[:snapshot], assigns.show_idle))
+      |> assign(:gauge, pool_meta(assigns[:snapshot]))
 
     ~H"""
     <Layouts.app flash={@flash} active={:topology} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
@@ -46,11 +49,27 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
                 <input type="text" name="q" value={@q} placeholder="focus @handle / object" class="grow bg-transparent outline-none w-44" autocomplete="off" />
               </label>
             </form>
-            <span class="badge badge-ghost tnum">pool {pool_str(@snapshot)}</span>
+            <div :if={@gauge.ok} class="flex items-center gap-1.5" title={"pool #{@gauge.leased} of #{@gauge.size} leased"}>
+              <div
+                class="radial-progress tnum text-[0.6rem]"
+                style={"--value:#{@gauge.pct}; --size:2.4rem; --thickness:3px; color:#{@gauge.tone}"}
+                role="progressbar"
+              >
+                <span class="text-base-content">{@gauge.leased}/{@gauge.size}</span>
+              </div>
+              <span class="text-xs opacity-60">pool</span>
+            </div>
             <label class="cursor-pointer flex items-center gap-1.5 text-sm">
               <input type="checkbox" class="toggle toggle-xs toggle-success" phx-click="toggle_idle" checked={@show_idle} />
               idle slots
             </label>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm gap-1.5"
+              onclick="topoRelayout()"
+            >
+              <.icon name="hero-arrow-path" class="size-4" /> re-layout
+            </button>
           </div>
         </div>
 
@@ -64,10 +83,28 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
         </div>
 
         <div class="flex flex-wrap gap-4 text-xs opacity-70">
-          <span class="flex items-center gap-1.5"><span class="inline-block w-3 h-3 align-middle bg-info rounded-sm"></span> object (deterministic)</span>
-          <span class="flex items-center gap-1.5"><span class="signal-dot"></span> agent · live</span>
-          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-full bg-base-content/30"></span> agent · idle</span>
-          <span class="opacity-60">click an agent to inspect · click any node to isolate · click empty space to reset</span>
+          <button
+            type="button"
+            class="topo-legend flex items-center gap-1.5"
+            onclick="topoToggle('object', this)"
+          >
+            <span class="inline-block w-3 h-3 align-middle bg-info rounded-sm"></span> object (deterministic)
+          </button>
+          <button
+            type="button"
+            class="topo-legend flex items-center gap-1.5"
+            onclick="topoToggle('agent-live', this)"
+          >
+            <span class="signal-dot"></span> agent · live
+          </button>
+          <button
+            type="button"
+            class="topo-legend flex items-center gap-1.5"
+            onclick="topoToggle('agent-idle', this)"
+          >
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-base-content/30"></span> agent · idle
+          </button>
+          <span class="opacity-60">click a legend chip to filter · click an agent to inspect · click any node to isolate</span>
         </div>
 
         <details :if={@snapshot} class="text-sm">
@@ -101,12 +138,24 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     """
   end
 
-  defp pool_str(snap) do
+  # Pool saturation for the header gauge: leased/size with a green→amber→red tone.
+  defp pool_meta(snap) do
     case get_in(snap, ["summary", "pool"]) do
-      %{"leased" => l, "size" => s} -> "#{l} / #{s}"
-      _ -> "—"
+      %{"leased" => l, "size" => s} when is_integer(s) and s > 0 ->
+        pct = round(l / s * 100)
+        %{ok: true, leased: l, size: s, pct: pct, tone: pool_tone(pct)}
+
+      %{"leased" => l, "size" => s} ->
+        %{ok: true, leased: l, size: s, pct: 0, tone: pool_tone(0)}
+
+      _ ->
+        %{ok: false, leased: 0, size: 0, pct: 0, tone: pool_tone(0)}
     end
   end
+
+  defp pool_tone(pct) when pct >= 90, do: "var(--color-error)"
+  defp pool_tone(pct) when pct >= 70, do: "var(--color-warning)"
+  defp pool_tone(_pct), do: "var(--color-success)"
 
   # ── graph payload for the cytoscape hook ─────────────────────────────────────
   defp graph_map(nil, _show_idle), do: %{nodes: [], edges: []}
