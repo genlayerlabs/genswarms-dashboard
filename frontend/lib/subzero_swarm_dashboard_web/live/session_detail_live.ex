@@ -107,11 +107,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   attr :skills, :any, required: true
 
   # The agent's system prompt source — the skills dir subzeroclaw concatenates into
-  # its system message at session start, read live from the leased slot's disk (no
+  # its system message at session start, read live from an agent slot's disk (no
   # log entry involved). Standout accent card, sits first because the model saw it
   # before any turn; each skill collapsed since the full text dwarfs the conversation.
-  defp prompt_skills(%{skills: {:ok, %{"skills" => [_ | _] = skills}}} = assigns) do
-    assigns = assign(assigns, :skills_list, skills)
+  # source "slot" = this session's leased agent; "pool" = the lease is gone, so the
+  # backend read another live pool agent (same skills deploy).
+  defp prompt_skills(%{skills: {:ok, %{"skills" => [_ | _] = skills} = body}} = assigns) do
+    assigns = assign(assigns, skills_list: skills, source: body["source"])
 
     ~H"""
     <div class="card border-l-4 border-accent bg-accent/10 p-4">
@@ -119,8 +121,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         <span class="badge badge-accent badge-sm font-semibold">⚙</span> System prompt · skills
       </h2>
       <p class="text-xs opacity-60 mb-2">
-        What this slot's agent is primed with before the first message — every skill file
+        What the agent is primed with before the first message — every skill file
         loaded into its system prompt (read live from the agent's skills dir).
+      </p>
+      <p :if={@source == "pool"} class="text-xs opacity-60 mb-2">
+        This session isn't leased to a slot right now — showing the skills another live
+        pool agent is primed with (the pool shares one skills deploy).
       </p>
       <details :for={s <- @skills_list} class="group mt-1">
         <summary class="flex items-baseline gap-2 cursor-pointer list-none text-xs">
@@ -139,13 +145,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     """
   end
 
-  # Not leased right now (slot recycled) or persistence path unavailable — say so
+  # No live agent anywhere to read skills from (swarm down / pool empty) — say so
   # rather than render an empty standout card.
   defp prompt_skills(assigns) do
     ~H"""
     <div class="card bg-base-200 p-4">
       <h2 class="font-semibold mb-1">System prompt · skills</h2>
-      <div class="text-sm opacity-60">Unavailable (no live slot for this session).</div>
+      <div class="text-sm opacity-60">Unavailable (no live agent to read skills from).</div>
     </div>
     """
   end

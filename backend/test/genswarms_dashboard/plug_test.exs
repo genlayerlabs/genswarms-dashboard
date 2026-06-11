@@ -120,7 +120,7 @@ defmodule GenswarmsDashboard.PlugTest do
     assert %{"logs" => [], "source" => "unavailable"} = Jason.decode!(conn.resp_body)
   end
 
-  test "GET /skills serves the LIVE slot's skills dir (the prompt source), host path stripped" do
+  test "GET /skills serves the leased slot's skills dir (the prompt source), host path stripped" do
     Application.put_env(:genswarms_dashboard, :stub_skills, fn :agent_1 ->
       [%{name: "browse.md", content: "# Browse\nRender pages.", path: "/host/skills/browse.md"}]
     end)
@@ -133,9 +133,28 @@ defmodule GenswarmsDashboard.PlugTest do
     assert [%{"name" => "browse.md", "content" => "# Browse\nRender pages."} = skill] = body["skills"]
     # the engine also returns the host filesystem :path — must never reach the wire
     refute Map.has_key?(skill, "path")
+  end
 
-    # not leased ⇒ unavailable (same liveness rule as /logs)
+  test "GET /skills falls back to another live agent when the session isn't leased (source: pool)" do
+    # Sessions are mostly inspected AFTER the slot was recycled — unlike /logs,
+    # skills must not go dark with the lease.
+    Application.put_env(:genswarms_dashboard, :stub_skills, fn slot ->
+      [%{name: "browse.md", content: "from #{slot}", path: "/host/skills/browse.md"}]
+    end)
+
+    # fix:2 is durable but NOT leased; the fixture pool has other live slots
     conn = call(conn(:get, "/api/swarms/fix/sessions/fix:2/skills"))
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["source"] == "pool"
+    assert [%{"name" => "browse.md", "content" => "from " <> _}] = body["skills"]
+  end
+
+  test "GET /skills is unavailable only when there is no live agent at all" do
+    # no data source (no pool to fall back to) and no swarm status (stub unset ⇒ not_found)
+    put_config(%{data_source: nil})
+
+    conn = call(conn(:get, "/api/swarms/fix/sessions/fix:1/skills"))
     assert %{"skills" => [], "source" => "unavailable"} = Jason.decode!(conn.resp_body)
   end
 

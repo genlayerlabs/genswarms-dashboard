@@ -235,15 +235,34 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "System prompt · skills"
     assert html =~ "browse.md"
     assert html =~ "Render pages."
+    # leased slot ⇒ no pool-fallback note
+    refute html =~ "isn&#39;t leased to a slot right now"
   end
 
-  test "session detail says skills are unavailable when the session has no live slot", %{conn: conn} do
+  test "session detail notes the pool fallback when the session isn't leased", %{conn: conn} do
+    stub(SwarmClientMock, :session_skills, fn _swarm, "tg:1:0" ->
+      {:ok,
+       %{
+         "source" => "pool",
+         "skills" => [%{"name" => "browse.md", "content" => "# Browse\nRender pages."}]
+       }}
+    end)
+
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    html = render(view)
+
+    assert html =~ "System prompt · skills"
+    assert html =~ "Render pages."
+    assert html =~ "isn&#39;t leased to a slot right now"
+  end
+
+  test "session detail says skills are unavailable when no live agent exists at all", %{conn: conn} do
     # default session_skills stub is source: unavailable
     {:ok, view, _} = live(conn, "/sessions/tg:1:0")
     html = render(view)
 
     assert html =~ "System prompt · skills"
-    assert html =~ "Unavailable (no live slot"
+    assert html =~ "Unavailable (no live agent"
   end
 
   test "events page mounts", %{conn: conn} do
