@@ -200,6 +200,11 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
        %{
          "source" => "agent_server",
          "logs" => [
+           %{
+             "timestamp" => "2026-06-04T09:59:59Z",
+             "role" => "system",
+             "content" => "You are SubZeroClaw.\n\n--- SKILL: browse.md ---\nRender pages."
+           },
            %{"timestamp" => "2026-06-04T10:00:00Z", "role" => "user", "content" => "ping"},
            %{"timestamp" => "2026-06-04T10:00:01Z", "role" => "assistant", "content" => "pong"}
          ]
@@ -214,6 +219,9 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "ping"
     assert html =~ "pong"
     assert html =~ "2026-06-04T10:00:01Z"
+    # the SYSTEM entry renders as the standout prompt/skills block, content intact
+    assert html =~ "system prompt · skills"
+    assert html =~ "--- SKILL: browse.md ---"
   end
 
   test "events page mounts", %{conn: conn} do
@@ -393,6 +401,20 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
       tool = ~s(shell: cat > /workspace/reply.json <<JSON\n{"action":"reply","text":"Hello there"}\nJSON\nswarm-msg send sender -f /workspace/reply.json)
       assert %{kind: :sent, text: "Hello there"} =
                CoreComponents.classify_activity(%{"role" => "tool", "content" => tool})
+    end
+
+    test "the SYSTEM entry (prompt + skills) is its own standout kind, content intact" do
+      content =
+        "You are SubZeroClaw, a minimal agentic assistant.\n\n--- SKILL: browse.md ---\n# Browse\nRender pages."
+
+      row = CoreComponents.classify_activity(%{"role" => "system", "content" => content, "timestamp" => "t"})
+      assert %{kind: :system, ts: "t", content: ^content} = row
+      assert row.preview =~ "You are SubZeroClaw"
+    end
+
+    test "the SYS compaction note stays plain noise, not a system-prompt row" do
+      assert %{kind: :noise} =
+               CoreComponents.classify_activity(%{"role" => "sys", "content" => "compacting context"})
     end
   end
 

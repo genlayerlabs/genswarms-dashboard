@@ -702,6 +702,27 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     <div class="text-sm opacity-50">Activity unavailable.</div>
     """
 
+  # The session's system prompt — base prompt + every loaded skill. Standout
+  # accent block so "what was this agent actually primed with" is one glance +
+  # one click away; collapsed by default because it dwarfs the conversation.
+  defp activity_row(%{row: %{kind: :system}} = assigns) do
+    ~H"""
+    <details class="group rounded-lg border-l-4 border-accent bg-accent/10 px-3 py-2">
+      <summary class="flex items-baseline gap-2 cursor-pointer list-none text-xs">
+        <time class="font-mono opacity-60">{@row.ts}</time>
+        <span class="badge badge-accent badge-sm font-semibold">⚙ system prompt · skills</span>
+        <span class="opacity-70 truncate max-w-[18rem]">{@row.preview}</span>
+        <span class="opacity-40 group-open:rotate-90 transition-transform">›</span>
+      </summary>
+      <div class="mt-1 text-xs opacity-60">
+        Everything the model was primed with before the first message — the base prompt
+        and each <code>--- SKILL ---</code> block loaded from the agent's skills dir.
+      </div>
+      <pre class="mt-1 text-xs whitespace-pre-wrap break-words bg-base-300/40 rounded p-2 overflow-x-auto max-h-96 overflow-y-auto">{@row.content}</pre>
+    </details>
+    """
+  end
+
   # A real conversation turn — colored chat line on the timeline.
   defp activity_row(%{row: %{kind: kind}} = assigns) when kind in [:user, :assistant] do
     ~H"""
@@ -766,6 +787,10 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   @doc """
   Classify one raw activity entry into a timeline row. Pure; public for tests.
   Returns a map with `:kind`:
+    - `:system` — the session's system prompt (base prompt + every skill),
+      logged once by subzeroclaw at session start; rendered as a standout
+      collapsed block since it's the one part of the model's context the rest
+      of the log can't reconstruct;
     - `:user` / `:assistant` — a real conversation turn (colored chat);
     - `:sent` — an outbound reply that was actually executed (delivered);
     - `:tool_intent` — an assistant turn that is a tool call emitted AS TEXT and
@@ -780,6 +805,11 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     trimmed = String.trim_leading(content)
 
     cond do
+      # The system prompt subzeroclaw writes once at session start (role
+      # "system"; the mid-run "sys" compaction note is unrelated → noise).
+      role == "system" ->
+        %{kind: :system, ts: ts, content: content, preview: one_line(content)}
+
       # The orchestrator relays the human's Telegram messages — that IS the user.
       role == "user" and String.starts_with?(trimmed, "[From orchestrator]") ->
         %{kind: :user, ts: ts, text: clean_chat(content)}
@@ -858,6 +888,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   defp one_line(content), do: content |> String.replace(~r/\s+/, " ") |> String.trim() |> String.slice(0, 90)
 
+  defp activity_dot(:system), do: "bg-accent"
   defp activity_dot(:user), do: "bg-primary"
   defp activity_dot(:assistant), do: "bg-secondary"
   defp activity_dot(:sent), do: "bg-success"
