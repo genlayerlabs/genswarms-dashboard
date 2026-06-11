@@ -10,6 +10,8 @@ defmodule SubzeroSwarmDashboard.SwarmClient do
               {:ok, map()} | {:error, term()}
   @callback session_logs(swarm :: String.t(), session_id :: String.t()) ::
               {:ok, map()} | {:error, term()}
+  @callback session_skills(swarm :: String.t(), session_id :: String.t()) ::
+              {:ok, map()} | {:error, term()}
   @callback events(swarm :: String.t(), opts :: map()) :: {:ok, list()} | {:error, term()}
 
   defp impl, do: Application.fetch_env!(:subzero_swarm_dashboard, :swarm_client)
@@ -17,5 +19,6 @@ defmodule SubzeroSwarmDashboard.SwarmClient do
   def dashboard(swarm), do: impl().dashboard(swarm)
   def session_history(swarm, session_id), do: impl().session_history(swarm, session_id)
   def session_logs(swarm, session_id), do: impl().session_logs(swarm, session_id)
+  def session_skills(swarm, session_id), do: impl().session_skills(swarm, session_id)
   def events(swarm, opts \\ %{}), do: impl().events(swarm, opts)
 end

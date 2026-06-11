@@ -47,6 +47,19 @@ defmodule GenswarmsDashboard.Plug do
     end
   end
 
+  # GET /api/swarms/:name/sessions/:session_id/skills  → the CURRENTLY-leased slot's skills
+  # dir — the exact .md files subzeroclaw concatenates into its system prompt at session
+  # start. Read from disk via the engine's get_skills_content (same BEAM), NOT from the
+  # session log, so no upstream logging/parsing is needed; the tradeoff is this shows the
+  # dir's CURRENT contents, not a verbatim record of session start (skills can be updated
+  # mid-session via the engine API). Same liveness rule as /logs: not leased ⇒ unavailable.
+  get "/api/swarms/:name/sessions/:session_id/skills" do
+    case slot_skills(name, session_id) do
+      {:ok, skills} -> json(conn, 200, %{session_id: session_id, skills: skills, source: "slot"})
+      :unavailable -> json(conn, 200, %{session_id: session_id, skills: [], source: "unavailable"})
+    end
+  end
+
   # GET /api/swarms/:name/events  → the IN-NODE LogStore (read-only, public LogStore.query/1).
   # NOT the SQLite EventStore: that durable store is populated by the daemon/CLI path and is
   # empty in an embedded single-BEAM orchestrator. LogStore (ETS) holds this node's live events.
@@ -133,6 +146,25 @@ defmodule GenswarmsDashboard.Plug do
         try do
           entries = Genswarms.Agents.AgentServer.get_logs(swarm, slot) || []
           {:ok, Enum.map(entries, &rename_log_file/1)}
+        rescue
+          _ -> :unavailable
+        catch
+          :exit, _ -> :unavailable
+        end
+    end
+  end
+
+  # Projected to name+content only — get_skills_content also returns the host
+  # filesystem :path, which must not reach the wire.
+  defp slot_skills(swarm, cid) do
+    case live_slot(swarm, cid) do
+      nil ->
+        :unavailable
+
+      slot ->
+        try do
+          skills = Genswarms.Agents.AgentServer.get_skills_content(swarm, slot) || []
+          {:ok, Enum.map(skills, fn s -> %{name: s[:name], content: s[:content]} end)}
         rescue
           _ -> :unavailable
         catch

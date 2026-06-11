@@ -58,6 +58,7 @@ defmodule GoldenContractTest do
     assert call.(:get, "/api/swarms/fix/dashboard").status == 200
     assert call.(:get, "/api/swarms/fix/sessions/fix:1/history").status == 200
     assert call.(:get, "/api/swarms/fix/sessions/fix:1/logs").status == 200
+    assert call.(:get, "/api/swarms/fix/sessions/fix:1/skills").status == 200
     assert call.(:get, "/api/swarms/fix/events").status == 200
     assert call.(:options, "/api/swarms/fix/dashboard").status == 204
     assert call.(:get, "/").status == 404

@@ -13,7 +13,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
        page_title: "Session #{cid}",
        session_id: cid,
        transcript: :loading,
-       activity: :loading
+       activity: :loading,
+       skills: :loading
      )}
   end
 
@@ -35,7 +36,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     {:noreply,
      assign(socket,
        transcript: SwarmClient.session_history(swarm, id),
-       activity: SwarmClient.session_logs(swarm, id)
+       activity: SwarmClient.session_logs(swarm, id),
+       skills: SwarmClient.session_skills(swarm, id)
      )}
   end
 
@@ -78,6 +80,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
           </span>
         </div>
 
+        <.prompt_skills skills={@skills} />
+
         <div class="card bg-base-200 p-4">
           <h2 class="font-semibold mb-1">Conversation</h2>
           <p class="text-xs opacity-50 mb-2">
@@ -97,6 +101,52 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         </div>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :skills, :any, required: true
+
+  # The agent's system prompt source — the skills dir subzeroclaw concatenates into
+  # its system message at session start, read live from the leased slot's disk (no
+  # log entry involved). Standout accent card, sits first because the model saw it
+  # before any turn; each skill collapsed since the full text dwarfs the conversation.
+  defp prompt_skills(%{skills: {:ok, %{"skills" => [_ | _] = skills}}} = assigns) do
+    assigns = assign(assigns, :skills_list, skills)
+
+    ~H"""
+    <div class="card border-l-4 border-accent bg-accent/10 p-4">
+      <h2 class="font-semibold mb-1 flex items-center gap-2">
+        <span class="badge badge-accent badge-sm font-semibold">⚙</span> System prompt · skills
+      </h2>
+      <p class="text-xs opacity-60 mb-2">
+        What this slot's agent is primed with before the first message — every skill file
+        loaded into its system prompt (read live from the agent's skills dir).
+      </p>
+      <details :for={s <- @skills_list} class="group mt-1">
+        <summary class="flex items-baseline gap-2 cursor-pointer list-none text-xs">
+          <span class="badge badge-accent badge-outline badge-xs font-mono">{s["name"]}</span>
+          <span class="opacity-40 group-open:rotate-90 transition-transform">›</span>
+        </summary>
+        <pre class="mt-1 text-xs whitespace-pre-wrap break-words bg-base-300/40 rounded p-2 overflow-x-auto max-h-96 overflow-y-auto">{s["content"]}</pre>
+      </details>
+    </div>
+    """
+  end
+
+  defp prompt_skills(%{skills: :loading} = assigns) do
+    ~H"""
+    <div class="text-sm opacity-60">loading…</div>
+    """
+  end
+
+  # Not leased right now (slot recycled) or persistence path unavailable — say so
+  # rather than render an empty standout card.
+  defp prompt_skills(assigns) do
+    ~H"""
+    <div class="card bg-base-200 p-4">
+      <h2 class="font-semibold mb-1">System prompt · skills</h2>
+      <div class="text-sm opacity-60">Unavailable (no live slot for this session).</div>
+    </div>
     """
   end
 

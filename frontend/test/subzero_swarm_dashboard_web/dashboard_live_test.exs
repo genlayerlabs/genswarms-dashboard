@@ -62,6 +62,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
       {:ok, %{"logs" => [], "source" => "unavailable"}}
     end)
 
+    stub(SwarmClientMock, :session_skills, fn _, _ ->
+      {:ok, %{"skills" => [], "source" => "unavailable"}}
+    end)
+
     stub(RouterClientMock, :usage, fn _ -> {:unavailable, :not_configured} end)
     :ok
   end
@@ -214,6 +218,32 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "ping"
     assert html =~ "pong"
     assert html =~ "2026-06-04T10:00:01Z"
+  end
+
+  test "session detail renders the live slot's skills as the system-prompt block", %{conn: conn} do
+    stub(SwarmClientMock, :session_skills, fn _swarm, "tg:1:0" ->
+      {:ok,
+       %{
+         "source" => "slot",
+         "skills" => [%{"name" => "browse.md", "content" => "# Browse\nRender pages."}]
+       }}
+    end)
+
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    html = render(view)
+
+    assert html =~ "System prompt · skills"
+    assert html =~ "browse.md"
+    assert html =~ "Render pages."
+  end
+
+  test "session detail says skills are unavailable when the session has no live slot", %{conn: conn} do
+    # default session_skills stub is source: unavailable
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    html = render(view)
+
+    assert html =~ "System prompt · skills"
+    assert html =~ "Unavailable (no live slot"
   end
 
   test "events page mounts", %{conn: conn} do
