@@ -22,7 +22,7 @@ defmodule GenswarmsDashboard.PlugTest do
 
     on_exit(fn ->
       Application.delete_env(:genswarms_dashboard, :config)
-      for k <- [:stub_status, :stub_topology, :stub_events, :stub_logs, :stub_last_events_query],
+      for k <- [:stub_status, :stub_topology, :stub_events, :stub_logs, :stub_skills, :stub_last_events_query],
           do: Application.delete_env(:genswarms_dashboard, k)
     end)
 
@@ -118,6 +118,44 @@ defmodule GenswarmsDashboard.PlugTest do
     # fix:2 is durable but NOT leased ⇒ unavailable (no slot bleed)
     conn = call(conn(:get, "/api/swarms/fix/sessions/fix:2/logs"))
     assert %{"logs" => [], "source" => "unavailable"} = Jason.decode!(conn.resp_body)
+  end
+
+  test "GET /skills serves the leased slot's skills dir (the prompt source), host path stripped" do
+    Application.put_env(:genswarms_dashboard, :stub_skills, fn :agent_1 ->
+      [%{name: "browse.md", content: "# Browse\nRender pages.", path: "/host/skills/browse.md"}]
+    end)
+
+    # fix:1 is leased to :agent_1 in the fixture pool_snapshot
+    conn = call(conn(:get, "/api/swarms/fix/sessions/fix:1/skills"))
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["source"] == "slot"
+    assert [%{"name" => "browse.md", "content" => "# Browse\nRender pages."} = skill] = body["skills"]
+    # the engine also returns the host filesystem :path — must never reach the wire
+    refute Map.has_key?(skill, "path")
+  end
+
+  test "GET /skills falls back to another live agent when the session isn't leased (source: pool)" do
+    # Sessions are mostly inspected AFTER the slot was recycled — unlike /logs,
+    # skills must not go dark with the lease.
+    Application.put_env(:genswarms_dashboard, :stub_skills, fn slot ->
+      [%{name: "browse.md", content: "from #{slot}", path: "/host/skills/browse.md"}]
+    end)
+
+    # fix:2 is durable but NOT leased; the fixture pool has other live slots
+    conn = call(conn(:get, "/api/swarms/fix/sessions/fix:2/skills"))
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["source"] == "pool"
+    assert [%{"name" => "browse.md", "content" => "from " <> _}] = body["skills"]
+  end
+
+  test "GET /skills is unavailable only when there is no live agent at all" do
+    # no data source (no pool to fall back to) and no swarm status (stub unset ⇒ not_found)
+    put_config(%{data_source: nil})
+
+    conn = call(conn(:get, "/api/swarms/fix/sessions/fix:1/skills"))
+    assert %{"skills" => [], "source" => "unavailable"} = Jason.decode!(conn.resp_body)
   end
 
   test "GET /events queries LogStore with normalized opts and formats events" do

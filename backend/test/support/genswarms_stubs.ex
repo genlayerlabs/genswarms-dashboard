@@ -36,4 +36,12 @@ defmodule Genswarms.Agents.AgentServer do
       other -> other
     end
   end
+
+  def get_skills_content(_swarm, slot) do
+    case Application.get_env(:genswarms_dashboard, :stub_skills) do
+      nil -> []
+      fun when is_function(fun, 1) -> fun.(slot)
+      other -> other
+    end
+  end
 end

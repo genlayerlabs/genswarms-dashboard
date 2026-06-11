@@ -47,6 +47,25 @@ defmodule GenswarmsDashboard.Plug do
     end
   end
 
+  # GET /api/swarms/:name/sessions/:session_id/skills  → the skills dir an agent slot is
+  # primed with — the exact .md files subzeroclaw concatenates into its system prompt at
+  # session start. Read from disk via the engine's get_skills_content (same BEAM), NOT
+  # from the session log, so no upstream logging/parsing is needed; the tradeoff is this
+  # shows the dir's CURRENT contents, not a verbatim record of session start (skills can
+  # be updated mid-session via the engine API).
+  #
+  # Unlike /logs this does NOT require the session to be leased: logs are per-conversation
+  # (a recycled slot's log would bleed someone else's session), but skills are how the
+  # pool's agents are primed — and sessions are mostly inspected AFTER the slot was
+  # recycled, exactly when a leased-only rule would hide them. source: "slot" (this
+  # session's leased agent) | "pool" (another live agent) | "unavailable".
+  get "/api/swarms/:name/sessions/:session_id/skills" do
+    case session_skills(name, session_id) do
+      {:ok, skills, source} -> json(conn, 200, %{session_id: session_id, skills: skills, source: source})
+      :unavailable -> json(conn, 200, %{session_id: session_id, skills: [], source: "unavailable"})
+    end
+  end
+
   # GET /api/swarms/:name/events  → the IN-NODE LogStore (read-only, public LogStore.query/1).
   # NOT the SQLite EventStore: that durable store is populated by the daemon/CLI path and is
   # empty in an embedded single-BEAM orchestrator. LogStore (ETS) holds this node's live events.
@@ -139,6 +158,51 @@ defmodule GenswarmsDashboard.Plug do
           :exit, _ -> :unavailable
         end
     end
+  end
+
+  defp session_skills(swarm, cid) do
+    cond do
+      slot = live_slot(swarm, cid) -> read_skills(swarm, slot, "slot")
+      slot = any_live_agent(swarm) -> read_skills(swarm, slot, "pool")
+      true -> :unavailable
+    end
+  end
+
+  # Projected to name+content only — get_skills_content also returns the host
+  # filesystem :path, which must not reach the wire.
+  defp read_skills(swarm, slot, source) do
+    skills = Genswarms.Agents.AgentServer.get_skills_content(swarm, slot) || []
+    {:ok, Enum.map(skills, fn s -> %{name: s[:name], content: s[:content]} end), source}
+  rescue
+    _ -> :unavailable
+  catch
+    :exit, _ -> :unavailable
+  end
+
+  # Any currently-live agent slot: one leased to some other session (pool snapshot),
+  # else any agent the swarm reports. Used for skills ONLY — never for logs, where a
+  # foreign slot would bleed another conversation.
+  defp any_live_agent(swarm) do
+    pool_agent =
+      case Config.get(:data_source) do
+        nil ->
+          nil
+
+        ds ->
+          case ds.pool_snapshot(swarm) do
+            %{assigned: assigned} when map_size(assigned) > 0 ->
+              assigned |> Map.values() |> Enum.find(&is_atom/1)
+
+            _ ->
+              nil
+          end
+      end
+
+    pool_agent ||
+      case Genswarms.SwarmManager.status(swarm) do
+        {:ok, %{agents: [a | _]}} -> a[:name]
+        _ -> nil
+      end
   end
 
   defp live_slot(swarm, cid) do
