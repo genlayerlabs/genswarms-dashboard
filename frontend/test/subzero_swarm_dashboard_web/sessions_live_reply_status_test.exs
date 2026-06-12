@@ -37,7 +37,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLiveReplyStatusTest do
   end
 
   test "a delivery for ANOTHER conversation does not count as answered" do
-    assert SessionsLive.reply_status(session(), deliv(@in_s + 10, "tg:other:0"), @in_s + 30) == :pending
+    assert SessionsLive.reply_status(session(), deliv(@in_s + 10, "tg:other:0"), @in_s + 30) ==
+             :pending
   end
 
   test "unit contract: `at` is seconds (a seconds-scale just-after delivery is answered)" do

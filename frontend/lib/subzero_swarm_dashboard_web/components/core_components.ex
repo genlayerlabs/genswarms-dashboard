@@ -527,16 +527,27 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     ~H"""
     <div class={["flex items-center gap-2.5 min-w-0", @class]}>
       <span
-        class={["monogram shrink-0", @size == :sm && "!w-7 !h-7 !text-xs", @size == :lg && "!w-10 !h-10 !text-base"]}
+        class={[
+          "monogram shrink-0",
+          @size == :sm && "!w-7 !h-7 !text-xs",
+          @size == :lg && "!w-10 !h-10 !text-base"
+        ]}
         style={monogram_style(@user, @session_id)}
       >
         {@lines.monogram}
       </span>
       <div class="min-w-0 leading-tight">
-        <div class={["truncate", @size_class, @lines.primary_mono && "font-mono", !@lines.primary_mono && "font-medium"]}>
+        <div class={[
+          "truncate",
+          @size_class,
+          @lines.primary_mono && "font-mono",
+          !@lines.primary_mono && "font-medium"
+        ]}>
           {@lines.primary}
         </div>
-        <div :if={@lines.secondary} class="text-xs opacity-55 font-mono truncate">{@lines.secondary}</div>
+        <div :if={@lines.secondary} class="text-xs opacity-55 font-mono truncate">
+          {@lines.secondary}
+        </div>
       </div>
     </div>
     """
@@ -554,7 +565,10 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     ~H"""
     <span class={["inline-flex items-center gap-1.5", @class]}>
       <span class={["signal-dot", !@active && "signal-dot--idle"]}></span>
-      <span :if={@label} class={["text-xs", @active && "text-[var(--signal)] font-medium", !@active && "opacity-55"]}>
+      <span
+        :if={@label}
+        class={["text-xs", @active && "text-[var(--signal)] font-medium", !@active && "opacity-55"]}
+      >
         {if @active, do: "live", else: "idle"}
       </span>
     </span>
@@ -574,13 +588,22 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   def inspector(assigns) do
     ~H"""
     <div :if={@inspect}>
-      <div class="inspector-backdrop" phx-click="inspect_close" phx-window-keydown="inspect_close" phx-key="Escape">
+      <div
+        class="inspector-backdrop"
+        phx-click="inspect_close"
+        phx-window-keydown="inspect_close"
+        phx-key="Escape"
+      >
       </div>
       <aside class="inspector-panel scroll-thin">
         <div class="p-5 space-y-5">
           <div class="flex items-start justify-between gap-3">
             <.identity user={@inspect["user"]} session_id={@inspect["session_id"]} size={:lg} />
-            <button class="btn btn-ghost btn-sm btn-circle -mr-1" phx-click="inspect_close" aria-label="Close">
+            <button
+              class="btn btn-ghost btn-sm btn-circle -mr-1"
+              phx-click="inspect_close"
+              aria-label="Close"
+            >
               <.icon name="hero-x-mark" class="size-5" />
             </button>
           </div>
@@ -588,7 +611,9 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
           <div class="flex flex-wrap items-center gap-2">
             <.live_dot state={@inspect["state"]} label />
             <span class="badge badge-ghost badge-sm">{@inspect["transport"]}</span>
-            <span :if={chat_type(@inspect)} class="badge badge-outline badge-sm">{chat_type(@inspect)}</span>
+            <span :if={chat_type(@inspect)} class="badge badge-outline badge-sm">
+              {chat_type(@inspect)}
+            </span>
           </div>
 
           <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 text-sm">
@@ -606,13 +631,17 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
           <div class="border-t border-base-300 pt-4">
             <div class="text-xs uppercase tracking-wide opacity-50 mb-1">Conversation</div>
-            <p class="text-xs opacity-50 mb-2">Clean user ↔ bot history, saved to the DB — survives restarts.</p>
+            <p class="text-xs opacity-50 mb-2">
+              Clean user ↔ bot history, saved to the DB — survives restarts.
+            </p>
             <.inspector_transcript transcript={@transcript} />
           </div>
 
           <div class="border-t border-base-300 pt-4">
             <div class="text-xs uppercase tracking-wide opacity-50 mb-1">Agent activity · live</div>
-            <p class="text-xs opacity-50 mb-2">The agent's raw working log for this slot — tool calls, results, sends. Ephemeral.</p>
+            <p class="text-xs opacity-50 mb-2">
+              The agent's raw working log for this slot — tool calls, results, sends. Ephemeral.
+            </p>
             <.activity_timeline activity={@activity} />
           </div>
         </div>
@@ -674,7 +703,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   attr :activity, :any, required: true
 
   def activity_timeline(%{activity: {:ok, %{"logs" => [_ | _] = entries} = body}} = assigns) do
-    assigns = assign(assigns, rows: Enum.map(entries, &classify_activity/1), source: body["source"])
+    assigns =
+      assign(assigns, rows: Enum.map(entries, &classify_activity/1), source: body["source"])
 
     ~H"""
     <div :if={@source} class="text-xs opacity-50 mb-2">source: {@source}</div>
@@ -794,7 +824,12 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
       # An assistant turn that is a tool-call blob = emitted as TEXT, NOT executed.
       # The reply was never sent — flag it, don't render it as a delivered message.
       role in ["asst", "assistant"] and tool_call_text?(content) ->
-        %{kind: :tool_intent, ts: ts, text: reply_text(content) || one_line(content), content: content}
+        %{
+          kind: :tool_intent,
+          ts: ts,
+          text: reply_text(content) || one_line(content),
+          content: content
+        }
 
       # Tool plumbing: an executed reply (the shell ran swarm-msg send with a
       # reply payload) shows as delivered; anything else is noise.
@@ -825,11 +860,18 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   end
 
   defp noise_row(role, content, ts) do
-    %{kind: :noise, ts: ts, label: noise_label(role, content), preview: one_line(content), content: content}
+    %{
+      kind: :noise,
+      ts: ts,
+      label: noise_label(role, content),
+      preview: one_line(content),
+      content: content
+    }
   end
 
   # Strip the orchestrator/relay prefix so the user's words stand alone.
-  defp clean_chat(content), do: content |> String.replace(~r/^\s*\[From \w+\]\s*/, "") |> String.trim()
+  defp clean_chat(content),
+    do: content |> String.replace(~r/^\s*\[From \w+\]\s*/, "") |> String.trim()
 
   # Pull the human-facing `text` out of a `{"action":"reply",…,"text":"…"}` payload,
   # tolerating the escaped form inside a `{"cmd":"…"}` / heredoc blob. nil if absent.
@@ -845,6 +887,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   # Does this assistant content look like tooling rather than a spoken reply?
   defp machinery?(content) do
     t = String.trim_leading(content)
+
     String.starts_with?(t, "{") or String.starts_with?(t, "shell:") or
       String.starts_with?(t, "cat ") or String.contains?(t, "swarm-msg")
   end
@@ -856,7 +899,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     end
   end
 
-  defp one_line(content), do: content |> String.replace(~r/\s+/, " ") |> String.trim() |> String.slice(0, 90)
+  defp one_line(content),
+    do: content |> String.replace(~r/\s+/, " ") |> String.trim() |> String.slice(0, 90)
 
   defp activity_dot(:user), do: "bg-primary"
   defp activity_dot(:assistant), do: "bg-secondary"
@@ -874,12 +918,21 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     cid = short_cid(session_id)
 
     cond do
-      name && handle -> %{monogram: initial(name), primary: name, secondary: at, primary_mono: false}
-      name -> %{monogram: initial(name), primary: name, secondary: cid, primary_mono: false}
-      handle -> %{monogram: initial(handle), primary: at, secondary: cid, primary_mono: false}
+      name && handle ->
+        %{monogram: initial(name), primary: name, secondary: at, primary_mono: false}
+
+      name ->
+        %{monogram: initial(name), primary: name, secondary: cid, primary_mono: false}
+
+      handle ->
+        %{monogram: initial(handle), primary: at, secondary: cid, primary_mono: false}
+
       # group/topic chat with no known speaker — the negative chat id isn't a person.
-      group_cid?(cid) -> %{monogram: "⌗", primary: "Group chat", secondary: cid, primary_mono: false}
-      true -> %{monogram: "#", primary: cid || "unknown", secondary: nil, primary_mono: true}
+      group_cid?(cid) ->
+        %{monogram: "⌗", primary: "Group chat", secondary: cid, primary_mono: false}
+
+      true ->
+        %{monogram: "#", primary: cid || "unknown", secondary: nil, primary_mono: true}
     end
   end
 
@@ -888,13 +941,17 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   @doc false
   def monogram_style(user, session_id) do
-    seed = (present(user && user["handle"]) || present(user && user["name"]) || to_string(session_id) || "x")
+    seed =
+      present(user && user["handle"]) || present(user && user["name"]) || to_string(session_id) ||
+        "x"
+
     hue = :erlang.phash2(seed, 360)
 
     "background: linear-gradient(145deg, oklch(0.62 0.13 #{hue}), oklch(0.42 0.09 #{hue})); color: white; border-color: oklch(0.7 0.12 #{hue} / 0.5);"
   end
 
   defp initial(nil), do: "#"
+
   defp initial(s) do
     s |> String.trim() |> String.first() |> to_string() |> String.upcase()
   end
@@ -916,10 +973,12 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   @doc "Human relative time from an ISO8601 string (or `—`)."
   def relative_time(nil), do: "—"
+
   def relative_time(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
       {:ok, dt, _} ->
         secs = DateTime.diff(DateTime.utc_now(), dt)
+
         cond do
           secs < 5 -> "just now"
           secs < 60 -> "#{secs}s ago"
