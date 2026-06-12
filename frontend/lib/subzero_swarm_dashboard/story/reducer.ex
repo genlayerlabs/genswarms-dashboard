@@ -200,8 +200,9 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     })
   end
 
-  # canvas packets only — no story row, no state
-  defp fold(kind, state, _ev) when kind in ["typing", "proactive_sent"], do: state
+  # canvas packets only — no story row, no state (chatter fires on every metrics
+  # bump; a story row per bump would drown the ring)
+  defp fold(kind, state, _ev) when kind in ["typing", "proactive_sent", "chatter"], do: state
 
   # synthetic, folded by EventsFeed when a seq gap proves ring pruning
   defp fold("feed_gap", state, ev) do

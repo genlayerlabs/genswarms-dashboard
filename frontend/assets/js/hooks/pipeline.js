@@ -29,6 +29,9 @@ export const Pipeline = {
         <label class="flex items-center gap-1 cursor-pointer opacity-80">
           <input type="checkbox" data-role="chatter" class="checkbox checkbox-xs"> chatter
         </label>
+        <label class="flex items-center gap-1 cursor-pointer opacity-80">
+          <input type="checkbox" data-role="rig" class="checkbox checkbox-xs" ${this.debug ? "checked" : ""}> rig
+        </label>
         <span data-role="pcount" class="tnum text-warning"></span>
       </div>
       <div data-role="dbg" class="absolute left-2 top-2 bottom-2 w-96 z-10 hidden flex-col gap-2 overflow-hidden rounded-box border border-base-300 bg-base-100/90 p-2">
@@ -72,6 +75,7 @@ export const Pipeline = {
       this.dbg(this.causal ? "— CAUSAL mode on —" : "— CAUSAL mode off (firehose) —")
     })
     this.q("chatter").addEventListener("change", (e) => (this.chatter = e.target.checked))
+    this.q("rig").addEventListener("change", (e) => this.setDebug(e.target.checked))
     this.q("copy").addEventListener("click", () => this.copyDbg())
 
     this.handleEvent("pipeline:init", (layout) => {
@@ -103,13 +107,21 @@ export const Pipeline = {
       this.decayEdges()
       this.refreshTheme() // tracks live theme switches; cheap at 1Hz
     }, 1000)
-    if (this.debug) {
-      const panel = this.q("dbg")
-      panel.classList.remove("hidden")
-      panel.classList.add("flex")
-      this.dbgTimer = setInterval(() => this.renderDbg(), 500)
-    }
+    if (this.debug) this.setDebug(true)
     this.raf = requestAnimationFrame(() => this.draw())
+  },
+
+  // the trace rig: ?debug=1 opens it at mount; the "rig" control toggles it live
+  setDebug(on) {
+    this.debug = on
+    const panel = this.q("dbg")
+    panel.classList.toggle("hidden", !on)
+    panel.classList.toggle("flex", on)
+    if (on && !this.dbgTimer) this.dbgTimer = setInterval(() => this.renderDbg(), 500)
+    if (!on && this.dbgTimer) {
+      clearInterval(this.dbgTimer)
+      this.dbgTimer = null
+    }
   },
 
   destroyed() {
@@ -385,6 +397,14 @@ export const Pipeline = {
       case "reply_failed":
         return [{flash: "sender"}]
 
+      case "chatter": {
+        // background bookkeeping traffic (rally↔policy sync, metrics bumps) —
+        // the host emits these precisely so the chatter toggle has data; forced
+        // bg regardless of endpoint sets, never part of user-flow causality
+        if (!ev.from || !ev.to) return []
+        return [{a: ev.from, b: ev.to, kind: "msg", bg: true}]
+      }
+
       default:
         // kinds are additive (spec §2): unknown must not crash or stall playback
         return []
@@ -400,7 +420,7 @@ export const Pipeline = {
       if (op.st) op.st()
       return false
     }
-    const bg = this.isBg(op.a, op.b)
+    const bg = op.bg === true || this.isBg(op.a, op.b)
     const k = op.a + "|" + op.b
     this.EDGES.set(k, (this.EDGES.get(k) || 0) + (bg ? 0.2 : 1))
     if (bg) {

@@ -421,6 +421,14 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     end
   end
 
+  describe "chatter" do
+    test "chatter events are canvas-only — no story row, no state, no counters" do
+      state = fold([ev("chatter", 1, 100.0, %{"from" => "rally", "to" => "policy"})])
+      assert state.story == []
+      assert state.agents == %{}
+    end
+  end
+
   describe "spawning claims" do
     test "a claim routed to a spawning slot reads 'queued while spawning'" do
       state =
