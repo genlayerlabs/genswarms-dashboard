@@ -108,7 +108,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
                   <span class="opacity-80">{short(ep.agent) || "routing…"}</span>
                   <span class={activity_tone(ep.activity)}>{ep.activity}</span>
                   <span :if={ep.stalled} class="badge badge-error badge-xs">stalled</span>
-                  <span class="tnum ml-auto opacity-60">{fmt_s(ep.elapsed_s)}s</span>
+                  <span class="tnum ml-auto opacity-60">{sec(ep.elapsed_s)}s</span>
                 </div>
               </div>
           <% end %>
@@ -146,7 +146,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
                 </td>
                 <td>{n["type"]}</td>
                 <td>
-                  <.live_dot :if={n["type"] == "agent"} state={n["state"]} /><span
+                  <.live_dot :if={n["type"] == "agent"} state={n["state"]} />
+                  <span
                     :if={n["type"] != "agent"}
                     class="opacity-50"
                   >
@@ -196,8 +197,6 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   defp activity_tone("thinking"), do: "text-success"
   defp activity_tone("spawning"), do: "text-info"
   defp activity_tone(_activity), do: "opacity-60"
-
-  defp fmt_s(s), do: :erlang.float_to_binary(s / 1, decimals: 1)
 
   # ── table fallback rows (with the joined user identity) ──────────────────────
   defp table_nodes(nil), do: []

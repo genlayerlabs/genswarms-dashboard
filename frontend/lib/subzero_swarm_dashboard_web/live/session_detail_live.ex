@@ -255,7 +255,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   defp chain(ep, claim) do
     claim_leg =
       cond do
-        is_map(claim) -> "⟳ claim #{fmt_s(claim[:ts] - ep.opened_at)}"
+        is_map(claim) -> "⟳ claim #{duration(claim[:ts] - ep.opened_at)}"
         is_binary(ep.agent) -> "⟳ claim by #{ep.agent}"
         true -> nil
       end
@@ -264,11 +264,11 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     # first thing the user saw, the verdict leg already says it
     feedback_leg =
       if ep.first_sent && (ep.done_at == nil or ep.first_sent < ep.done_at),
-        do: "✉ first feedback #{fmt_s(ep.first_sent - ep.opened_at)}"
+        do: "✉ first feedback #{duration(ep.first_sent - ep.opened_at)}"
 
     verdict_leg =
       cond do
-        ep.done -> "✓ replied #{fmt_s(ep.duration)}"
+        ep.done -> "✓ replied #{duration(ep.duration)}"
         ep.stalled -> "⚠ stalled — no reply"
         true -> "… awaiting reply"
       end
@@ -295,33 +295,20 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         id={"session-request-#{i}"}
         class="flex flex-wrap items-baseline gap-x-2"
       >
-        <span class="opacity-50 tnum whitespace-nowrap">{fmt_hms(r.opened_at)}</span>
+        <span class="opacity-50 tnum whitespace-nowrap">{hms(r.opened_at)}</span>
         <span class={[r.stalled && "text-warning"]}>{r.chain}</span>
         <span :if={r.queued > 0} class="opacity-60">·+{r.queued} queued</span>
       </div>
     </div>
-    <p class="text-xs opacity-40 mt-2">(requests observed since {observed_since(@story)})</p>
+    <p class="text-xs opacity-40 mt-2">(requests observed since {hhmm(@story[:baseline_at])})</p>
     """
   end
 
   defp requests(assigns) do
     ~H"""
     <div id="session-requests-empty" class="text-sm opacity-60">
-      No requests observed for this conversation (requests observed since {observed_since(@story)}).
+      No requests observed for this conversation (requests observed since {hhmm(@story[:baseline_at])}).
     </div>
     """
   end
-
-  # Honesty label (spec §5.6): the fold only sees events since the dashboard's
-  # baseline — never imply a full history.
-  defp observed_since(%{baseline_at: %DateTime{} = dt}), do: Calendar.strftime(dt, "%H:%M")
-  defp observed_since(_story), do: "—"
-
-  defp fmt_hms(ts) when is_number(ts),
-    do: ts |> trunc() |> DateTime.from_unix!() |> Calendar.strftime("%H:%M:%S")
-
-  defp fmt_hms(_), do: "—"
-
-  defp fmt_s(v) when is_number(v), do: "#{:erlang.float_to_binary(v / 1, decimals: 1)}s"
-  defp fmt_s(_), do: "—"
 end

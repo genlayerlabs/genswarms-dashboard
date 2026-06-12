@@ -185,8 +185,9 @@ These MUST NOT change — the frontend (`subzero-swarm-dashboard`) reads them. P
 
 Served from the optional `:events_source` (§ EventsSource contract). The `"unavailable"`
 envelope answers when no source is configured, or when the source returns
-`:unavailable`, raises, or exits — fail-soft, never a 500. `since` defaults 0, `limit`
-500 (both capped at 10 000; the host impl may clamp tighter).
+`:unavailable`, raises, or exits — fail-soft, never a 500. `since` defaults 0 and is an
+UNCAPPED cursor (lifetime seqs legitimately exceed any size cap); `limit` defaults 500,
+capped at 10 000 — the host impl may clamp limit tighter.
 
 ### WebSocket (`/swarm/websocket`, channel `swarm:*`)
 

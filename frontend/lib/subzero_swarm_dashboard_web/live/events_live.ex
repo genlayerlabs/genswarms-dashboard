@@ -374,7 +374,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
               id={id}
               class="flex items-baseline gap-3 py-1"
             >
-              <span class="opacity-50 whitespace-nowrap">{fmt_ts(row.ts)}</span>
+              <span class="opacity-50 whitespace-nowrap">{hms(row.ts)}</span>
               <span class={["flex-1 truncate", row.issue && "text-warning"]}>{row.text}</span>
               <.link
                 :if={row.cid}
@@ -497,12 +497,4 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   defp level_class("error"), do: "badge-error"
   defp level_class("warning"), do: "badge-warning"
   defp level_class(_), do: "badge-ghost"
-
-  # cids carry colons (tg:<chat>:<thread>) — encode like SessionsLive does
-  defp session_href(cid), do: ~p"/sessions/#{Base.url_encode64(cid, padding: false)}"
-
-  defp fmt_ts(ts) when is_number(ts),
-    do: ts |> trunc() |> DateTime.from_unix!() |> Calendar.strftime("%H:%M:%S")
-
-  defp fmt_ts(_ts), do: "—"
 end

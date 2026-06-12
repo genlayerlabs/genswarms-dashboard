@@ -128,7 +128,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       <h2 class="font-semibold mb-2">In flight ({length(@eps)})</h2>
       <%!-- the most common view: nothing waiting — one reassuring line, not an empty box --%>
       <div :if={@eps == []} id="in-flight-idle" class="text-sm font-mono opacity-70">
-        nobody waiting<span :if={@last}> · last: {@last.text} at {hhmm_ts(@last.ts)}</span>
+        nobody waiting<span :if={@last}> · last: {@last.text} at {hhmm(@last.ts)}</span>
       </div>
       <div class="space-y-1.5">
         <div
@@ -143,7 +143,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           <span class={["flex-1 truncate", ep.stalled && "text-error"]}>
             {ep.activity}{queue_note(@story, ep.agent)}
           </span>
-          <span class="tnum whitespace-nowrap">{fmt_s(ep.elapsed_s)}</span>
+          <span class="tnum whitespace-nowrap">{duration(ep.elapsed_s)}</span>
           <progress
             class={["progress w-24", progress_tone(ep)]}
             value={stall_pct(ep.elapsed_s)}
@@ -173,7 +173,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       <div class="flex flex-wrap gap-x-6 gap-y-1 font-mono text-sm">
         <span :for={ag <- @agents} class="whitespace-nowrap">
           {ag.name} {agent_glyph(ag.state)} {agent_state_label(ag)}
-          <span class="opacity-60">{fmt_s(ag.elapsed_s)}</span>
+          <span class="opacity-60">{duration(ag.elapsed_s)}</span>
           <span :if={ag.queue > 0} class="badge badge-ghost badge-xs align-middle">+{ag.queue}</span>
         </span>
         <span :if={@agents == []} class="opacity-60">no agent activity observed yet</span>
@@ -203,9 +203,9 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       <h2 id="kpi-window-label" class="font-semibold mb-2">since {hhmm(@story[:baseline_at])}</h2>
       <div class="flex flex-wrap gap-x-6 gap-y-1 font-mono text-sm">
         <.kpi label="replies" value={@k[:replies]} today={today_val(@today, "replies")} />
-        <.kpi label="p50" value={fmt_dur(@k[:reply_p50])} />
-        <.kpi label="p95" value={fmt_dur(@k[:reply_p95])} />
-        <.kpi label="first-feedback p50" value={fmt_dur(@k[:first_feedback_p50])} />
+        <.kpi label="p50" value={duration(@k[:reply_p50])} />
+        <.kpi label="p95" value={duration(@k[:reply_p95])} />
+        <.kpi label="first-feedback p50" value={duration(@k[:first_feedback_p50])} />
         <.kpi label="failures" value={@k[:failures]} today={today_val(@today, "failures")} />
         <.kpi label="inbox_full" value={@k[:inbox_full]} today={today_val(@today, "inbox_full")} />
         <.kpi label="stalled" value={@k[:stalled]} />
@@ -250,7 +250,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           id={"issue-#{i}"}
           class="flex items-baseline gap-3 font-mono text-xs"
         >
-          <span class="opacity-50 whitespace-nowrap">{hhmm_ts(issue.ts)}</span>
+          <span class="opacity-50 whitespace-nowrap">{hhmm(issue.ts)}</span>
           <span class="w-28 truncate opacity-70">{issue.cid || issue.agent}</span>
           <span class="flex-1 truncate text-warning">{issue.text}</span>
           <.link navigate={issue_href(issue)} class="link link-hover opacity-70 whitespace-nowrap">
@@ -414,28 +414,10 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     end
   end
 
-  # cids carry colons (tg:<chat>:<thread>) — encode like SessionsLive does
-  defp session_href(cid), do: ~p"/sessions/#{Base.url_encode64(cid, padding: false)}"
-
   defp issue_href(%{cid: cid}) when is_binary(cid), do: ~p"/events?#{[cid: cid, issues: 1]}"
   defp issue_href(_issue), do: ~p"/events?#{[issues: 1]}"
 
   defp dom_cid(cid), do: String.replace(to_string(cid), ~r/[^A-Za-z0-9_-]/, "-")
-
-  defp hhmm(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M")
-  defp hhmm(_dt), do: "—"
-
-  defp hhmm_ts(ts) when is_number(ts),
-    do: ts |> trunc() |> DateTime.from_unix!() |> Calendar.strftime("%H:%M")
-
-  defp hhmm_ts(_ts), do: "—"
-
-  defp fmt_s(s) when is_number(s) and s < 60, do: "#{Float.round(s / 1, 1)}s"
-  defp fmt_s(s) when is_number(s), do: "#{div(trunc(s), 60)}m #{rem(trunc(s), 60)}s"
-  defp fmt_s(_s), do: "—"
-
-  defp fmt_dur(v) when is_number(v), do: "#{Float.round(v / 1, 1)}s"
-  defp fmt_dur(_v), do: "—"
 
   # ── helpers ──────────────────────────────────────────────────────────────────
   defp consumers_count(snap), do: get_in(snap, ["extensions", "consumers", "count"]) || 0

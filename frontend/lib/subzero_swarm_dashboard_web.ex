@@ -81,6 +81,8 @@ defmodule SubzeroSwarmDashboardWeb do
       import Phoenix.HTML
       # Core UI components
       import SubzeroSwarmDashboardWeb.CoreComponents
+      # Story formatting/link helpers (durations, HH:MM labels, session links)
+      import SubzeroSwarmDashboardWeb.StoryHelpers
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS
