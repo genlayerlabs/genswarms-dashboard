@@ -28,11 +28,21 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
         live_count: Enum.count(sessions, &(&1["state"] == "active")),
         deliveries: deliveries,
         now: now,
-        unanswered: Enum.count(sessions, &(reply_status(&1, deliveries, now) == :unanswered))
+        unanswered: Enum.count(sessions, &(reply_status(&1, deliveries, now) == :unanswered)),
+        issues_by_cid: story_issues(assigns.story),
+        audience: audience(assigns[:snapshot])
       )
 
     ~H"""
-    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
+    <Layouts.app
+      flash={@flash}
+      active={:sessions}
+      swarm={@swarm}
+      story={@story}
+      inspect={@inspect}
+      inspect_transcript={@inspect_transcript}
+      inspect_activity={@inspect_activity}
+    >
       <div class="space-y-5">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <div class="flex items-baseline gap-3">
@@ -40,7 +50,11 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
             <span :if={@snapshot} class="text-sm opacity-60 tnum">
               {length(@sessions)} total · <span class="text-[var(--signal)]">{@live_count} live</span>
             </span>
-            <span :if={@snapshot && @unanswered > 0} class="badge badge-warning badge-sm gap-1" title="conversations that received a message but got no reply">
+            <span
+              :if={@snapshot && @unanswered > 0}
+              class="badge badge-warning badge-sm gap-1"
+              title="conversations that received a message but got no reply"
+            >
               ⚠ {@unanswered} unanswered
             </span>
           </div>
@@ -63,7 +77,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
           <table class="table">
             <thead>
               <tr class="text-xs uppercase tracking-wide">
-                <th>User</th><th>State</th><th>Reply</th><th>Agent</th><th>Last seen</th><th></th>
+                <th>User</th>
+                <th>State</th>
+                <th>Reply</th>
+                <th>Issues</th>
+                <th>Agent</th>
+                <th>Last seen</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -78,8 +98,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                 </td>
                 <td><.live_dot state={s["state"]} label /></td>
                 <td><.reply_badge status={reply_status(s, @deliveries, @now)} /></td>
+                <td>
+                  <.issue_badge sid={s["session_id"]} issues={@issues_by_cid[s["session_id"]] || []} />
+                </td>
                 <td class="font-mono text-xs opacity-70">{s["agent"]}</td>
-                <td class="text-sm opacity-70 tnum whitespace-nowrap">{relative_time(s["last_activity"])}</td>
+                <td class="text-sm opacity-70 tnum whitespace-nowrap">
+                  {relative_time(s["last_activity"])}
+                </td>
                 <td class="text-right">
                   <.link
                     navigate={~p"/sessions/#{Base.url_encode64(s["session_id"], padding: false)}"}
@@ -92,7 +117,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                 </td>
               </tr>
               <tr :if={@sessions == []}>
-                <td colspan="6" class="text-center opacity-55 py-8">
+                <td colspan="7" class="text-center opacity-55 py-8">
                   No sessions{if @q != "", do: " match \"#{@q}\""}.
                 </td>
               </tr>
@@ -114,6 +139,20 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div
+          :if={@audience}
+          id="audience-footer"
+          class="card bg-base-200/60 border border-base-300 p-4"
+        >
+          <h2 class="font-semibold mb-2">Audience</h2>
+          <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+            <span :for={{k, v} <- @audience} class="whitespace-nowrap">
+              <span class="opacity-60">{String.replace(to_string(k), "_", " ")}</span>
+              <span class="tnum font-semibold ml-1">{audience_value(v)}</span>
+            </span>
+          </div>
         </div>
 
         <div :if={is_nil(@snapshot)} class="opacity-60">Waiting for the first snapshot…</div>
@@ -151,6 +190,27 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   defp consumers(nil), do: nil
   defp consumers(snap), do: get_in(snap, ["extensions", "consumers"])
+
+  # ── per-row issue badges (spec §5.6 Sessions) ───────────────────────────────
+  # The @story issues tail is already 24h-windowed by the reducer's tick — just
+  # group it so each row can match by cid == session_id.
+  defp story_issues(nil), do: %{}
+  defp story_issues(story), do: Enum.group_by(story[:issues] || [], & &1[:cid])
+
+  # ── audience footer (spec §6.3) ─────────────────────────────────────────────
+  # Host-defined block: render exactly the fields present, sorted for a stable
+  # layout; omit the card entirely when the host publishes nothing.
+  defp audience(nil), do: nil
+
+  defp audience(snap) do
+    case get_in(snap, ["extensions", "audience"]) do
+      a when is_map(a) and map_size(a) > 0 -> Enum.sort_by(a, &elem(&1, 0))
+      _ -> nil
+    end
+  end
+
+  defp audience_value(v) when is_number(v) or is_binary(v), do: v
+  defp audience_value(v), do: inspect(v)
 
   # ── reply-delivery health ───────────────────────────────────────────────────
   # cid => latest delivery (%{"at", "status"}), from the sender's dashboard extension.
@@ -193,10 +253,55 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   defp reply_badge(assigns) do
     ~H"""
-    <span :if={@status == :answered} class="badge badge-success badge-xs" title="replied to the last message">answered</span>
-    <span :if={@status == :pending} class="badge badge-ghost badge-xs" title="received — reply in flight">replying…</span>
-    <span :if={@status == :unanswered} class="badge badge-warning badge-xs" title="received a message but never replied">⚠ no reply</span>
+    <span
+      :if={@status == :answered}
+      class="badge badge-success badge-xs"
+      title="replied to the last message"
+    >
+      answered
+    </span>
+    <span
+      :if={@status == :pending}
+      class="badge badge-ghost badge-xs"
+      title="received — reply in flight"
+    >
+      replying…
+    </span>
+    <span
+      :if={@status == :unanswered}
+      class="badge badge-warning badge-xs"
+      title="received a message but never replied"
+    >
+      ⚠ no reply
+    </span>
     <span :if={@status == :idle} class="opacity-40 text-xs">—</span>
+    """
+  end
+
+  attr :sid, :string, required: true
+  attr :issues, :list, default: []
+
+  # Event-derived trouble for this conversation (delivery failures, inbox_full,
+  # stalled, …) within the issues window. The id is url-safe-base64 of the cid —
+  # same encoding the row's deep-link uses — because cids contain colons. Deep-links
+  # to the cid-filtered issues-only Events story view (spec §5.6), like Overview.
+  defp issue_badge(%{issues: [_ | _]} = assigns) do
+    ~H"""
+    <.link
+      id={"session-issues-#{Base.url_encode64(@sid, padding: false)}"}
+      navigate={~p"/events?#{[cid: @sid, issues: 1]}"}
+      class="badge badge-error badge-xs gap-1 whitespace-nowrap"
+      title={Enum.map_join(@issues, "\n", & &1[:text])}
+      onclick="event.stopPropagation()"
+    >
+      ⚠ {length(@issues)}
+    </.link>
+    """
+  end
+
+  defp issue_badge(assigns) do
+    ~H"""
+    <span class="opacity-40 text-xs">—</span>
     """
   end
 end

@@ -1,6 +1,7 @@
 defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
+  alias SubzeroSwarmDashboard.EventsFeed
   alias SubzeroSwarmDashboard.SwarmClient
 
   @impl true
@@ -14,7 +15,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
        session_id: cid,
        transcript: :loading,
        activity: :loading,
-       skills: :loading
+       skills: :loading,
+       requests: :loading
      )}
   end
 
@@ -37,7 +39,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
      assign(socket,
        transcript: SwarmClient.session_history(swarm, id),
        activity: SwarmClient.session_logs(swarm, id),
-       skills: SwarmClient.session_skills(swarm, id)
+       skills: SwarmClient.session_skills(swarm, id),
+       requests: load_requests(id)
      )}
   end
 
@@ -55,7 +58,15 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     assigns = assign(assigns, :session, find_session(assigns[:snapshot], assigns.session_id))
 
     ~H"""
-    <Layouts.app flash={@flash} active={:sessions} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
+    <Layouts.app
+      flash={@flash}
+      active={:sessions}
+      swarm={@swarm}
+      story={@story}
+      inspect={@inspect}
+      inspect_transcript={@inspect_transcript}
+      inspect_activity={@inspect_activity}
+    >
       <div class="space-y-5 max-w-3xl">
         <div class="flex items-center gap-2">
           <.link navigate={~p"/sessions"} class="btn btn-ghost btn-xs gap-1">
@@ -82,17 +93,30 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
         <.prompt_skills skills={@skills} />
 
+        <div id="session-requests" class="card bg-base-200 p-4">
+          <h2 class="font-semibold mb-1">
+            Requests <span class="text-xs font-normal opacity-50">· event feed</span>
+          </h2>
+          <p class="text-xs opacity-50 mb-2">
+            Each request this conversation opened, exactly as the display-event feed
+            recorded it — open, claim, first feedback, reply. <strong>Exact facts</strong>,
+            no log guessing.
+          </p>
+          <.requests requests={@requests} story={@story} />
+        </div>
+
         <div class="card bg-base-200 p-4">
           <h2 class="font-semibold mb-1">Conversation</h2>
           <p class="text-xs opacity-50 mb-2">
-            The clean user ↔ Wingston back-and-forth, saved to the database — it
-            <strong>survives agent restarts</strong>. (Empty if persistence is off.)
+            The clean user ↔ Wingston back-and-forth, saved to the database — it <strong>survives agent restarts</strong>. (Empty if persistence is off.)
           </p>
           <.transcript transcript={@transcript} />
         </div>
 
         <div class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-1">Agent activity <span class="text-xs font-normal opacity-50">· live</span></h2>
+          <h2 class="font-semibold mb-1">
+            Agent activity <span class="text-xs font-normal opacity-50">· live</span>
+          </h2>
           <p class="text-xs opacity-50 mb-2">
             The agent's raw working log for this slot right now — messages in, tool
             calls, results, sends. <strong>Ephemeral</strong>: wiped when the slot is recycled.
@@ -195,4 +219,109 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
   defp find_session(nil, _id), do: nil
   defp find_session(snap, id), do: Enum.find(snap["sessions"] || [], &(&1["session_id"] == id))
+
+  # ── REQUESTS: the event-derived lifecycle for this cid (spec §5.6) ──────────
+  # Episodes come from the EventsFeed fold, newest first, refreshed on the same
+  # snapshot pulse as the transcript. The claim delta is read from the cid's
+  # `routed` story row while it's still in the ring; legs the fold never
+  # recorded are simply not claimed — nothing is inferred.
+  defp load_requests(cid) do
+    rows = EventsFeed.story_ring() |> Enum.filter(&(&1[:cid] == cid))
+    Enum.map(EventsFeed.episodes(cid), &request_row(&1, rows))
+  catch
+    # the feed isn't running (disabled / not yet supervised) — same face as an
+    # empty feed: nothing observed
+    :exit, _ -> []
+  end
+
+  defp request_row(ep, rows) do
+    claim =
+      rows
+      |> Enum.filter(fn r ->
+        r[:kind] == "routed" and is_number(r[:ts]) and r[:ts] >= ep.opened_at and
+          (ep.done_at == nil or r[:ts] <= ep.done_at)
+      end)
+      # rows are newest-first; the claim is the episode's earliest routed row
+      |> List.last()
+
+    %{
+      opened_at: ep.opened_at,
+      stalled: ep.stalled,
+      queued: ep.count - 1,
+      chain: chain(ep, claim)
+    }
+  end
+
+  defp chain(ep, claim) do
+    claim_leg =
+      cond do
+        is_map(claim) -> "⟳ claim #{fmt_s(claim[:ts] - ep.opened_at)}"
+        is_binary(ep.agent) -> "⟳ claim by #{ep.agent}"
+        true -> nil
+      end
+
+    # only a feedback that PRECEDED the close — when the reply itself was the
+    # first thing the user saw, the verdict leg already says it
+    feedback_leg =
+      if ep.first_sent && (ep.done_at == nil or ep.first_sent < ep.done_at),
+        do: "✉ first feedback #{fmt_s(ep.first_sent - ep.opened_at)}"
+
+    verdict_leg =
+      cond do
+        ep.done -> "✓ replied #{fmt_s(ep.duration)}"
+        ep.stalled -> "⚠ stalled — no reply"
+        true -> "… awaiting reply"
+      end
+
+    ["open", claim_leg, feedback_leg, verdict_leg]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" → ")
+  end
+
+  attr :requests, :any, required: true
+  attr :story, :any, default: nil
+
+  defp requests(%{requests: :loading} = assigns) do
+    ~H"""
+    <div class="text-sm opacity-60">loading…</div>
+    """
+  end
+
+  defp requests(%{requests: [_ | _]} = assigns) do
+    ~H"""
+    <div class="space-y-1 font-mono text-xs">
+      <div
+        :for={{r, i} <- Enum.with_index(@requests)}
+        id={"session-request-#{i}"}
+        class="flex flex-wrap items-baseline gap-x-2"
+      >
+        <span class="opacity-50 tnum whitespace-nowrap">{fmt_hms(r.opened_at)}</span>
+        <span class={[r.stalled && "text-warning"]}>{r.chain}</span>
+        <span :if={r.queued > 0} class="opacity-60">·+{r.queued} queued</span>
+      </div>
+    </div>
+    <p class="text-xs opacity-40 mt-2">(requests observed since {observed_since(@story)})</p>
+    """
+  end
+
+  defp requests(assigns) do
+    ~H"""
+    <div id="session-requests-empty" class="text-sm opacity-60">
+      No requests observed for this conversation (requests observed since {observed_since(@story)}).
+    </div>
+    """
+  end
+
+  # Honesty label (spec §5.6): the fold only sees events since the dashboard's
+  # baseline — never imply a full history.
+  defp observed_since(%{baseline_at: %DateTime{} = dt}), do: Calendar.strftime(dt, "%H:%M")
+  defp observed_since(_story), do: "—"
+
+  defp fmt_hms(ts) when is_number(ts),
+    do: ts |> trunc() |> DateTime.from_unix!() |> Calendar.strftime("%H:%M:%S")
+
+  defp fmt_hms(_), do: "—"
+
+  defp fmt_s(v) when is_number(v), do: "#{:erlang.float_to_binary(v / 1, decimals: 1)}s"
+  defp fmt_s(_), do: "—"
 end

@@ -35,11 +35,22 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:usage} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
+    <Layouts.app
+      flash={@flash}
+      active={:usage}
+      swarm={@swarm}
+      story={@story}
+      inspect={@inspect}
+      inspect_transcript={@inspect_transcript}
+      inspect_activity={@inspect_activity}
+    >
       <div class="space-y-5 max-w-5xl">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <h1 class="text-2xl">
-            Usage <span class="text-xs opacity-50 font-sans align-middle">LLM tokens · latency · health (router)</span>
+            Usage
+            <span class="text-xs opacity-50 font-sans align-middle">
+              LLM tokens · latency · health (router)
+            </span>
           </h1>
           <div class="join">
             <button
@@ -52,11 +63,95 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             </button>
           </div>
         </div>
+        <.wingston story={@story} snapshot={@snapshot} />
         <.usage usage={@usage} />
       </div>
     </Layouts.app>
     """
   end
+
+  # ── wingston (bot) counters ─────────────────────────────────────────────────
+  attr :story, :any, default: nil
+  attr :snapshot, :any, default: nil
+
+  # The bot's own activity (spec §5.6 Usage): since-baseline story KPIs, upgraded
+  # per-counter to the host's durable daily values when the snapshot publishes
+  # extensions["metrics_today"] (§6.3). The router/LLM cards below are untouched.
+  defp wingston(assigns) do
+    kpis = (assigns.story || %{})[:kpis] || %{}
+    today = metrics_today(assigns.snapshot)
+    since = since_label(assigns.story)
+    {browse_ok, browse_total, browse_src} = browse_counts(today, kpis)
+
+    assigns =
+      assign(assigns,
+        today: today,
+        stats: [
+          counter_stat("Replies", today, "replies", kpis[:replies], since),
+          %{
+            label: "Browse ok",
+            value: ok_rate(browse_ok, browse_total),
+            sub: "#{num(browse_ok)}/#{num(browse_total)} · #{browse_src || since}"
+          },
+          counter_stat("Asks", today, "asks", kpis[:asks], since),
+          counter_stat("Compactions", today, "compactions", kpis[:compactions], since)
+        ]
+      )
+
+    ~H"""
+    <div :if={@story || @today} id="wingston-usage" class="space-y-2">
+      <h2 class="font-semibold">
+        Wingston
+        <span class="text-xs opacity-50 font-normal">
+          replies · browse · asks · compactions (bot)
+        </span>
+      </h2>
+      <%= if @today || (@story && @story[:baseline_at]) do %>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <.stat :for={s <- @stats} label={s.label} value={s.value} sub={s.sub} />
+        </div>
+      <% else %>
+        <p class="text-sm opacity-60">
+          Event feed unavailable — bot counters resume when it answers. Router usage below is unaffected.
+        </p>
+      <% end %>
+    </div>
+    """
+  end
+
+  # One counter card: the durable daily value when the host publishes it
+  # ("today"), else the story's since-baseline counter — each labeled by its
+  # source so a card never implies a window it can't back.
+  defp counter_stat(label, today, key, fallback, since) do
+    case (today || %{})[key] do
+      n when is_number(n) -> %{label: label, value: num(n), sub: "today"}
+      _ -> %{label: label, value: num(fallback), sub: since}
+    end
+  end
+
+  defp browse_counts(today, kpis) do
+    case {(today || %{})["browse_ok"], (today || %{})["browse_total"]} do
+      {ok, total} when is_number(ok) and is_number(total) -> {ok, total, "today"}
+      _ -> {kpis[:browse_ok] || 0, kpis[:browse_total] || 0, nil}
+    end
+  end
+
+  defp ok_rate(ok, total) when is_number(ok) and is_number(total) and total > 0,
+    do: "#{round(ok * 100 / total)}%"
+
+  defp ok_rate(_, _), do: "—"
+
+  defp metrics_today(snap) do
+    case get_in(snap || %{}, ["extensions", "metrics_today"]) do
+      m when is_map(m) and map_size(m) > 0 -> m
+      _ -> nil
+    end
+  end
+
+  defp since_label(%{baseline_at: %DateTime{} = dt}),
+    do: "since #{Calendar.strftime(dt, "%H:%M")}"
+
+  defp since_label(_story), do: "since baseline"
 
   attr :usage, :any, required: true
 
@@ -88,9 +183,21 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
       <.stat label="Requests" value={num(@totals["requests"])} />
-      <.stat label="Tokens" value={num(@totals["tokens_total"])} sub={"#{num(@totals["tokens_in"])} in · #{num(@totals["tokens_out"])} out"} />
-      <.stat label="Error rate" value={pct(@totals["error_rate"])} sub={"#{num(@totals["errors"])} errors"} />
-      <.stat label="Latency" value={ms(@totals["latency_ms_avg"])} sub={"max #{ms(@totals["latency_ms_max"])}"} />
+      <.stat
+        label="Tokens"
+        value={num(@totals["tokens_total"])}
+        sub={"#{num(@totals["tokens_in"])} in · #{num(@totals["tokens_out"])} out"}
+      />
+      <.stat
+        label="Error rate"
+        value={pct(@totals["error_rate"])}
+        sub={"#{num(@totals["errors"])} errors"}
+      />
+      <.stat
+        label="Latency"
+        value={ms(@totals["latency_ms_avg"])}
+        sub={"max #{ms(@totals["latency_ms_max"])}"}
+      />
       <.stat label="Last seen" value={rel_unix(@totals["last_seen"])} />
     </div>
 
@@ -98,15 +205,22 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       <div class="card bg-base-200 p-4 lg:col-span-2">
         <h2 class="font-semibold mb-2">Health</h2>
         <div class="flex flex-wrap items-center gap-2 mb-3">
-          <span class={["badge", health_badge(@health["state"])]}>{@health["state"] || "unknown"}</span>
+          <span class={["badge", health_badge(@health["state"])]}>
+            {@health["state"] || "unknown"}
+          </span>
           <span class="badge badge-ghost">success {pct(@health["success_rate"])}</span>
-          <span class="badge badge-ghost">{num(@health["success_count"])}/{num(@health["request_count"])} ok</span>
+          <span class="badge badge-ghost">
+            {num(@health["success_count"])}/{num(@health["request_count"])} ok
+          </span>
           <span :if={(@health["route_failures"] || 0) > 0} class="badge badge-warning">
             {@health["route_failures"]} route failures
           </span>
         </div>
         <div class="flex flex-wrap gap-1.5">
-          <span :for={{code, n} <- status_rows(@health["status_counts"])} class={["badge badge-sm", status_badge(code)]}>
+          <span
+            :for={{code, n} <- status_rows(@health["status_counts"])}
+            class={["badge badge-sm", status_badge(code)]}
+          >
             {code}: {num(n)}
           </span>
         </div>
@@ -114,7 +228,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           <div :for={r <- @route_health} class="flex items-center gap-2 text-sm">
             <span class={["badge badge-xs", health_badge(r["state"])]}>{r["state"]}</span>
             <span class="font-mono text-xs">{r["route"]}</span>
-            <span :if={r["served_model_id"]} class="opacity-60 text-xs">→ {r["served_model_id"]}</span>
+            <span :if={r["served_model_id"]} class="opacity-60 text-xs">
+              → {r["served_model_id"]}
+            </span>
           </div>
         </div>
       </div>
@@ -123,7 +239,11 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
         <h2 class="font-semibold mb-2">Your key</h2>
         <dl class="grid grid-cols-3 gap-x-2 gap-y-1.5 text-sm">
           <dt class="opacity-50">status</dt>
-          <dd class="col-span-2"><span class={["badge badge-sm", status_word_badge(@settings["status"] || @key["status"])]}>{@settings["status"] || @key["status"] || "—"}</span></dd>
+          <dd class="col-span-2">
+            <span class={["badge badge-sm", status_word_badge(@settings["status"] || @key["status"])]}>
+              {@settings["status"] || @key["status"] || "—"}
+            </span>
+          </dd>
           <dt class="opacity-50">key</dt>
           <dd class="col-span-2 font-mono text-xs break-all">{@key["sha256_prefix"] || "—"}…</dd>
           <dt class="opacity-50">rate</dt>
@@ -145,8 +265,8 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     </div>
 
     <p class="text-xs opacity-40">
-      schema v{@usage |> elem(1) |> Map.get("schema_version")} ·
-      {(@security["sanitized"] && "sanitized") || "unsanitized"} ·
+      schema v{@usage |> elem(1) |> Map.get("schema_version")} · {(@security["sanitized"] &&
+                                                                     "sanitized") || "unsanitized"} ·
       no raw key / digest / provider creds exposed
     </p>
     """
@@ -181,7 +301,13 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       <h2 class="font-semibold mb-2">{@title}</h2>
       <table :if={@rows != []} class="table table-xs">
         <thead>
-          <tr><th>{@head}</th><th class="text-right">req</th><th class="text-right">tokens</th><th class="text-right">err</th><th class="text-right">lat avg/max</th></tr>
+          <tr>
+            <th>{@head}</th>
+            <th class="text-right">req</th>
+            <th class="text-right">tokens</th>
+            <th class="text-right">err</th>
+            <th class="text-right">lat avg/max</th>
+          </tr>
         </thead>
         <tbody>
           <tr :for={{name, s} <- @rows}>
@@ -189,7 +315,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             <td class="text-right tnum">{num(s["requests"])}</td>
             <td class="text-right tnum">{num(s["tokens_total"])}</td>
             <td class="text-right tnum">{pct(s["error_rate"])}</td>
-            <td class="text-right tnum text-xs">{ms(s["latency_ms_avg"])} / {ms(s["latency_ms_max"])}</td>
+            <td class="text-right tnum text-xs">
+              {ms(s["latency_ms_avg"])} / {ms(s["latency_ms_max"])}
+            </td>
           </tr>
         </tbody>
       </table>
@@ -212,7 +340,15 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     <div class="overflow-x-auto">
       <table class="table table-xs">
         <thead>
-          <tr><th>when</th><th>status</th><th>model</th><th>route</th><th class="text-right">lat</th><th class="text-right">tokens</th><th>detail</th></tr>
+          <tr>
+            <th>when</th>
+            <th>status</th>
+            <th>model</th>
+            <th>route</th>
+            <th class="text-right">lat</th>
+            <th class="text-right">tokens</th>
+            <th>detail</th>
+          </tr>
         </thead>
         <tbody>
           <tr :for={r <- @rows}>
@@ -260,7 +396,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp breakdown_rows(_), do: []
 
   # status_counts is a %{"200" => n}; render in code order.
-  defp status_rows(map) when is_map(map), do: Enum.sort_by(map, fn {code, _} -> to_string(code) end)
+  defp status_rows(map) when is_map(map),
+    do: Enum.sort_by(map, fn {code, _} -> to_string(code) end)
+
   defp status_rows(_), do: []
 
   defp rate_str(%{"effective_per_min" => e} = s) when is_integer(e),
