@@ -71,7 +71,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
           phx-hook="Pipeline"
           phx-update="ignore"
           data-debug={@debug && "1"}
-          class="w-full h-[64vh] rounded-box border border-base-300 bg-base-100 relative overflow-hidden"
+          class="pipeline-terminal w-full h-[64vh] rounded-box border relative overflow-hidden"
         >
         </div>
 
@@ -79,7 +79,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
           id="pipeline-legend"
           class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs opacity-70"
         >
-          <span><span class="text-success">●</span> thinking</span>
+          <span><span class="text-primary">●</span> thinking</span>
           <span>
             <span class="text-warning">◐</span> waiting · dashed edge → the service it waits on
           </span>
