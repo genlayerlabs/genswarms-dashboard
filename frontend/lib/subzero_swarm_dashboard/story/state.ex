@@ -33,7 +33,12 @@ defmodule SubzeroSwarmDashboard.Story.State do
             issues_max: 200,
             closed_max: 200,
             samples_max: 500,
-            stall_after_ms: 180_000
+            stall_after_ms: 180_000,
+            # turn-end is invisible to the feed (no engine turn-complete event), so
+            # claimed activity DECAYS when an agent stops producing events: thinking
+            # quickly (a finished turn), waiting slowly (a lost browse_done)
+            think_decay_ms: 60_000,
+            wait_decay_ms: 300_000
 
   def new(opts \\ []), do: struct!(__MODULE__, opts)
 

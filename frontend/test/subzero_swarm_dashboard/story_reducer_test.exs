@@ -381,4 +381,57 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert hd(state.story).text =~ "@5"
     end
   end
+
+  describe "activity decay (turn-end is invisible — never claim stale activity)" do
+    test "thinking decays to idle after think_decay_ms without agent events" do
+      state =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => @cid}),
+          ev("routed", 2, 101.0, %{"cid" => @cid, "slot" => @agent}),
+          ev("reply_sent", 3, 109.0, %{"cid" => @cid, "ok" => true}),
+          # the post-reply ask that used to stick "thinking" forever
+          ev("ask", 4, 110.0, %{"from" => @agent})
+        ])
+
+      assert state.agents[@agent].state == :thinking
+
+      # 59s of silence — still honest to claim thinking
+      state = Reducer.tick(state, 169.0)
+      assert state.agents[@agent].state == :thinking
+
+      # activity refreshes the decay clock without resetting the thinking start
+      state = fold([ev("ask", 5, 169.5, %{"from" => @agent})], state)
+      state = Reducer.tick(state, 228.0)
+      assert state.agents[@agent].state == :thinking
+
+      # 61.5s past the last evidence → stop claiming; since resets to that evidence
+      state = Reducer.tick(state, 231.0)
+      assert state.agents[@agent].state == :idle
+      assert state.agents[@agent].since == 169.5
+    end
+
+    test "waiting decays only after the longer wait_decay_ms (a lost browse_done)" do
+      state = fold([ev("browse_dispatch", 1, 100.0, %{"agent" => @agent, "url" => "https://x"})])
+
+      state = Reducer.tick(state, 350.0)
+      assert state.agents[@agent].state == :waiting
+
+      state = Reducer.tick(state, 401.0)
+      assert state.agents[@agent].state == :idle
+    end
+  end
+
+  describe "spawning claims" do
+    test "a claim routed to a spawning slot reads 'queued while spawning'" do
+      state =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => @cid}),
+          ev("spawn_start", 2, 100.2, %{"cid" => @cid, "slot" => @agent}),
+          ev("routed", 3, 101.0, %{"cid" => @cid, "slot" => @agent})
+        ])
+
+      assert Enum.any?(state.story, &(&1.text =~ "queued while spawning"))
+      refute Enum.any?(state.story, &(&1.text =~ "queued behind current turn"))
+    end
+  end
 end

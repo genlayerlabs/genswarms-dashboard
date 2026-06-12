@@ -128,7 +128,10 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       <h2 class="font-semibold mb-2">In flight ({length(@eps)})</h2>
       <%!-- the most common view: nothing waiting — one reassuring line, not an empty box --%>
       <div :if={@eps == []} id="in-flight-idle" class="text-sm font-mono opacity-70">
-        nobody waiting<span :if={@last}> · last: {@last.text} at {hhmm(@last.ts)}</span>
+        nobody waiting<span :if={@last}> · last: {@last.text} at <.local_time
+            id="last-close-t"
+            ts={@last.ts}
+          /></span>
       </div>
       <div class="space-y-1.5">
         <div
@@ -200,7 +203,9 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     <div id="kpi-panel" class="card bg-base-200 p-4">
       <%!-- honest window label: counters restart at the dashboard's baseline (spec §9);
             a counter present in extensions["metrics_today"] is durable → "today" badge --%>
-      <h2 id="kpi-window-label" class="font-semibold mb-2">since {hhmm(@story[:baseline_at])}</h2>
+      <h2 id="kpi-window-label" class="font-semibold mb-2">
+        since <.local_time id="kpi-since" ts={@story[:baseline_at]} />
+      </h2>
       <div class="flex flex-wrap gap-x-6 gap-y-1 font-mono text-sm">
         <.kpi label="replies" value={@k[:replies]} today={today_val(@today, "replies")} />
         <.kpi label="p50" value={duration(@k[:reply_p50])} />
@@ -240,7 +245,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       <h2 class="font-semibold mb-2">
         Issues
         <span class="text-xs font-normal opacity-60">
-          last 24h · observed since {hhmm(@story[:baseline_at])}
+          last 24h · observed since <.local_time id="issues-since" ts={@story[:baseline_at]} />
         </span>
       </h2>
       <div :if={@issues == []} class="text-sm opacity-60">none observed</div>
@@ -250,7 +255,9 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           id={"issue-#{i}"}
           class="flex items-baseline gap-3 font-mono text-xs"
         >
-          <span class="opacity-50 whitespace-nowrap">{hhmm(issue.ts)}</span>
+          <span class="opacity-50 whitespace-nowrap">
+            <.local_time id={"issue-#{i}-t"} ts={issue.ts} />
+          </span>
           <span class="w-28 truncate opacity-70">{issue.cid || issue.agent}</span>
           <span class="flex-1 truncate text-warning">{issue.text}</span>
           <.link navigate={issue_href(issue)} class="link link-hover opacity-70 whitespace-nowrap">

@@ -34,6 +34,22 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert_push_event(view, "pipeline:event", %{"kind" => "routed", "slot" => "wingston_agent_0"})
   end
 
+  test "pipeline:agents carries pool slots only (agent_pattern filters samples)", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/topology")
+
+    snap = %{
+      "nodes" => [
+        %{"type" => "agent", "name" => "wingston_agent_0"},
+        %{"type" => "agent", "name" => "conversation_sample"},
+        %{"type" => "object", "name" => "ingress"}
+      ]
+    }
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+
+    assert_push_event(view, "pipeline:agents", %{agents: ["wingston_agent_0"]})
+  end
+
   test "the in-flight strip renders TRUE state from the story summary", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/topology")
 
