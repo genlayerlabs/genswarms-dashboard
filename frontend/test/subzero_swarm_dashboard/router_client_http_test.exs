@@ -16,7 +16,12 @@ defmodule SubzeroSwarmDashboard.RouterClient.HttpTest do
   end
 
   defp configure do
-    Application.put_env(:subzero_swarm_dashboard, :router_usage_url, "http://router.test/v1/usage")
+    Application.put_env(
+      :subzero_swarm_dashboard,
+      :router_usage_url,
+      "http://router.test/v1/usage"
+    )
+
     Application.put_env(:subzero_swarm_dashboard, :router_api_key, "k")
   end
 
@@ -37,7 +42,11 @@ defmodule SubzeroSwarmDashboard.RouterClient.HttpTest do
 
   test "404 → {:unavailable, :not_found}" do
     configure()
-    Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn -> Plug.Conn.send_resp(conn, 404, "") end)
+
+    Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn ->
+      Plug.Conn.send_resp(conn, 404, "")
+    end)
+
     assert {:unavailable, :not_found} = Http.usage(%{})
   end
 end

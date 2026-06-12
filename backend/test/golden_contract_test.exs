@@ -24,6 +24,7 @@ defmodule GoldenContractTest do
     on_exit(fn ->
       Application.delete_env(:genswarms_dashboard, :config)
       Application.delete_env(:genswarms_dashboard, :stub_status)
+      Application.delete_env(:genswarms_dashboard, :stub_last_feed_query)
     end)
   end
 
@@ -60,9 +61,43 @@ defmodule GoldenContractTest do
     assert call.(:get, "/api/swarms/fix/sessions/fix:1/logs").status == 200
     assert call.(:get, "/api/swarms/fix/sessions/fix:1/skills").status == 200
     assert call.(:get, "/api/swarms/fix/events").status == 200
+    assert call.(:get, "/api/swarms/fix/events/feed").status == 200
     assert call.(:options, "/api/swarms/fix/dashboard").status == 204
     assert call.(:get, "/").status == 404
     assert call.(:get, "/api/swarms/fix/other").status == 404
+  end
+
+  test "events feed: exact envelope, both source labels, unknown event fields relay verbatim" do
+    call = fn path ->
+      GenswarmsDashboard.Plug.call(conn(:get, path), GenswarmsDashboard.Plug.init([]))
+    end
+
+    # no events_source configured (the setup map) ⇒ the exact unavailable envelope, still 200
+    conn = call.("/api/swarms/fix/events/feed")
+    assert conn.status == 200
+    assert Jason.decode!(conn.resp_body) == %{"events" => [], "seq" => 0, "source" => "unavailable"}
+
+    Config.put(%{
+      swarm: "fix",
+      data_source: GenswarmsDashboard.FixtureDataSource,
+      data_source_label: "fixture_sql",
+      token: nil,
+      events_source: GenswarmsDashboard.FixtureEventsSource
+    })
+
+    body = call.("/api/swarms/fix/events/feed").resp_body |> Jason.decode!()
+    assert Map.keys(body) |> Enum.sort() == ~w(events seq source)
+    assert body["source"] == "feed"
+    # seq is the feed's current cursor, never an echo of since (pinned in the EventsSource @doc)
+    assert body["seq"] == 2
+    # the backend never interprets a kind: unknown kinds and fields pass through verbatim
+    assert Enum.at(body["events"], 1) == %{
+             "seq" => 2,
+             "ts" => 1_718_000_001.5,
+             "kind" => "totally_unknown",
+             "mystery" => %{"nested" => true},
+             "extra" => "verbatim"
+           }
   end
 
   test "WS: the exact pinned event-name list" do

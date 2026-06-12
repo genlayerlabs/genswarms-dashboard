@@ -29,6 +29,10 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
     end
   end
 
+  @impl true
+  def events_feed(swarm, since, limit),
+    do: get("/api/swarms/#{swarm}/events/feed", %{since: since, limit: limit})
+
   defp get(path, params \\ %{}) do
     base = Application.fetch_env!(:subzero_swarm_dashboard, :swarm_api_url)
     token = Application.get_env(:subzero_swarm_dashboard, :swarm_api_token)

@@ -22,7 +22,8 @@ defmodule GenswarmsDashboard.PlugTest do
 
     on_exit(fn ->
       Application.delete_env(:genswarms_dashboard, :config)
-      for k <- [:stub_status, :stub_topology, :stub_events, :stub_logs, :stub_skills, :stub_last_events_query],
+      for k <- [:stub_status, :stub_topology, :stub_events, :stub_logs, :stub_skills,
+                :stub_last_events_query, :stub_last_feed_query],
           do: Application.delete_env(:genswarms_dashboard, k)
     end)
 
@@ -183,6 +184,75 @@ defmodule GenswarmsDashboard.PlugTest do
     assert conn.status == 200
     opts = Application.get_env(:genswarms_dashboard, :stub_last_events_query)
     assert opts[:limit] == 10_000
+  end
+
+  # ── events feed (host EventsSource) ─────────────────────────────────────────
+  test "GET /events/feed relays the EventsSource batch with source: feed" do
+    put_config(%{events_source: GenswarmsDashboard.FixtureEventsSource})
+
+    conn = call(conn(:get, "/api/swarms/fix/events/feed?since=1&limit=50"))
+    assert conn.status == 200
+    body = Jason.decode!(conn.resp_body)
+    assert body["source"] == "feed"
+    assert body["seq"] == 2
+    assert [%{"seq" => 2, "kind" => "totally_unknown"}] = body["events"]
+    # the source saw the parsed cursor args
+    assert Application.get_env(:genswarms_dashboard, :stub_last_feed_query) == {1, 50}
+
+    # pinned cursor semantics on the wire: an inflated since comes back with the
+    # feed's own cursor, never an echo — the consumer can see the regression
+    conn = call(conn(:get, "/api/swarms/fix/events/feed?since=99"))
+    assert %{"events" => [], "seq" => 2, "source" => "feed"} = Jason.decode!(conn.resp_body)
+  end
+
+  test "GET /events/feed defaults since=0 limit=500; limit is capped at 10_000" do
+    put_config(%{events_source: GenswarmsDashboard.FixtureEventsSource})
+
+    call(conn(:get, "/api/swarms/fix/events/feed"))
+    assert Application.get_env(:genswarms_dashboard, :stub_last_feed_query) == {0, 500}
+
+    call(conn(:get, "/api/swarms/fix/events/feed?limit=99999999999999999"))
+    assert Application.get_env(:genswarms_dashboard, :stub_last_feed_query) == {0, 10_000}
+  end
+
+  test "GET /events/feed since is an uncapped cursor — never clamped to @int_cap" do
+    put_config(%{events_source: GenswarmsDashboard.FixtureEventsSource})
+
+    # lifetime seqs legitimately exceed any size cap; a clamped cursor would
+    # re-deliver every event above the cap forever
+    call(conn(:get, "/api/swarms/fix/events/feed?since=2000000"))
+    assert Application.get_env(:genswarms_dashboard, :stub_last_feed_query) == {2_000_000, 500}
+  end
+
+  test "GET /events/feed without an events_source configured ⇒ source unavailable, still 200" do
+    conn = call(conn(:get, "/api/swarms/fix/events/feed"))
+    assert conn.status == 200
+    assert Jason.decode!(conn.resp_body) == %{"events" => [], "seq" => 0, "source" => "unavailable"}
+  end
+
+  test "GET /events/feed degrades to unavailable when the source returns :unavailable, raises, or exits" do
+    for source <- [
+          GenswarmsDashboard.UnavailableEventsSource,
+          GenswarmsDashboard.RaisingEventsSource,
+          GenswarmsDashboard.ExitingEventsSource
+        ] do
+      put_config(%{events_source: source})
+      conn = call(conn(:get, "/api/swarms/fix/events/feed"))
+      assert conn.status == 200
+      assert Jason.decode!(conn.resp_body) == %{"events" => [], "seq" => 0, "source" => "unavailable"}
+    end
+  end
+
+  test "GET /events/feed sits behind the auth plug like every route" do
+    put_config(%{token: "s3cret", events_source: GenswarmsDashboard.FixtureEventsSource})
+
+    conn = call(conn(:get, "/api/swarms/fix/events/feed"))
+    assert conn.status == 401
+    assert conn.halted
+
+    conn = call(conn(:get, "/api/swarms/fix/events/feed") |> put_req_header("authorization", "Bearer s3cret"))
+    assert conn.status == 200
+    assert Jason.decode!(conn.resp_body)["source"] == "feed"
   end
 
   test "OPTIONS preflight is 204" do

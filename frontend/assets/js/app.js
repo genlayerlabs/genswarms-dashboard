@@ -23,22 +23,14 @@ import "phoenix_html"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/subzero_swarm_dashboard"
-import {Topology} from "./hooks/topology"
+import {Pipeline} from "./hooks/pipeline"
 import topbar from "../vendor/topbar"
-
-// Topology controls fire plain window events the Topology hook listens for. Defined as
-// globals (not inline `{}` in HEEx) because HEEx 1.1 interprets braces in attributes.
-window.topoRelayout = () => window.dispatchEvent(new CustomEvent("topology:relayout"))
-window.topoToggle = (cat, el) => {
-  if (el) el.classList.toggle("topo-legend--off")
-  window.dispatchEvent(new CustomEvent("topology:toggle", {detail: {cat}}))
-}
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, Topology},
+  hooks: {...colocatedHooks, Pipeline},
 })
 
 // Show progress bar on live navigation and form submits

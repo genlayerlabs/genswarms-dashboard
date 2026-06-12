@@ -77,7 +77,11 @@ defmodule SubzeroSwarmDashboard.MixProject do
     [
       setup: ["deps.get", "assets.setup", "assets.build"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["compile", "tailwind subzero_swarm_dashboard", "esbuild subzero_swarm_dashboard"],
+      "assets.build": [
+        "compile",
+        "tailwind subzero_swarm_dashboard",
+        "esbuild subzero_swarm_dashboard"
+      ],
       "assets.deploy": [
         "tailwind subzero_swarm_dashboard --minify",
         "esbuild subzero_swarm_dashboard --minify",

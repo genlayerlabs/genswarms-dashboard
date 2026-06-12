@@ -28,6 +28,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   attr :flash, :map, required: true, doc: "the map of flash messages"
   attr :active, :atom, default: nil, doc: "the active nav key"
   attr :swarm, :string, default: nil, doc: "the swarm name shown in the sidebar"
+  attr :story, :any, default: nil, doc: "the folded story summary (feeds the liveness chip)"
   attr :inspect, :any, default: nil, doc: "the session currently open in the inspector"
   attr :inspect_transcript, :any, default: nil, doc: "lazily-loaded durable transcript"
   attr :inspect_activity, :any, default: nil, doc: "lazily-loaded raw slot activity"
@@ -45,20 +46,57 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
           </div>
         </div>
 
-        <div class="px-2 mb-5">
+        <div class="px-2 mb-5 space-y-2">
           <div class="flex items-center gap-2 rounded-lg bg-base-100/60 border border-base-300 px-2.5 py-1.5">
             <span class="signal-dot"></span>
             <span class="font-mono text-xs truncate">{@swarm || "—"}</span>
           </div>
+          <.feed_chip story={@story} />
         </div>
 
         <ul class="menu w-full gap-0.5 px-0">
-          <.nav_item active={@active} key={:overview} href={~p"/"} icon="hero-squares-2x2" label="Overview" />
-          <.nav_item active={@active} key={:topology} href={~p"/topology"} icon="hero-cpu-chip" label="Topology" />
-          <.nav_item active={@active} key={:sessions} href={~p"/sessions"} icon="hero-chat-bubble-left-right" label="Sessions" />
-          <.nav_item active={@active} key={:events} href={~p"/events"} icon="hero-bolt" label="Events" />
-          <.nav_item active={@active} key={:usage} href={~p"/usage"} icon="hero-chart-bar" label="Usage" />
-          <.nav_item active={@active} key={:logs} href={~p"/logs"} icon="hero-document-text" label="Logs" />
+          <.nav_item
+            active={@active}
+            key={:overview}
+            href={~p"/"}
+            icon="hero-squares-2x2"
+            label="Overview"
+          />
+          <.nav_item
+            active={@active}
+            key={:topology}
+            href={~p"/topology"}
+            icon="hero-cpu-chip"
+            label="Topology"
+          />
+          <.nav_item
+            active={@active}
+            key={:sessions}
+            href={~p"/sessions"}
+            icon="hero-chat-bubble-left-right"
+            label="Sessions"
+          />
+          <.nav_item
+            active={@active}
+            key={:events}
+            href={~p"/events"}
+            icon="hero-bolt"
+            label="Events"
+          />
+          <.nav_item
+            active={@active}
+            key={:usage}
+            href={~p"/usage"}
+            icon="hero-chart-bar"
+            label="Usage"
+          />
+          <.nav_item
+            active={@active}
+            key={:logs}
+            href={~p"/logs"}
+            icon="hero-document-text"
+            label="Logs"
+          />
         </ul>
         <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
       </aside>
@@ -72,6 +110,39 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
     <.flash_group flash={@flash} />
     """
   end
+
+  attr :story, :any, default: nil
+
+  # The dashboard's dead-man switch (spec §5.4): green while the events feed
+  # answers, amber when it's unreachable or the last successful poll went stale.
+  # Hidden until the first {:story, ...} broadcast arrives.
+  defp feed_chip(assigns) do
+    ~H"""
+    <div
+      :if={@story}
+      id="feed-chip"
+      title="Time since the display-event feed last answered. Amber means the feed is unreachable or stale — live story panels may lag; snapshot-driven content is unaffected."
+      class={[
+        "flex items-center gap-2 rounded-lg border px-2.5 py-1.5 font-mono text-xs",
+        if(feed_fresh?(@story),
+          do: "border-success/30 text-success",
+          else: "border-warning/40 text-warning"
+        )
+      ]}
+    >
+      <.icon name="hero-signal" class="size-3.5 shrink-0" />
+      <span class="truncate">{feed_label(@story)}</span>
+    </div>
+    """
+  end
+
+  defp feed_fresh?(story) do
+    story[:feed_status] == :ok and
+      (story[:feed_age_s] || 0) <= SubzeroSwarmDashboard.EventsFeed.stale_after_s()
+  end
+
+  defp feed_label(%{feed_status: :ok} = story), do: "feed #{story[:feed_age_s] || 0}s ago"
+  defp feed_label(_story), do: "feed unavailable"
 
   attr :active, :atom, default: nil
   attr :key, :atom, required: true

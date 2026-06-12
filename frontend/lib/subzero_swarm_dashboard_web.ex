@@ -17,7 +17,7 @@ defmodule SubzeroSwarmDashboardWeb do
   those modules here.
   """
 
-  def static_paths, do: ~w(assets vendor fonts images favicon.ico robots.txt)
+  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
 
   def router do
     quote do
@@ -81,6 +81,8 @@ defmodule SubzeroSwarmDashboardWeb do
       import Phoenix.HTML
       # Core UI components
       import SubzeroSwarmDashboardWeb.CoreComponents
+      # Story formatting/link helpers (durations, HH:MM labels, session links)
+      import SubzeroSwarmDashboardWeb.StoryHelpers
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

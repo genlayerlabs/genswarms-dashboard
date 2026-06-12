@@ -1,8 +1,9 @@
 defmodule GenswarmsDashboard do
   @moduledoc """
   Generic read-only dashboard backend for a genswarms swarm. The host app injects all
-  app-specific knowledge through `GenswarmsDashboard.DataSource` and all runtime config
-  through `start/1` — this library reads no env vars and contains no transport specifics.
+  app-specific knowledge through `GenswarmsDashboard.DataSource` (and optionally
+  `GenswarmsDashboard.EventsSource`) and all runtime config through `start/1` — this
+  library reads no env vars and contains no transport specifics.
   """
 
   alias GenswarmsDashboard.Config
@@ -12,6 +13,8 @@ defmodule GenswarmsDashboard do
 
     * `:swarm` (required) — swarm name, e.g. `"wingston"`
     * `:data_source` (required) — module implementing `GenswarmsDashboard.DataSource`
+    * `:events_source` — optional module implementing `GenswarmsDashboard.EventsSource`;
+      unset/nil ⇒ `GET …/events/feed` answers `source: "unavailable"`
     * `:pubsub_server` (required) — the engine's `Phoenix.PubSub` name (e.g. `Genswarms.PubSub`)
     * `:token` — auth token; nil or "" ⇒ bind 127.0.0.1 + no auth (fail-closed); set ⇒ bind 0.0.0.0 + require it
     * `:port` — string or integer, default 4001
@@ -40,6 +43,7 @@ defmodule GenswarmsDashboard do
     Config.put(%{
       swarm: Keyword.fetch!(opts, :swarm),
       data_source: Keyword.fetch!(opts, :data_source),
+      events_source: Keyword.get(opts, :events_source),
       pubsub_server: Keyword.fetch!(opts, :pubsub_server),
       token: token,
       port: port,

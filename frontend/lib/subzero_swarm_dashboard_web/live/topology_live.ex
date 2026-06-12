@@ -2,116 +2,131 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   @impl true
-  def mount(_params, _session, socket),
-    do: {:ok, assign(socket, page_title: "Topology", show_idle: false, q: "")}
+  def mount(_params, _session, socket) do
+    layout = Application.get_env(:subzero_swarm_dashboard, :pipeline_layout, %{})
 
-  @impl true
-  def handle_event("toggle_idle", _p, socket) do
-    socket = assign(socket, show_idle: !socket.assigns.show_idle)
-    {:noreply, push_graph(socket)}
+    {:ok,
+     socket
+     |> assign(page_title: "Topology", debug: false)
+     |> push_event("pipeline:init", layout)}
   end
 
-  def handle_event("search", %{"q" => q}, socket) do
-    {:noreply, socket |> assign(q: q) |> push_event("topology:focus", %{q: q})}
-  end
-
-  @live_events ~w(agent_status message_routed message_broadcast agent_added agent_removed topology_changed)
+  # ?debug=1 shows the hook's trace rig. The hook el is phx-update="ignore", so
+  # data-debug is read once AT MOUNT — the param arrives with the page load.
+  @impl true
+  def handle_params(params, _uri, socket),
+    do: {:noreply, assign(socket, debug: params["debug"] == "1")}
 
   @impl true
+  # Raw display events drive the canvas; the hook owns playback timing (causal).
+  def handle_info({:display_event, ev}, socket),
+    do: {:noreply, push_event(socket, "pipeline:event", ev)}
+
+  # Agent nodes are dynamic. Precedence (spec §5.5): the snapshot wins existence
+  # (which slots are in the pool), the event story wins activity state.
   def handle_info({:snapshot, snap}, socket),
-    do: {:noreply, push_event(socket, "topology:graph", graph_map(snap, socket.assigns.show_idle))}
-
-  # Live WS events → instant incremental graph updates (no wait for the 3s poll).
-  def handle_info({:event, type, payload}, socket) when type in @live_events,
-    do: {:noreply, push_event(socket, "topology:event", %{type: type, payload: payload})}
+    do: {:noreply, push_event(socket, "pipeline:agents", %{agents: agent_names(snap)})}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
-
-  defp push_graph(socket),
-    do: push_event(socket, "topology:graph", graph_map(socket.assigns[:snapshot], socket.assigns.show_idle))
 
   @impl true
   def render(assigns) do
     assigns =
       assigns
-      |> assign(:nodes, table_nodes(assigns[:snapshot], assigns.show_idle))
+      |> assign(:nodes, table_nodes(assigns[:snapshot]))
       |> assign(:gauge, pool_meta(assigns[:snapshot]))
+      |> assign(:in_flight, (assigns[:story] && assigns.story[:in_flight]) || [])
 
     ~H"""
-    <Layouts.app flash={@flash} active={:topology} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
+    <Layouts.app
+      flash={@flash}
+      active={:topology}
+      swarm={@swarm}
+      story={@story}
+      inspect={@inspect}
+      inspect_transcript={@inspect_transcript}
+      inspect_activity={@inspect_activity}
+    >
       <div class="space-y-4">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <h1 class="text-2xl">Topology</h1>
-          <div :if={@snapshot} class="flex items-center gap-3 flex-wrap">
-            <form phx-change="search">
-              <label class="input input-bordered input-sm flex items-center gap-2">
-                <.icon name="hero-magnifying-glass" class="size-4 opacity-50" />
-                <input type="text" name="q" value={@q} placeholder="focus @handle / object" class="grow bg-transparent outline-none w-44" autocomplete="off" />
-              </label>
-            </form>
-            <div :if={@gauge.ok} class="flex items-center gap-1.5" title={"pool #{@gauge.leased} of #{@gauge.size} leased"}>
-              <div
-                class="radial-progress tnum text-[0.6rem]"
-                style={"--value:#{@gauge.pct}; --size:2.4rem; --thickness:3px; color:#{@gauge.tone}"}
-                role="progressbar"
-              >
-                <span class="text-base-content">{@gauge.leased}/{@gauge.size}</span>
-              </div>
-              <span class="text-xs opacity-60">pool</span>
-            </div>
-            <label class="cursor-pointer flex items-center gap-1.5 text-sm">
-              <input type="checkbox" class="toggle toggle-xs toggle-success" phx-click="toggle_idle" checked={@show_idle} />
-              idle slots
-            </label>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm gap-1.5"
-              onclick="topoRelayout()"
+          <div
+            :if={@gauge.ok}
+            class="flex items-center gap-1.5"
+            title={"pool #{@gauge.leased} of #{@gauge.size} leased"}
+          >
+            <div
+              class="radial-progress tnum text-[0.6rem]"
+              style={"--value:#{@gauge.pct}; --size:2.4rem; --thickness:3px; color:#{@gauge.tone}"}
+              role="progressbar"
             >
-              <.icon name="hero-arrow-path" class="size-4" /> re-layout
-            </button>
+              <span class="text-base-content">{@gauge.leased}/{@gauge.size}</span>
+            </div>
+            <span class="text-xs opacity-60">pool</span>
           </div>
         </div>
 
         <div
-          :if={@snapshot}
-          id="topology"
-          phx-hook="Topology"
+          id="pipeline"
+          phx-hook="Pipeline"
           phx-update="ignore"
+          data-debug={@debug && "1"}
           class="w-full h-[64vh] rounded-box border border-base-300 bg-base-100 relative overflow-hidden"
         >
         </div>
 
-        <div class="flex flex-wrap gap-4 text-xs opacity-70">
-          <button
-            type="button"
-            class="topo-legend flex items-center gap-1.5"
-            onclick="topoToggle('object', this)"
-          >
-            <span class="inline-block w-3 h-3 align-middle bg-info rounded-sm"></span> object (deterministic)
-          </button>
-          <button
-            type="button"
-            class="topo-legend flex items-center gap-1.5"
-            onclick="topoToggle('agent-live', this)"
-          >
-            <span class="signal-dot"></span> agent · live
-          </button>
-          <button
-            type="button"
-            class="topo-legend flex items-center gap-1.5"
-            onclick="topoToggle('agent-idle', this)"
-          >
-            <span class="inline-block w-2.5 h-2.5 rounded-full bg-base-content/30"></span> agent · idle
-          </button>
-          <span class="opacity-60">click a legend chip to filter · click an agent to inspect · click any node to isolate</span>
+        <div
+          id="pipeline-legend"
+          class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs opacity-70"
+        >
+          <span><span class="text-success">●</span> thinking</span>
+          <span>
+            <span class="text-warning">◐</span> waiting · dashed edge → the service it waits on
+          </span>
+          <span><span class="text-info">◌</span> spawning</span>
+          <span><span class="text-warning font-mono">⁺¹</span> queued turns</span>
+          <span><span class="text-success">⤸</span> reply arc</span>
+          <span><span class="text-error">◉</span> failure flash</span>
+          <span>☕ compacting</span>
         </div>
+
+        <section id="pipeline-inflight" class="rounded-box border border-base-300 bg-base-100 p-4">
+          <h2 class="text-xs uppercase tracking-wider opacity-60 mb-2">In flight · user requests</h2>
+          <%= cond do %>
+            <% @story == nil or @story[:feed_status] != :ok -> %>
+              <p class="text-sm opacity-60">
+                event feed unavailable — the canvas stays quiet; the node table below still reflects the snapshot.
+              </p>
+            <% @in_flight == [] -> %>
+              <p class="text-sm opacity-60">nobody waiting</p>
+            <% true -> %>
+              <div class="space-y-1 font-mono text-sm">
+                <div :for={ep <- @in_flight} class="flex items-baseline gap-3">
+                  <span class="min-w-32 truncate">
+                    @{ep.user}<span :if={ep.count > 1} class="opacity-50"> ·+{ep.count - 1}</span>
+                  </span>
+                  <span class="opacity-80">{short(ep.agent) || "routing…"}</span>
+                  <span class={activity_tone(ep.activity)}>{ep.activity}</span>
+                  <span :if={ep.stalled} class="badge badge-error badge-xs">stalled</span>
+                  <span class="tnum ml-auto opacity-60">{sec(ep.elapsed_s)}s</span>
+                </div>
+              </div>
+          <% end %>
+          <p class="text-[0.7rem] opacity-40 mt-2">
+            true state, updated instantly — the canvas above replays the same events at causal pace
+          </p>
+        </section>
 
         <details :if={@snapshot} class="text-sm">
           <summary class="cursor-pointer opacity-70">Nodes (table fallback)</summary>
           <table class="table table-sm mt-2">
             <thead>
-              <tr><th>user / name</th><th>type</th><th>state</th><th>session</th></tr>
+              <tr>
+                <th>user / name</th>
+                <th>type</th>
+                <th>state</th>
+                <th>session</th>
+              </tr>
             </thead>
             <tbody>
               <tr
@@ -121,11 +136,24 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
                 phx-value-session_id={n["session_id"]}
               >
                 <td>
-                  <.identity :if={n["type"] == "agent"} user={n["user"]} session_id={n["session_id"]} size={:sm} />
+                  <.identity
+                    :if={n["type"] == "agent"}
+                    user={n["user"]}
+                    session_id={n["session_id"]}
+                    size={:sm}
+                  />
                   <span :if={n["type"] != "agent"} class="font-mono">{n["name"]}</span>
                 </td>
                 <td>{n["type"]}</td>
-                <td><.live_dot :if={n["type"] == "agent"} state={n["state"]} /><span :if={n["type"] != "agent"} class="opacity-50">{n["subtype"]}</span></td>
+                <td>
+                  <.live_dot :if={n["type"] == "agent"} state={n["state"]} />
+                  <span
+                    :if={n["type"] != "agent"}
+                    class="opacity-50"
+                  >
+                    {n["subtype"]}
+                  </span>
+                </td>
                 <td class="font-mono text-xs opacity-60">{n["session_id"]}</td>
               </tr>
             </tbody>
@@ -157,84 +185,31 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   defp pool_tone(pct) when pct >= 70, do: "var(--color-warning)"
   defp pool_tone(_pct), do: "var(--color-success)"
 
-  # ── graph payload for the cytoscape hook ─────────────────────────────────────
-  defp graph_map(nil, _show_idle), do: %{nodes: [], edges: []}
-
-  defp graph_map(snap, show_idle) do
-    by_cid = Map.new(snap["sessions"] || [], &{&1["session_id"], &1})
-
-    nodes =
-      (snap["nodes"] || [])
-      |> Enum.map(&node_data(&1, by_cid))
-      |> Enum.reject(&drop_idle?(&1, show_idle))
-
-    kept = MapSet.new(nodes, & &1.data.id)
-
-    edges =
-      for e <- snap["edges"] || [],
-          MapSet.member?(kept, e["from"]) and MapSet.member?(kept, e["to"]) do
-        %{data: %{id: "#{e["from"]}__#{e["to"]}", source: e["from"], target: e["to"]}}
-      end
-
-    %{nodes: nodes, edges: edges}
+  defp agent_names(snap) do
+    for n <- snap["nodes"] || [], n["type"] == "agent", do: n["name"]
   end
 
-  defp node_data(n, by_cid) do
-    sess = n["session_id"] && by_cid[n["session_id"]]
+  # ── in-flight strip (TRUE state from @story — not the paced animation) ────────
+  defp short(nil), do: nil
+  defp short(name), do: String.replace(name, "wingston_agent_", "agent_")
 
-    {label, state} =
-      if n["type"] == "agent" do
-        {agent_label(sess, n), to_string((sess && sess["state"]) || n["state"] || "")}
-      else
-        {n["name"], to_string(n["state"] || "")}
-      end
-
-    %{
-      data: %{
-        id: n["name"],
-        label: label,
-        type: n["type"],
-        subtype: n["subtype"],
-        state: state,
-        session: n["session_id"]
-      }
-    }
-  end
-
-  defp agent_label(sess, n) do
-    handle = sess && get_in(sess, ["user", "handle"])
-    name = sess && get_in(sess, ["user", "name"])
-
-    cond do
-      present(handle) -> "@#{handle}"
-      present(name) -> name
-      true -> n["name"]
-    end
-  end
-
-  # idle agents are hidden unless "idle slots" is on; objects always stay.
-  defp drop_idle?(%{data: %{type: "agent", state: state}}, show_idle),
-    do: not show_idle and state != "active"
-
-  defp drop_idle?(_node, _show_idle), do: false
+  defp activity_tone("waiting on " <> _), do: "text-warning"
+  defp activity_tone("thinking"), do: "text-success"
+  defp activity_tone("spawning"), do: "text-info"
+  defp activity_tone(_activity), do: "opacity-60"
 
   # ── table fallback rows (with the joined user identity) ──────────────────────
-  defp table_nodes(nil, _show_idle), do: []
+  defp table_nodes(nil), do: []
 
-  defp table_nodes(snap, show_idle) do
+  defp table_nodes(snap) do
     by_cid = Map.new(snap["sessions"] || [], &{&1["session_id"], &1})
 
-    (snap["nodes"] || [])
-    |> Enum.map(fn n ->
+    Enum.map(snap["nodes"] || [], fn n ->
       sess = n["session_id"] && by_cid[n["session_id"]]
 
       n
       |> Map.put("user", sess && sess["user"])
       |> Map.put("state", (sess && sess["state"]) || n["state"])
     end)
-    |> Enum.reject(fn n -> not show_idle and n["type"] == "agent" and n["state"] != "active" end)
   end
-
-  defp present(v) when is_binary(v), do: String.trim(v) != ""
-  defp present(_), do: false
 end

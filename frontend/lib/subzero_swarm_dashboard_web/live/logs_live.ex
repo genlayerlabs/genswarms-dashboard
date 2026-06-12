@@ -25,16 +25,31 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} active={:logs} swarm={@swarm} inspect={@inspect} inspect_transcript={@inspect_transcript} inspect_activity={@inspect_activity}>
+    <Layouts.app
+      flash={@flash}
+      active={:logs}
+      swarm={@swarm}
+      story={@story}
+      inspect={@inspect}
+      inspect_transcript={@inspect_transcript}
+      inspect_activity={@inspect_activity}
+    >
       <div class="space-y-5 max-w-3xl">
         <div class="flex items-center justify-between gap-4">
           <h1 class="text-2xl">
-            Logs <span class="text-xs opacity-50 font-sans align-middle">raw per-session output (ephemeral)</span>
+            Logs
+            <span class="text-xs opacity-50 font-sans align-middle">
+              raw per-session output (ephemeral)
+            </span>
           </h1>
           <form phx-change="select">
             <select name="session_id" class="select select-bordered select-sm">
               <option value="">select a session…</option>
-              <option :for={s <- sessions(@snapshot)} value={s["session_id"]} selected={@selected == s["session_id"]}>
+              <option
+                :for={s <- sessions(@snapshot)}
+                value={s["session_id"]}
+                selected={@selected == s["session_id"]}
+              >
                 {s["session_id"]} ({s["agent"]})
               </option>
             </select>
@@ -45,7 +60,8 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
         <p class="text-xs opacity-50">
           Raw slot output is wiped when a slot is recycled. The durable conversation is on the
-          <.link navigate={~p"/sessions"} class="link">session</.link> detail.
+          <.link navigate={~p"/sessions"} class="link">session</.link>
+          detail.
         </p>
       </div>
     </Layouts.app>

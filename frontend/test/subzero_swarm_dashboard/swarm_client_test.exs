@@ -17,4 +17,12 @@ defmodule SubzeroSwarmDashboard.SwarmClientTest do
 
     assert {:ok, %{"source" => "unavailable"}} = SwarmClient.session_history("wingston", "tg:1:0")
   end
+
+  test "events_feed/3 delegates to the configured impl" do
+    expect(SwarmClientMock, :events_feed, fn "wingston", 42, 500 ->
+      {:ok, %{"events" => [], "seq" => 42, "source" => "feed"}}
+    end)
+
+    assert {:ok, %{"seq" => 42}} = SwarmClient.events_feed("wingston", 42, 500)
+  end
 end

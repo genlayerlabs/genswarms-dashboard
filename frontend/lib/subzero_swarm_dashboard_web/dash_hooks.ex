@@ -4,22 +4,32 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   PubSub and centralizes the feed messages (`{:snapshot}`/`{:disconnected}`/
   `{:warning}`) via an attached `handle_info` hook, so pages only render `@snapshot`.
   Live `{:event, ...}` messages fall through (`:cont`) for pages that want them.
+
+  Same pattern for the display-event feed (`EventsFeed`, topic `"events"`):
+  `{:story, summary}` is centralized into `@story`; raw `{:display_event, ...}`
+  falls through for pages that consume them (Topology canvas).
   """
   import Phoenix.LiveView
   import Phoenix.Component
 
+  alias SubzeroSwarmDashboard.EventsFeed
   alias SubzeroSwarmDashboard.SwarmFeed
   alias SubzeroSwarmDashboard.SwarmClient
 
   def on_mount(:default, _params, _session, socket) do
     swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
-    if connected?(socket), do: SwarmFeed.subscribe()
+
+    if connected?(socket) do
+      SwarmFeed.subscribe()
+      EventsFeed.subscribe()
+    end
 
     socket =
       socket
       |> assign_new(:snapshot, fn -> nil end)
       |> assign_new(:conn_status, fn -> :connecting end)
       |> assign_new(:feed_warning, fn -> nil end)
+      |> assign_new(:story, fn -> nil end)
       # the shared slide-over inspector (any page can open it via phx-click="inspect")
       |> assign_new(:inspect, fn -> nil end)
       |> assign_new(:inspect_transcript, fn -> nil end)
@@ -41,7 +51,13 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
       session ->
         if connected?(socket), do: send(self(), {:load_inspect_detail, sid})
-        {:halt, assign(socket, inspect: session, inspect_transcript: :loading, inspect_activity: :loading)}
+
+        {:halt,
+         assign(socket,
+           inspect: session,
+           inspect_transcript: :loading,
+           inspect_activity: :loading
+         )}
     end
   end
 
@@ -91,6 +107,14 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
   defp handle_feed({:warning, w}, socket),
     do: {:halt, assign(socket, feed_warning: w)}
+
+  # {:cont} like {:snapshot}: the Events page stream-prepends new story rows in
+  # its own handle_info; @story is assigned here regardless.
+  defp handle_feed({:story, summary}, socket),
+    do: {:cont, assign(socket, story: summary)}
+
+  # Raw display events flow through to pages that consume them (Topology canvas).
+  defp handle_feed({:display_event, _ev}, socket), do: {:cont, socket}
 
   # Live WS events flow through to pages (every page has a catch-all handle_info/2;
   # Topology consumes them for instant graph updates). SwarmFeed also observes them

@@ -6,7 +6,8 @@ host-app or transport specifics. The genswarms engine is a **runtime-only** depe
 (remote calls; not in `mix.exs`; tests stub it).
 
 The host app injects all app-specific knowledge through `GenswarmsDashboard.DataSource`
-and all runtime config through `GenswarmsDashboard.start/1`.
+(and, optionally, its display event feed through `GenswarmsDashboard.EventsSource`) and
+all runtime config through `GenswarmsDashboard.start/1`.
 
 **Runtime dependencies:** the host BEAM must provide these genswarms engine modules
 (the library calls them as plain remote calls): `Genswarms.SwarmManager.status/1`,
@@ -25,6 +26,7 @@ has Phoenix, Bandit, Plug, and Jason loaded). The files must be required in this
 ```
 vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/config.ex
 vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/data_source.ex
+vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/events_source.ex
 vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/aggregate.ex
 vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/plug.ex
 vendor/genswarms-dashboard/backend/lib/genswarms_dashboard/socket.ex
@@ -126,6 +128,25 @@ output byte-identical. The library itself still never reads a transport-specific
 
 ---
 
+## The EventsSource contract (optional)
+
+Implement `GenswarmsDashboard.EventsSource` in the host app and pass the module to
+`GenswarmsDashboard.start/1` as `:events_source` to serve `GET .../events/feed`:
+
+```elixir
+@callback events_since(since :: non_neg_integer(), limit :: pos_integer()) ::
+            %{events: [map()], seq: non_neg_integer()} | :unavailable
+```
+
+Events with `seq > since`, oldest first. Event maps are app-opaque: the library relays
+them verbatim and never interprets an event kind. PINNED cursor semantics: `seq` is
+ALWAYS the feed's current cursor — the highest seq the feed has assigned (0 if none) —
+NEVER an echo of `since`. A gap observed by a consumer means ring pruning (resync); a
+returned `seq` below the consumer's cursor means the feed restarted (re-baseline). See
+the behaviour's `@doc` for the full rationale.
+
+---
+
 ## The wire contract
 
 These MUST NOT change — the frontend (`subzero-swarm-dashboard`) reads them. Pinned by
@@ -137,6 +158,7 @@ These MUST NOT change — the frontend (`subzero-swarm-dashboard`) reads them. P
 - `GET /api/swarms/:name/sessions/:session_id/history` → `%{session_id, turns, source}`
 - `GET /api/swarms/:name/sessions/:session_id/logs` → `%{session_id, logs, source}`
 - `GET /api/swarms/:name/events` → `%{events, count, swarm}`
+- `GET /api/swarms/:name/events/feed` → `%{events, seq, source}` (see below)
 - `OPTIONS *` → 204 CORS preflight
 - `match _` → 404 `%{error}`
 
@@ -154,6 +176,19 @@ These MUST NOT change — the frontend (`subzero-swarm-dashboard`) reads them. P
 `data_source` is set via the `:data_source_label` key in `GenswarmsDashboard.start/1`
 (config, not a callback); the library defaults it to `"genswarms"` if unset.
 
+### Events feed envelope (`GET .../events/feed?since=N&limit=M`)
+
+```
+%{events: [<host event maps, relayed verbatim>], seq: <feed cursor>, source: "feed"}
+%{events: [], seq: 0, source: "unavailable"}
+```
+
+Served from the optional `:events_source` (§ EventsSource contract). The `"unavailable"`
+envelope answers when no source is configured, or when the source returns
+`:unavailable`, raises, or exits — fail-soft, never a 500. `since` defaults 0 and is an
+UNCAPPED cursor (lifetime seqs legitimately exceed any size cap); `limit` defaults 500,
+capped at 10 000 — the host impl may clamp limit tighter.
+
 ### WebSocket (`/swarm/websocket`, channel `swarm:*`)
 
 Pushes: `heartbeat` (5 s default), `agent_status`, `message_routed`, `message_broadcast`,
@@ -168,6 +203,8 @@ Call `GenswarmsDashboard.start/1` after requiring the library files. Options:
 
 - `:swarm` (required) — swarm name
 - `:data_source` (required) — module implementing `GenswarmsDashboard.DataSource`
+- `:events_source` — optional module implementing `GenswarmsDashboard.EventsSource`;
+  unset ⇒ `GET .../events/feed` answers `source: "unavailable"`
 - `:pubsub_server` (required) — the engine's `Phoenix.PubSub` name
 - `:token` — auth token (see fail-closed rule below)
 - `:port` — string or integer, default `4001`

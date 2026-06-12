@@ -59,8 +59,12 @@ if config_env() == :prod do
   #   PHX_IP=0.0.0.0             -> all IPv4 interfaces
   bind_ip =
     case System.get_env("PHX_IP") do
-      blank when blank in [nil, ""] -> {0, 0, 0, 0, 0, 0, 0, 0}
-      "loopback" -> {0, 0, 0, 0, 0, 0, 0, 1}
+      blank when blank in [nil, ""] ->
+        {0, 0, 0, 0, 0, 0, 0, 0}
+
+      "loopback" ->
+        {0, 0, 0, 0, 0, 0, 0, 1}
+
       addr ->
         case :inet.parse_address(String.to_charlist(addr)) do
           {:ok, ip} -> ip
@@ -69,7 +73,11 @@ if config_env() == :prod do
     end
 
   config :subzero_swarm_dashboard, SubzeroSwarmDashboardWeb.Endpoint,
-    url: [host: host, port: String.to_integer(System.get_env("PHX_PORT", "443")), scheme: System.get_env("PHX_SCHEME", "https")],
+    url: [
+      host: host,
+      port: String.to_integer(System.get_env("PHX_PORT", "443")),
+      scheme: System.get_env("PHX_SCHEME", "https")
+    ],
     check_origin: false,
     http: [
       # Bind address (see `bind_ip` above; default all-interfaces, PHX_IP overrides).

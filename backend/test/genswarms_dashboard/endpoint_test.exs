@@ -16,6 +16,7 @@ defmodule GenswarmsDashboard.EndpointTest do
       GenswarmsDashboard.start(
         swarm: "fix",
         data_source: GenswarmsDashboard.FixtureDataSource,
+        events_source: GenswarmsDashboard.FixtureEventsSource,
         pubsub_server: GenswarmsDashboard.TestPubSub,
         token: "",
         port: "4096"
@@ -23,6 +24,7 @@ defmodule GenswarmsDashboard.EndpointTest do
 
     on_exit(fn -> stop_endpoint(pid) end)
     assert GenswarmsDashboard.Config.get(:token) == nil
+    assert GenswarmsDashboard.Config.get(:events_source) == GenswarmsDashboard.FixtureEventsSource
     assert GenswarmsDashboard.describe() =~ "127.0.0.1:4096"
   end
 

@@ -55,6 +55,33 @@ config :subzero_swarm_dashboard,
   swarm_client: SubzeroSwarmDashboard.SwarmClient.Http,
   router_client: SubzeroSwarmDashboard.RouterClient.Http
 
+# Pipeline canvas lane map (spec §5.5): the wingston pipeline as DATA, pushed to
+# the JS hook once per mount ("pipeline:init"). The flow runs telegram → ingress →
+# agent column → sender → back to telegram (the return arc), with LLM-ish services
+# above and bookkeeping below. x/y are canvas fractions, r a pixel radius; kind
+# "ext" marks endpoints outside the swarm. Agent slots are NOT listed — they are
+# dynamic (snapshot pool + events) and stack at `agent_column_x`. `chatter` names
+# the nodes whose mutual traffic is background noise (hidden behind the canvas
+# chatter toggle); `return_arcs` curve reply legs under the pipeline.
+config :subzero_swarm_dashboard, :pipeline_layout, %{
+  nodes: [
+    %{name: "telegram", x: 0.06, y: 0.50, kind: "ext", r: 15},
+    %{name: "ingress", x: 0.21, y: 0.50, kind: "obj", r: 18},
+    %{name: "sender", x: 0.76, y: 0.50, kind: "obj", r: 18},
+    %{name: "rally", x: 0.21, y: 0.13, kind: "obj", r: 18},
+    %{name: "policy", x: 0.38, y: 0.13, kind: "obj", r: 18},
+    %{name: "browse", x: 0.57, y: 0.13, kind: "obj", r: 18},
+    %{name: "web", x: 0.74, y: 0.13, kind: "ext", r: 14},
+    %{name: "roster", x: 0.26, y: 0.87, kind: "obj", r: 18},
+    %{name: "commands", x: 0.40, y: 0.87, kind: "obj", r: 18},
+    %{name: "cron", x: 0.54, y: 0.87, kind: "obj", r: 18},
+    %{name: "metrics", x: 0.68, y: 0.87, kind: "obj", r: 18}
+  ],
+  agent_column_x: 0.47,
+  chatter: ["rally", "policy", "cron", "roster", "metrics"],
+  return_arcs: [%{from: "sender", to: "telegram", cx: 0.41, cy: 0.99}]
+}
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

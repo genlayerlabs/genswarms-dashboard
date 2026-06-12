@@ -10,7 +10,8 @@ defmodule SubzeroSwarmDashboard.Application do
     children =
       [
         SubzeroSwarmDashboardWeb.Telemetry,
-        {DNSCluster, query: Application.get_env(:subzero_swarm_dashboard, :dns_cluster_query) || :ignore},
+        {DNSCluster,
+         query: Application.get_env(:subzero_swarm_dashboard, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: SubzeroSwarmDashboard.PubSub}
       ] ++
         feed_children() ++
@@ -25,11 +26,15 @@ defmodule SubzeroSwarmDashboard.Application do
     Supervisor.start_link(children, opts)
   end
 
-  # The polling feed + WS client. Disabled in test (config :start_feed false) so the
+  # The polling feeds + WS client. Disabled in test (config :start_feed false) so the
   # Mox swarm client isn't called without expectations.
   defp feed_children do
     if Application.get_env(:subzero_swarm_dashboard, :start_feed, true) do
-      [SubzeroSwarmDashboard.SwarmFeed, SubzeroSwarmDashboard.SwarmFeed.Socket]
+      [
+        SubzeroSwarmDashboard.SwarmFeed,
+        SubzeroSwarmDashboard.SwarmFeed.Socket,
+        SubzeroSwarmDashboard.EventsFeed
+      ]
     else
       []
     end

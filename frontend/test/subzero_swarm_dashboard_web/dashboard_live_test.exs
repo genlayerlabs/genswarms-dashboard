@@ -89,30 +89,25 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert push_snap(view) =~ "ingress"
   end
 
-  test "snapshot pushes the classified graph to the topology hook", %{conn: conn} do
+  test "snapshot pushes the dynamic agent slots to the pipeline hook", %{conn: conn} do
     {:ok, view, _} = live(conn, "/topology")
     push_snap(view)
-    assert_push_event(view, "topology:graph", %{nodes: nodes, edges: edges})
-    assert Enum.any?(nodes, &(&1.data.id == "ingress" and &1.data.type == "object"))
-    assert Enum.any?(nodes, &(&1.data.id == "wingston_agent_0" and &1.data.type == "agent"))
-    assert Enum.any?(edges, &match?(%{data: %{source: "ingress", target: "policy"}}, &1))
+    assert_push_event(view, "pipeline:agents", %{agents: ["wingston_agent_0"]})
   end
 
-  test "live agent_status event pushes an incremental update (and crashes no page)", %{conn: conn} do
+  test "a display event reaches the pipeline hook (and crashes no page)", %{conn: conn} do
     {:ok, topo, _} = live(conn, "/topology")
     {:ok, overview, _} = live(conn, "/")
 
     Phoenix.PubSub.broadcast(
       SubzeroSwarmDashboard.PubSub,
-      "feed",
-      {:event, "agent_status", %{"agent" => "wingston_agent_0", "state" => "idle"}}
+      "events",
+      {:display_event,
+       %{"kind" => "reply_sent", "cid" => "tg:1:0", "ok" => true, "seq" => 7, "ts" => 1.0}}
     )
 
     # Topology forwards it to the hook; other pages safely ignore it (catch-all).
-    assert_push_event(topo, "topology:event", %{
-      type: "agent_status",
-      payload: %{"agent" => "wingston_agent_0", "state" => "idle"}
-    })
+    assert_push_event(topo, "pipeline:event", %{"kind" => "reply_sent", "cid" => "tg:1:0"})
 
     assert render(overview) =~ "Overview"
   end
@@ -166,8 +161,11 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     {:ok, view, _} = live(conn, "/sessions")
 
     # answered: a delivery AFTER the last inbound
-    answered = put_in(@snap, ["extensions", "deliveries"],
-      %{"items" => [%{"session_id" => "tg:1:0", "at" => in_unix + 10, "status" => "sent"}]})
+    answered =
+      put_in(@snap, ["extensions", "deliveries"], %{
+        "items" => [%{"session_id" => "tg:1:0", "at" => in_unix + 10, "status" => "sent"}]
+      })
+
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, answered})
     assert render(view) =~ "answered"
 
@@ -256,7 +254,9 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "isn&#39;t leased to a slot right now"
   end
 
-  test "session detail says skills are unavailable when no live agent exists at all", %{conn: conn} do
+  test "session detail says skills are unavailable when no live agent exists at all", %{
+    conn: conn
+  } do
     # default session_skills stub is source: unavailable
     {:ok, view, _} = live(conn, "/sessions/tg:1:0")
     html = render(view)
@@ -270,6 +270,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Events"
   end
 
+  # the LogStore table is the "engine raw" view, demoted behind the story toggle
   test "events: server filters pass through + client contains filter narrows rows", %{conn: conn} do
     parent = self()
 
@@ -295,12 +296,12 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
        ]}
     end)
 
-    {:ok, view, _} = live(conn, "/events")
+    {:ok, view, _} = live(conn, "/events?view=raw")
     assert render(view) =~ "spawned agent"
 
     # server-side filters reach SwarmClient.events
     view
-    |> element("form")
+    |> element("#raw-filter-form")
     |> render_change(%{
       "level" => "error",
       "category" => "router",
@@ -311,7 +312,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert_receive {:events_opts, %{level: "error", category: "router", agent: "r", minutes: 60}}
 
     # client-side "contains" narrows the rendered rows
-    html = view |> element("form") |> render_change(%{"contains" => "invalid"})
+    html = view |> element("#raw-filter-form") |> render_change(%{"contains" => "invalid"})
     assert html =~ "invalid route"
     refute html =~ "spawned agent"
   end
@@ -337,16 +338,47 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
         "last_seen" => System.os_time(:second) - 120
       },
       "by_served_model" => %{
-        "gpt-5.5" => %{"requests" => 1240, "tokens_total" => 3_100_000, "error_rate" => 0.0, "latency_ms_avg" => 420.0, "latency_ms_max" => 980.0}
+        "gpt-5.5" => %{
+          "requests" => 1240,
+          "tokens_total" => 3_100_000,
+          "error_rate" => 0.0,
+          "latency_ms_avg" => 420.0,
+          "latency_ms_max" => 980.0
+        }
       },
       "by_provider" => %{"openai" => %{"requests" => 1240, "tokens_total" => 3_100_000}},
       "by_route" => %{"profile:medium" => %{"requests" => 1240, "tokens_total" => 3_100_000}},
-      "by_model_family" => %{"gpt-5.5-codex" => %{"requests" => 1240, "tokens_total" => 3_100_000}},
-      "consumer_settings" => %{"status" => "active", "allowed_routes" => [], "effective_per_min" => 600, "burst" => 60},
+      "by_model_family" => %{
+        "gpt-5.5-codex" => %{"requests" => 1240, "tokens_total" => 3_100_000}
+      },
+      "consumer_settings" => %{
+        "status" => "active",
+        "allowed_routes" => [],
+        "effective_per_min" => 600,
+        "burst" => 60
+      },
       "key" => %{"sha256_prefix" => "ab12cd34", "status" => "active"},
-      "health_summary" => %{"state" => "healthy", "success_rate" => 1.0, "success_count" => 1240, "request_count" => 1240, "status_counts" => %{"200" => 1240}, "route_failures" => 0},
-      "route_health" => [%{"route" => "profile:medium", "state" => "healthy", "served_model_id" => "gpt-5.5"}],
-      "recent" => [%{"ts" => System.os_time(:second) - 60, "status" => 200, "served_model_id" => "gpt-5.5", "path" => "/v1/chat/completions", "latency_ms" => 420.0, "tokens_total" => 2537}],
+      "health_summary" => %{
+        "state" => "healthy",
+        "success_rate" => 1.0,
+        "success_count" => 1240,
+        "request_count" => 1240,
+        "status_counts" => %{"200" => 1240},
+        "route_failures" => 0
+      },
+      "route_health" => [
+        %{"route" => "profile:medium", "state" => "healthy", "served_model_id" => "gpt-5.5"}
+      ],
+      "recent" => [
+        %{
+          "ts" => System.os_time(:second) - 60,
+          "status" => 200,
+          "served_model_id" => "gpt-5.5",
+          "path" => "/v1/chat/completions",
+          "latency_ms" => 420.0,
+          "tokens_total" => 2537
+        }
+      ],
       "security" => %{"sanitized" => true, "raw_api_key_exposed" => false}
     }
   end
@@ -403,43 +435,67 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
     test "an orchestrator-relayed user message is the user, prefix stripped" do
       assert %{kind: :user, text: "what campaigns"} =
-               CoreComponents.classify_activity(%{"role" => "user", "content" => "[From orchestrator] what campaigns", "timestamp" => "t"})
+               CoreComponents.classify_activity(%{
+                 "role" => "user",
+                 "content" => "[From orchestrator] what campaigns",
+                 "timestamp" => "t"
+               })
     end
 
     test "an inter-object [From policy] message is noise, labeled by source" do
-      row = CoreComponents.classify_activity(%{"role" => "user", "content" => ~s([From policy] {"campaigns":[]})})
+      row =
+        CoreComponents.classify_activity(%{
+          "role" => "user",
+          "content" => ~s([From policy] {"campaigns":[]})
+        })
+
       assert row.kind == :noise
       assert row.label == "policy →"
     end
 
     test "a tool shell call is noise" do
       assert %{kind: :noise} =
-               CoreComponents.classify_activity(%{"role" => "tool", "content" => ~s(shell: swarm-msg send policy '{"action":"campaigns"}')})
+               CoreComponents.classify_activity(%{
+                 "role" => "tool",
+                 "content" => ~s(shell: swarm-msg send policy '{"action":"campaigns"}')
+               })
     end
 
     test "an exit result is noise" do
-      assert %{kind: :noise} = CoreComponents.classify_activity(%{"role" => "res", "content" => "[exit:0] "})
+      assert %{kind: :noise} =
+               CoreComponents.classify_activity(%{"role" => "res", "content" => "[exit:0] "})
     end
 
     test "a natural-language assistant turn is chat" do
       assert %{kind: :assistant, text: "Sent! Here's the full list"} =
-               CoreComponents.classify_activity(%{"role" => "asst", "content" => "Sent! Here's the full list"})
+               CoreComponents.classify_activity(%{
+                 "role" => "asst",
+                 "content" => "Sent! Here's the full list"
+               })
     end
 
     test "an assistant tool-call emitted as text is flagged not-delivered, not shown as a reply" do
-      blob = ~s({"cmd": "cat > /workspace/reply.json <<JSON\\n{\\"action\\":\\"reply\\",\\"text\\":\\"Yo welcome\\"}\\nJSON\\nswarm-msg send sender -f /workspace/reply.json"})
+      blob =
+        ~s({"cmd": "cat > /workspace/reply.json <<JSON\\n{\\"action\\":\\"reply\\",\\"text\\":\\"Yo welcome\\"}\\nJSON\\nswarm-msg send sender -f /workspace/reply.json"})
+
       # Previously this masked as a clean :assistant reply; now it must surface as
       # an un-executed tool call (the reply was never actually sent).
-      assert %{kind: :tool_intent, text: "Yo welcome"} = CoreComponents.classify_activity(%{"role" => "asst", "content" => blob})
+      assert %{kind: :tool_intent, text: "Yo welcome"} =
+               CoreComponents.classify_activity(%{"role" => "asst", "content" => blob})
     end
 
     test "a <tool_call>-wrapped assistant turn is flagged not-delivered" do
       assert %{kind: :tool_intent} =
-               CoreComponents.classify_activity(%{"role" => "assistant", "content" => ~s(<tool_call>\n{"cmd": "echo hi"}\n</tool_call>)})
+               CoreComponents.classify_activity(%{
+                 "role" => "assistant",
+                 "content" => ~s(<tool_call>\n{"cmd": "echo hi"}\n</tool_call>)
+               })
     end
 
     test "an executed reply (shell tool actually ran swarm-msg send) shows as sent" do
-      tool = ~s(shell: cat > /workspace/reply.json <<JSON\n{"action":"reply","text":"Hello there"}\nJSON\nswarm-msg send sender -f /workspace/reply.json)
+      tool =
+        ~s(shell: cat > /workspace/reply.json <<JSON\n{"action":"reply","text":"Hello there"}\nJSON\nswarm-msg send sender -f /workspace/reply.json)
+
       assert %{kind: :sent, text: "Hello there"} =
                CoreComponents.classify_activity(%{"role" => "tool", "content" => tool})
     end
