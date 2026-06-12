@@ -93,36 +93,37 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
         <.prompt_skills skills={@skills} />
 
-        <div id="session-requests" class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-1">
-            Requests <span class="text-xs font-normal opacity-50">· event feed</span>
-          </h2>
-          <p class="text-xs opacity-50 mb-2">
+        <.panel id="session-requests" title="Requests">
+          <:meta>
+            <span class="font-mono">event feed</span>
+          </:meta>
+          <p class="text-xs opacity-50 mb-3">
             Each request this conversation opened, exactly as the display-event feed
             recorded it — open, claim, first feedback, reply. <strong>Exact facts</strong>,
             no log guessing.
           </p>
           <.requests requests={@requests} story={@story} />
-        </div>
+        </.panel>
 
-        <div class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-1">Conversation</h2>
-          <p class="text-xs opacity-50 mb-2">
+        <.panel title="Conversation">
+          <p class="text-xs opacity-50 mb-3">
             The clean user ↔ Wingston back-and-forth, saved to the database — it <strong>survives agent restarts</strong>. (Empty if persistence is off.)
           </p>
           <.transcript transcript={@transcript} />
-        </div>
+        </.panel>
 
-        <div class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-1">
-            Agent activity <span class="text-xs font-normal opacity-50">· live</span>
-          </h2>
-          <p class="text-xs opacity-50 mb-2">
+        <.panel title="Agent activity">
+          <:meta>
+            <span class="inline-flex items-center gap-1.5">
+              <span class="signal-dot"></span> live
+            </span>
+          </:meta>
+          <p class="text-xs opacity-50 mb-3">
             The agent's raw working log for this slot right now — messages in, tool
             calls, results, sends. <strong>Ephemeral</strong>: wiped when the slot is recycled.
           </p>
           <.activity_timeline activity={@activity} />
-        </div>
+        </.panel>
       </div>
     </Layouts.app>
     """
@@ -140,15 +141,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     assigns = assign(assigns, skills_list: skills, source: body["source"])
 
     ~H"""
-    <div class="card border-l-4 border-accent bg-accent/10 p-4">
-      <h2 class="font-semibold mb-1 flex items-center gap-2">
-        <span class="badge badge-accent badge-sm font-semibold">⚙</span> System prompt · skills
-      </h2>
-      <p class="text-xs opacity-60 mb-2">
+    <.panel title="System prompt · skills" class="border-l-4 border-accent bg-accent/10">
+      <p class="text-xs opacity-50 mb-2">
         What the agent is primed with before the first message — every skill file
         loaded into its system prompt (read live from the agent's skills dir).
       </p>
-      <p :if={@source == "pool"} class="text-xs opacity-60 mb-2">
+      <p :if={@source == "pool"} class="text-xs opacity-50 mb-2">
         This session isn't leased to a slot right now — showing the skills another live
         pool agent is primed with (the pool shares one skills deploy).
       </p>
@@ -159,13 +157,15 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         </summary>
         <pre class="mt-1 text-xs whitespace-pre-wrap break-words bg-base-300/40 rounded p-2 overflow-x-auto max-h-96 overflow-y-auto">{s["content"]}</pre>
       </details>
-    </div>
+    </.panel>
     """
   end
 
   defp prompt_skills(%{skills: :loading} = assigns) do
     ~H"""
-    <div class="text-sm opacity-60">loading…</div>
+    <.panel title="System prompt · skills">
+      <div class="text-sm opacity-60">loading…</div>
+    </.panel>
     """
   end
 
@@ -173,10 +173,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   # rather than render an empty standout card.
   defp prompt_skills(assigns) do
     ~H"""
-    <div class="card bg-base-200 p-4">
-      <h2 class="font-semibold mb-1">System prompt · skills</h2>
+    <.panel title="System prompt · skills">
       <div class="text-sm opacity-60">Unavailable (no live agent to read skills from).</div>
-    </div>
+    </.panel>
     """
   end
 
@@ -289,11 +288,14 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
   defp requests(%{requests: [_ | _]} = assigns) do
     ~H"""
-    <div class="space-y-1 font-mono text-xs">
+    <div class="divide-y divide-base-300/40 font-mono text-xs">
       <div
         :for={{r, i} <- Enum.with_index(@requests)}
         id={"session-request-#{i}"}
-        class="flex flex-wrap items-baseline gap-x-2"
+        class={[
+          "flex flex-wrap items-baseline gap-x-2 py-1.5 first:pt-0 last:pb-0 border-l-2 pl-2.5",
+          request_tone(r)
+        ]}
       >
         <span class="opacity-50 tnum whitespace-nowrap">
           <.local_time id={"session-request-#{i}-t"} ts={r.opened_at} fmt="hms" />
@@ -310,10 +312,22 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
   defp requests(assigns) do
     ~H"""
-    <div id="session-requests-empty" class="text-sm opacity-60">
-      No requests observed for this conversation
-      (requests observed since <.local_time id="requests-since-empty" ts={@story[:baseline_at]} />).
+    <div id="session-requests-empty">
+      <.empty_state msg="No requests observed for this conversation" />
+      <p class="text-xs opacity-40 mt-2">
+        (requests observed since <.local_time id="requests-since-empty" ts={@story[:baseline_at]} />).
+      </p>
     </div>
     """
+  end
+
+  # the verdict leg keys the row's left accent — the same scan-by-color grammar
+  # as the Events story rows (success = replied, warning = stalled, primary = open)
+  defp request_tone(%{chain: chain} = r) do
+    cond do
+      String.contains?(chain, "✓ replied") -> "border-success/60"
+      r.stalled -> "border-warning/70"
+      true -> "border-primary/50"
+    end
   end
 end

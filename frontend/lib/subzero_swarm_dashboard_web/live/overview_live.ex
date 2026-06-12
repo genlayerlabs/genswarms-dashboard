@@ -28,7 +28,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       inspect_transcript={@inspect_transcript}
       inspect_activity={@inspect_activity}
     >
-      <div class="space-y-6 max-w-5xl">
+      <div class="space-y-5 max-w-6xl">
         <div class="flex items-center justify-between">
           <h1 class="text-2xl">Overview</h1>
           <div class="flex items-center gap-2">
@@ -62,50 +62,48 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
         </div>
         <%= if @story && @story[:feed_status] == :ok do %>
           <.in_flight_panel story={@story} snapshot={@snapshot} />
-          <.agents_panel story={@story} snapshot={@snapshot} />
+          <div class="grid lg:grid-cols-2 gap-5">
+            <.agents_panel story={@story} snapshot={@snapshot} />
+            <.issues_panel story={@story} />
+          </div>
           <.kpi_panel story={@story} snapshot={@snapshot} />
-          <.issues_panel story={@story} />
         <% end %>
 
-        <div :if={@snapshot} class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <.stat
-            label="Status"
-            value={@snapshot["status"]}
-            sub={"uptime " <> fmt_uptime(@snapshot["uptime_s"])}
-          />
-          <.stat label="Data source" value={@snapshot["data_source"]} />
-          <.stat label="Agents" value={get_in(@snapshot, ["summary", "agents"])} />
-          <.stat label="Objects" value={get_in(@snapshot, ["summary", "objects"])} />
-        </div>
-
-        <div :if={@snapshot} class="card bg-base-200 p-4">
-          <h2 class="font-semibold mb-2">Slot pool</h2>
-          <.pool_bar pool={get_in(@snapshot, ["summary", "pool"])} />
-        </div>
-
-        <div :if={@snapshot} class="grid grid-cols-2 gap-4">
-          <div class="card bg-base-200 p-4">
-            <h2 class="font-semibold mb-2">Consumers</h2>
-            <div class="text-2xl font-bold">{consumers_count(@snapshot)}</div>
+        <.panel :if={@snapshot} id="swarm-panel" title="Swarm">
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-3">
+            <.metric
+              label="status"
+              value={@snapshot["status"]}
+              sub={"uptime " <> fmt_uptime(@snapshot["uptime_s"])}
+            />
+            <.metric label="data source" value={@snapshot["data_source"]} />
+            <.metric label="agents" value={get_in(@snapshot, ["summary", "agents"])} />
+            <.metric label="objects" value={get_in(@snapshot, ["summary", "objects"])} />
+            <.metric label="consumers" value={consumers_count(@snapshot)} />
           </div>
-          <div class="card bg-base-200 p-4">
-            <h2 class="font-semibold mb-2">Usage (router)</h2>
+        </.panel>
+
+        <div :if={@snapshot} class="grid lg:grid-cols-2 gap-5">
+          <.panel title="Slot pool">
+            <.pool_bar pool={get_in(@snapshot, ["summary", "pool"])} />
+          </.panel>
+          <.panel title="Usage · router">
             <.usage_summary usage={@usage} />
-          </div>
+          </.panel>
         </div>
 
-        <div
+        <.panel
           :if={@snapshot && @snapshot["warnings"] != []}
-          class="card bg-warning/10 border border-warning p-4"
+          title="Warnings"
+          class="border-warning/50 bg-warning/5"
         >
-          <h2 class="font-semibold mb-2">Warnings</h2>
           <ul class="text-sm space-y-1">
             <li :for={w <- @snapshot["warnings"]} class="font-mono">
               <span class="badge badge-warning badge-sm">{w["code"]}</span>
               {w["object"]} — {w["reason"]}
             </li>
           </ul>
-        </div>
+        </.panel>
 
         <div :if={is_nil(@snapshot)} class="opacity-60">Waiting for the first snapshot…</div>
       </div>
@@ -124,26 +122,33 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       |> assign(:last, last_close(assigns.story))
 
     ~H"""
-    <div id="in-flight-panel" class="card bg-base-200 p-4">
-      <h2 class="font-semibold mb-2">In flight ({length(@eps)})</h2>
+    <.panel id="in-flight-panel" title="In flight">
+      <:meta>
+        <span class="font-mono tnum">{length(@eps)}</span>
+        <span class="opacity-60">open</span>
+      </:meta>
       <%!-- the most common view: nothing waiting — one reassuring line, not an empty box --%>
-      <div :if={@eps == []} id="in-flight-idle" class="text-sm font-mono opacity-70">
+      <div :if={@eps == []} id="in-flight-idle" class="text-sm font-mono opacity-70 py-1">
+        <span class="text-success">○</span>
         nobody waiting<span :if={@last}> · last: {@last.text} at <.local_time
             id="last-close-t"
             ts={@last.ts}
           /></span>
       </div>
-      <div class="space-y-1.5">
+      <div class="divide-y divide-base-300/50">
         <div
           :for={ep <- @eps}
           id={"in-flight-#{dom_cid(ep.cid)}"}
-          class="flex items-center gap-3 font-mono text-sm"
+          class="flex items-center gap-3 font-mono text-sm py-2 first:pt-0 last:pb-0"
         >
-          <span class="w-36 truncate">
-            @{handle_for(@snapshot, ep.cid, ep.user)}<span :if={ep.count > 1} class="opacity-60"> ·+{ep.count - 1}</span>
+          <span class="w-36 truncate font-semibold">
+            @{handle_for(@snapshot, ep.cid, ep.user)}<span
+              :if={ep.count > 1}
+              class="opacity-60 font-normal"
+            > ·+{ep.count - 1}</span>
           </span>
-          <span class="w-36 truncate opacity-80">{ep.agent || "routing"}</span>
-          <span class={["flex-1 truncate", ep.stalled && "text-error"]}>
+          <span class="w-36 truncate opacity-60">{ep.agent || "routing"}</span>
+          <span class={["flex-1 truncate", (ep.stalled && "text-error") || "text-primary"]}>
             {ep.activity}{queue_note(@story, ep.agent)}
           </span>
           <span class="tnum whitespace-nowrap">{duration(ep.elapsed_s)}</span>
@@ -157,7 +162,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           </.link>
         </div>
       </div>
-    </div>
+    </.panel>
     """
   end
 
@@ -171,24 +176,35 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       |> assign(:pool, get_in(assigns.snapshot || %{}, ["summary", "pool"]))
 
     ~H"""
-    <div id="agents-strip" class="card bg-base-200 p-4">
-      <h2 class="font-semibold mb-2">Agents</h2>
-      <div class="flex flex-wrap gap-x-6 gap-y-1 font-mono text-sm">
-        <span :for={ag <- @agents} class="whitespace-nowrap">
-          {ag.name} {agent_glyph(ag.state)} {agent_state_label(ag)}
-          <span class="opacity-60">{duration(ag.elapsed_s)}</span>
-          <span :if={ag.queue > 0} class="badge badge-ghost badge-xs align-middle">+{ag.queue}</span>
-        </span>
-        <span :if={@agents == []} class="opacity-60">no agent activity observed yet</span>
-      </div>
+    <.panel id="agents-strip" title="Agents">
       <%!-- pool is snapshot truth (existence/leases); "avg backend-up" was cut —
             the feed has no spawn-ready event, so it is not derivable (spec §5.6) --%>
-      <div :if={@pool} class="text-xs font-mono opacity-60 mt-2">
-        pool {@pool["leased"]}/{@pool["size"]} leased
+      <:meta>
+        <span :if={@pool} class="font-mono">pool {@pool["leased"]}/{@pool["size"]} leased</span>
+      </:meta>
+      <div class="flex flex-wrap gap-2">
+        <span
+          :for={ag <- @agents}
+          class="inline-flex items-center gap-1.5 rounded-lg border border-base-300 bg-base-100/60 px-2.5 py-1.5 font-mono text-xs whitespace-nowrap"
+        >
+          <span class={agent_tone(ag.state)}>{agent_glyph(ag.state)}</span>
+          <span class="font-semibold">{ag.name}</span>
+          <span class="opacity-60">{agent_state_label(ag)}</span>
+          <span class="opacity-40 tnum">{duration(ag.elapsed_s)}</span>
+          <span :if={ag.queue > 0} class="badge badge-warning badge-xs">+{ag.queue}</span>
+        </span>
+        <span :if={@agents == []} class="text-sm opacity-60 py-1">
+          no agent activity observed yet
+        </span>
       </div>
-    </div>
+    </.panel>
     """
   end
+
+  defp agent_tone(:thinking), do: "text-primary"
+  defp agent_tone(:waiting), do: "text-warning"
+  defp agent_tone(:spawning), do: "text-info"
+  defp agent_tone(_state), do: "opacity-40"
 
   attr :story, :map, required: true
   attr :snapshot, :map, default: nil
@@ -200,40 +216,54 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       |> assign(:today, metrics_today(assigns.snapshot))
 
     ~H"""
-    <div id="kpi-panel" class="card bg-base-200 p-4">
+    <.panel id="kpi-panel" title="Window">
       <%!-- honest window label: counters restart at the dashboard's baseline (spec §9);
             a counter present in extensions["metrics_today"] is durable → "today" badge --%>
-      <h2 id="kpi-window-label" class="font-semibold mb-2">
-        since <.local_time id="kpi-since" ts={@story[:baseline_at]} />
-      </h2>
-      <div class="flex flex-wrap gap-x-6 gap-y-1 font-mono text-sm">
-        <.kpi label="replies" value={@k[:replies]} today={today_val(@today, "replies")} />
-        <.kpi label="p50" value={duration(@k[:reply_p50])} />
-        <.kpi label="p95" value={duration(@k[:reply_p95])} />
-        <.kpi label="first-feedback p50" value={duration(@k[:first_feedback_p50])} />
-        <.kpi label="failures" value={@k[:failures]} today={today_val(@today, "failures")} />
-        <.kpi label="inbox_full" value={@k[:inbox_full]} today={today_val(@today, "inbox_full")} />
-        <.kpi label="stalled" value={@k[:stalled]} />
-        <.kpi label="compactions" value={@k[:compactions]} today={today_val(@today, "compactions")} />
-        <.kpi label="browse" value={browse_rate(@k)} />
+      <:meta>
+        <span id="kpi-window-label" class="font-mono">
+          since <.local_time id="kpi-since" ts={@story[:baseline_at]} />
+        </span>
+      </:meta>
+      <div class="grid grid-cols-3 md:grid-cols-5 xl:grid-cols-9 gap-x-4 gap-y-3">
+        <.metric
+          label="replies"
+          value={today_val(@today, "replies") || @k[:replies] || 0}
+          badge={today_val(@today, "replies") && "today"}
+        />
+        <.metric label="p50 reply" value={duration(@k[:reply_p50])} />
+        <.metric label="p95 reply" value={duration(@k[:reply_p95])} />
+        <.metric label="first feedback" value={duration(@k[:first_feedback_p50])} />
+        <.metric
+          label="failures"
+          value={today_val(@today, "failures") || @k[:failures] || 0}
+          badge={today_val(@today, "failures") && "today"}
+          tone={alarm_tone(today_val(@today, "failures") || @k[:failures], "error")}
+        />
+        <.metric
+          label="inbox full"
+          value={today_val(@today, "inbox_full") || @k[:inbox_full] || 0}
+          badge={today_val(@today, "inbox_full") && "today"}
+          tone={alarm_tone(today_val(@today, "inbox_full") || @k[:inbox_full], "warn")}
+        />
+        <.metric
+          label="stalled"
+          value={@k[:stalled] || 0}
+          tone={alarm_tone(@k[:stalled], "warn")}
+        />
+        <.metric
+          label="compactions"
+          value={today_val(@today, "compactions") || @k[:compactions] || 0}
+          badge={today_val(@today, "compactions") && "today"}
+        />
+        <.metric label="browse" value={browse_rate(@k)} />
       </div>
-    </div>
+    </.panel>
     """
   end
 
-  attr :label, :string, required: true
-  attr :value, :any, default: nil
-  attr :today, :any, default: nil
-
-  defp kpi(assigns) do
-    ~H"""
-    <span class="whitespace-nowrap">
-      <span class="opacity-60">{@label}</span>
-      <b class="tnum">{if @today != nil, do: @today, else: @value || 0}</b>
-      <span :if={@today != nil} class="badge badge-ghost badge-xs align-middle">today</span>
-    </span>
-    """
-  end
+  # a counter's number is only colored when it IS the alarm (nonzero)
+  defp alarm_tone(n, tone) when is_number(n) and n > 0, do: tone
+  defp alarm_tone(_n, _tone), do: nil
 
   attr :story, :map, required: true
 
@@ -241,19 +271,20 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     assigns = assign(assigns, :issues, assigns.story[:issues] || [])
 
     ~H"""
-    <div id="issues-panel" class="card bg-base-200 p-4">
-      <h2 class="font-semibold mb-2">
-        Issues
-        <span class="text-xs font-normal opacity-60">
+    <.panel id="issues-panel" title="Issues">
+      <:meta>
+        <span class="font-mono">
           last 24h · observed since <.local_time id="issues-since" ts={@story[:baseline_at]} />
         </span>
-      </h2>
-      <div :if={@issues == []} class="text-sm opacity-60">none observed</div>
-      <div class="space-y-0.5">
+      </:meta>
+      <div :if={@issues == []} class="text-sm opacity-60 py-1">
+        <span class="text-success">✓</span> none observed
+      </div>
+      <div class="divide-y divide-base-300/50">
         <div
           :for={{issue, i} <- Enum.with_index(@issues)}
           id={"issue-#{i}"}
-          class="flex items-baseline gap-3 font-mono text-xs"
+          class="flex items-baseline gap-3 font-mono text-xs py-1.5 first:pt-0 last:pb-0"
         >
           <span class="opacity-50 whitespace-nowrap">
             <.local_time id={"issue-#{i}-t"} ts={issue.ts} />
@@ -265,7 +296,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           </.link>
         </div>
       </div>
-    </div>
+    </.panel>
     """
   end
 
@@ -283,20 +314,6 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     ]}>
       {@status}
     </span>
-    """
-  end
-
-  attr :label, :string, required: true
-  attr :value, :any, required: true
-  attr :sub, :string, default: nil
-
-  defp stat(assigns) do
-    ~H"""
-    <div class="card bg-base-200 p-4">
-      <div class="text-xs uppercase opacity-60">{@label}</div>
-      <div class="text-2xl font-bold">{@value}</div>
-      <div :if={@sub} class="text-xs opacity-60">{@sub}</div>
-    </div>
     """
   end
 

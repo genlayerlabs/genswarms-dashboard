@@ -76,7 +76,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   # The bot's own activity (spec §5.6 Usage): since-baseline story KPIs, upgraded
   # per-counter to the host's durable daily values when the snapshot publishes
-  # extensions["metrics_today"] (§6.3). The router/LLM cards below are untouched.
+  # extensions["metrics_today"] (§6.3). The router/LLM panels below are untouched.
   defp wingston(assigns) do
     kpis = (assigns.story || %{})[:kpis] || %{}
     today = metrics_today(assigns.snapshot)
@@ -91,6 +91,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           %{
             label: "Browse ok",
             value: ok_rate(browse_ok, browse_total),
+            badge: nil,
             sub: "#{num(browse_ok)}/#{num(browse_total)} · #{browse_src || since}"
           },
           counter_stat("Asks", today, "asks", kpis[:asks], since),
@@ -99,33 +100,32 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       )
 
     ~H"""
-    <div :if={@story || @today} id="wingston-usage" class="space-y-2">
-      <h2 class="font-semibold">
-        Wingston
-        <span class="text-xs opacity-50 font-normal">
-          replies · browse · asks · compactions (bot)
-        </span>
-      </h2>
+    <.panel :if={@story || @today} id="wingston-usage" title="Wingston">
+      <:meta>
+        <span class="font-mono">replies · browse · asks · compactions (bot)</span>
+      </:meta>
       <%= if @today || (@story && @story[:baseline_at]) do %>
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <.stat :for={s <- @stats} label={s.label} value={s.value} sub={s.sub} />
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-3">
+          <.metric :for={s <- @stats} label={s.label} value={s.value} badge={s.badge} sub={s.sub} />
         </div>
       <% else %>
-        <p class="text-sm opacity-60">
-          Event feed unavailable — bot counters resume when it answers. Router usage below is unaffected.
-        </p>
+        <.empty_state
+          msg="Event feed unavailable — bot counters resume when it answers."
+          hint="Router usage below is unaffected."
+        />
       <% end %>
-    </div>
+    </.panel>
     """
   end
 
-  # One counter card: the durable daily value when the host publishes it
-  # ("today"), else the story's since-baseline counter — each labeled by its
-  # source so a card never implies a window it can't back.
+  # One counter tile: the durable daily value when the host publishes it
+  # ("today" badge, same convention as Overview's window panel), else the
+  # story's since-baseline counter — each labeled by its source so a tile
+  # never implies a window it can't back.
   defp counter_stat(label, today, key, fallback, since) do
     case (today || %{})[key] do
-      n when is_number(n) -> %{label: label, value: num(n), sub: "today"}
-      _ -> %{label: label, value: num(fallback), sub: since}
+      n when is_number(n) -> %{label: label, value: num(n), badge: "today", sub: nil}
+      _ -> %{label: label, value: num(fallback), badge: nil, sub: since}
     end
   end
 
@@ -181,33 +181,37 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       Limited detail (<code>detail_level: {@usage |> elem(1) |> Map.get("detail_level")}</code>) — this key may not be a router consumer.
     </div>
 
-    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-      <.stat label="Requests" value={num(@totals["requests"])} />
-      <.stat
-        label="Tokens"
-        value={num(@totals["tokens_total"])}
-        sub={"#{num(@totals["tokens_in"])} in · #{num(@totals["tokens_out"])} out"}
-      />
-      <.stat
-        label="Error rate"
-        value={pct(@totals["error_rate"])}
-        sub={"#{num(@totals["errors"])} errors"}
-      />
-      <.stat
-        label="Latency"
-        value={ms(@totals["latency_ms_avg"])}
-        sub={"max #{ms(@totals["latency_ms_max"])}"}
-      />
-      <.stat label="Last seen" value={rel_unix(@totals["last_seen"])} />
-    </div>
+    <.panel title="Totals">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-3">
+        <.metric label="Requests" value={num(@totals["requests"])} />
+        <.metric
+          label="Tokens"
+          value={num(@totals["tokens_total"])}
+          sub={"#{num(@totals["tokens_in"])} in · #{num(@totals["tokens_out"])} out"}
+        />
+        <.metric
+          label="Error rate"
+          value={pct(@totals["error_rate"])}
+          sub={"#{num(@totals["errors"])} errors"}
+          tone={alarm_tone(@totals["errors"])}
+        />
+        <.metric
+          label="Latency"
+          value={ms(@totals["latency_ms_avg"])}
+          sub={"max #{ms(@totals["latency_ms_max"])}"}
+        />
+        <.metric label="Last seen" value={rel_unix(@totals["last_seen"])} />
+      </div>
+    </.panel>
 
-    <div class="grid lg:grid-cols-3 gap-4">
-      <div class="card bg-base-200 p-4 lg:col-span-2">
-        <h2 class="font-semibold mb-2">Health</h2>
-        <div class="flex flex-wrap items-center gap-2 mb-3">
-          <span class={["badge", health_badge(@health["state"])]}>
+    <div class="grid lg:grid-cols-2 gap-5">
+      <.panel title="Health">
+        <:meta>
+          <span class={["badge badge-sm", health_badge(@health["state"])]}>
             {@health["state"] || "unknown"}
           </span>
+        </:meta>
+        <div class="flex flex-wrap items-center gap-2">
           <span class="badge badge-ghost">success {pct(@health["success_rate"])}</span>
           <span class="badge badge-ghost">
             {num(@health["success_count"])}/{num(@health["request_count"])} ok
@@ -216,7 +220,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             {@health["route_failures"]} route failures
           </span>
         </div>
-        <div class="flex flex-wrap gap-1.5">
+        <div class="flex flex-wrap gap-1.5 mt-3">
           <span
             :for={{code, n} <- status_rows(@health["status_counts"])}
             class={["badge badge-sm", status_badge(code)]}
@@ -233,10 +237,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             </span>
           </div>
         </div>
-      </div>
+      </.panel>
 
-      <div class="card bg-base-200 p-4">
-        <h2 class="font-semibold mb-2">Your key</h2>
+      <.panel title="Your key">
         <dl class="grid grid-cols-3 gap-x-2 gap-y-1.5 text-sm">
           <dt class="opacity-50">status</dt>
           <dd class="col-span-2">
@@ -251,18 +254,19 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           <dt class="opacity-50">routes</dt>
           <dd class="col-span-2">{routes_str(@settings["allowed_routes"])}</dd>
         </dl>
-      </div>
+      </.panel>
     </div>
 
-    <div class="grid lg:grid-cols-2 gap-4">
+    <div class="grid lg:grid-cols-2 gap-5">
       <.breakdown :for={{title, head, rows} <- @breakdowns} title={title} head={head} rows={rows} />
     </div>
 
-    <div class="card bg-base-200 p-4">
-      <h2 class="font-semibold mb-2">Recent requests</h2>
-      <p class="text-xs opacity-50 mb-2">Sanitized — no request/response bodies, no secrets.</p>
+    <.panel title="Recent requests" body_class="px-4 py-2">
+      <:meta>
+        <span>sanitized — no request/response bodies, no secrets</span>
+      </:meta>
       <.recent rows={@recent} />
-    </div>
+    </.panel>
 
     <p class="text-xs opacity-40">
       schema v{@usage |> elem(1) |> Map.get("schema_version")} · {(@security["sanitized"] &&
@@ -280,13 +284,11 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   defp usage(assigns) do
     ~H"""
-    <div class="card bg-base-200 p-6 text-center">
-      <div class="text-lg font-semibold">Usage unavailable</div>
-      <div class="text-sm opacity-60 mt-1">
-        The router's <code>/v1/usage</code> endpoint isn't configured or returned an error
-        (set <code>ROUTER_USAGE_URL</code> + <code>ROUTER_API_KEY</code>).
-      </div>
-    </div>
+    <.empty_state
+      id="usage-unavailable"
+      msg="Usage unavailable"
+      hint="The router's /v1/usage endpoint isn't configured or returned an error (set ROUTER_USAGE_URL + ROUTER_API_KEY)."
+    />
     """
   end
 
@@ -297,8 +299,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   defp breakdown(assigns) do
     ~H"""
-    <div class="card bg-base-200 p-4">
-      <h2 class="font-semibold mb-2">{@title}</h2>
+    <.panel title={@title} body_class="px-4 py-2">
       <table :if={@rows != []} class="table table-xs">
         <thead>
           <tr>
@@ -321,8 +322,8 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           </tr>
         </tbody>
       </table>
-      <div :if={@rows == []} class="text-sm opacity-50">No data.</div>
-    </div>
+      <div :if={@rows == []} class="text-sm opacity-50 py-1">No data.</div>
+    </.panel>
     """
   end
 
@@ -331,11 +332,17 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   defp recent(%{rows: []} = assigns) do
     ~H"""
-    <div class="text-sm opacity-50">No recent requests recorded.</div>
+    <div class="text-sm opacity-50 py-1">No recent requests recorded.</div>
     """
   end
 
+  # The router can return hundreds of rows — show the newest 25 and fold the
+  # rest behind a <details>, so the page keeps a bounded height (pure template
+  # split, no assigns).
   defp recent(assigns) do
+    {visible, older} = Enum.split(assigns.rows, 25)
+    assigns = assign(assigns, visible: visible, older: older)
+
     ~H"""
     <div class="overflow-x-auto">
       <table class="table table-xs">
@@ -351,18 +358,36 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           </tr>
         </thead>
         <tbody>
-          <tr :for={r <- @rows}>
-            <td class="tnum text-xs" title={r["ts"]}>{rel_unix(r["ts"])}</td>
-            <td><span class={["badge badge-xs", status_badge(r["status"])]}>{r["status"]}</span></td>
-            <td class="font-mono text-xs">{r["served_model_id"] || r["requested_model"] || "—"}</td>
-            <td class="font-mono text-xs opacity-70">{r["path"] || "—"}</td>
-            <td class="text-right tnum text-xs">{ms(r["latency_ms"])}</td>
-            <td class="text-right tnum text-xs">{num(r["tokens_total"])}</td>
-            <td class="text-xs opacity-70 max-w-xs truncate">{recent_detail(r)}</td>
-          </tr>
+          <.recent_row :for={r <- @visible} r={r} />
         </tbody>
       </table>
+      <details :if={@older != []} class="mt-1">
+        <summary class="cursor-pointer select-none text-xs opacity-60 py-1.5">
+          show {length(@older)} older…
+        </summary>
+        <table class="table table-xs">
+          <tbody>
+            <.recent_row :for={r <- @older} r={r} />
+          </tbody>
+        </table>
+      </details>
     </div>
+    """
+  end
+
+  attr :r, :map, required: true
+
+  defp recent_row(assigns) do
+    ~H"""
+    <tr>
+      <td class="tnum text-xs" title={@r["ts"]}>{rel_unix(@r["ts"])}</td>
+      <td><span class={["badge badge-xs", status_badge(@r["status"])]}>{@r["status"]}</span></td>
+      <td class="font-mono text-xs">{@r["served_model_id"] || @r["requested_model"] || "—"}</td>
+      <td class="font-mono text-xs opacity-70">{@r["path"] || "—"}</td>
+      <td class="text-right tnum text-xs">{ms(@r["latency_ms"])}</td>
+      <td class="text-right tnum text-xs">{num(@r["tokens_total"])}</td>
+      <td class="text-xs opacity-70 max-w-xs truncate">{recent_detail(@r)}</td>
+    </tr>
     """
   end
 
@@ -372,22 +397,12 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp recent_detail(%{"decision_trace" => t}) when not is_nil(t), do: inspect(t)
   defp recent_detail(_), do: ""
 
-  # ── stat card ───────────────────────────────────────────────────────────────
-  attr :label, :string, required: true
-  attr :value, :any, required: true
-  attr :sub, :string, default: nil
-
-  defp stat(assigns) do
-    ~H"""
-    <div class="card bg-base-200 p-4">
-      <div class="text-xs uppercase opacity-60">{@label}</div>
-      <div class="text-2xl font-bold tnum">{@value}</div>
-      <div :if={@sub} class="text-xs opacity-50 mt-0.5">{@sub}</div>
-    </div>
-    """
-  end
-
   # ── formatting / shaping helpers ────────────────────────────────────────────
+
+  # The number is only colored when it IS the alarm (nonzero) — same rule as
+  # Overview's window panel.
+  defp alarm_tone(n) when is_number(n) and n > 0, do: "error"
+  defp alarm_tone(_n), do: nil
 
   # A breakdown map (%{name => stats}) → list sorted by requests desc.
   defp breakdown_rows(map) when is_map(map),

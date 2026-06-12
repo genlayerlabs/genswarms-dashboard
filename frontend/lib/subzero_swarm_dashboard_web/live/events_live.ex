@@ -302,17 +302,22 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
         </div>
 
         <div :if={@view == "story"} id="story-view" class="space-y-3">
-          <div class="flex flex-wrap gap-2 items-center text-sm">
+          <%!-- one toolbar: filters left, the pause control anchored right --%>
+          <div class="flex flex-wrap gap-2 items-center rounded-box border border-base-300 bg-base-200/60 px-3 py-2.5 text-sm">
             <form
               id="story-filter-form"
               phx-change="story_filter"
               class="flex flex-wrap gap-2 items-center"
             >
-              <select name="kind" class="select select-bordered select-sm">
+              <select name="kind" class="select select-bordered select-sm w-36">
                 <option value="" selected={@kind == ""}>all kinds</option>
                 <option :for={k <- @kinds} value={k} selected={@kind == k}>{k}</option>
               </select>
-              <select name="user" id="story-user-select" class="select select-bordered select-sm">
+              <select
+                name="user"
+                id="story-user-select"
+                class="select select-bordered select-sm w-40"
+              >
                 <option value="">user…</option>
                 <option :for={{label, sid} <- @user_opts} value={sid} selected={@cid == sid}>
                   {label}
@@ -323,16 +328,16 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
                 name="cid"
                 value={@cid}
                 placeholder="cid (deep link)"
-                class="input input-bordered input-sm w-40"
+                class="input input-bordered input-sm w-40 font-mono"
               />
               <input
                 type="text"
                 name="agent"
                 value={@agent_f}
                 placeholder="agent"
-                class="input input-bordered input-sm w-28"
+                class="input input-bordered input-sm w-28 font-mono"
               />
-              <label class="cursor-pointer flex items-center gap-1.5">
+              <label class="cursor-pointer flex items-center gap-1.5 whitespace-nowrap">
                 <input
                   type="checkbox"
                   name="issues"
@@ -347,7 +352,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
               type="button"
               id="events-pause"
               phx-click={if(@paused, do: "resume", else: "pause")}
-              class={["btn btn-sm gap-1.5", if(@paused, do: "btn-warning", else: "btn-ghost")]}
+              class={["btn btn-sm gap-1.5 ml-auto", if(@paused, do: "btn-warning", else: "btn-ghost")]}
             >
               <%= if @paused do %>
                 ▶ live
@@ -360,40 +365,52 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
             </button>
           </div>
 
-          <div
-            id="story-rows"
-            phx-update="stream"
-            class="font-mono text-xs divide-y divide-base-300/40"
-          >
-            <%!-- every child of a stream container needs an id, the empty state too --%>
-            <div id="story-empty" class="hidden only:block py-2 opacity-60">
-              no story rows yet — waiting on the feed…
-            </div>
-            <div
-              :for={{id, row} <- @streams.story_rows}
-              id={id}
-              class="flex items-baseline gap-3 py-1"
-            >
-              <span class="opacity-50 whitespace-nowrap">
-                <.local_time id={id <> "-t"} ts={row.ts} fmt="hms" />
+          <.panel title="Story" body_class="px-4 py-2">
+            <:meta>
+              <span :if={!@paused} class="inline-flex items-center gap-1.5">
+                <span class="signal-dot"></span> live
               </span>
-              <span class={["flex-1 truncate", row.issue && "text-warning"]}>{row.text}</span>
-              <.link
-                :if={row.cid}
-                navigate={session_href(row.cid)}
-                class="link link-hover opacity-60 whitespace-nowrap"
+              <span :if={@paused} class="text-warning font-mono">paused</span>
+            </:meta>
+            <div
+              id="story-rows"
+              phx-update="stream"
+              class="font-mono text-xs divide-y divide-base-300/40"
+            >
+              <%!-- every child of a stream container needs an id, the empty state too --%>
+              <div
+                id="story-empty"
+                class="hidden only:flex flex-col items-center gap-1.5 py-10 opacity-60"
               >
-                session
-              </.link>
+                <.icon name="hero-signal" class="size-6 opacity-40" />
+                <span>no story rows yet — waiting on the feed…</span>
+              </div>
+              <div
+                :for={{id, row} <- @streams.story_rows}
+                id={id}
+                class={["flex items-baseline gap-3 py-1.5 border-l-2 pl-2.5", row_tone(row)]}
+              >
+                <span class="opacity-50 whitespace-nowrap">
+                  <.local_time id={id <> "-t"} ts={row.ts} fmt="hms" />
+                </span>
+                <span class={["flex-1 truncate", row.issue && "text-warning"]}>{row.text}</span>
+                <.link
+                  :if={row.cid}
+                  navigate={session_href(row.cid)}
+                  class="link link-hover opacity-60 whitespace-nowrap"
+                >
+                  session
+                </.link>
+              </div>
             </div>
-          </div>
+          </.panel>
         </div>
 
-        <div :if={@view == "raw"} id="raw-view" class="space-y-5">
+        <div :if={@view == "raw"} id="raw-view" class="space-y-3">
           <form
             id="raw-filter-form"
             phx-change="filter"
-            class="flex flex-wrap gap-2 items-center text-sm"
+            class="flex flex-wrap gap-2 items-center rounded-box border border-base-300 bg-base-200/60 px-3 py-2.5 text-sm"
           >
             <select name="level" class="select select-bordered select-sm">
               <option value="" selected={@level == ""}>all levels</option>
@@ -437,7 +454,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
             />
           </form>
 
-          <.event_table events={@events} contains={@contains} />
+          <.panel title="Engine log" body_class="px-4 py-2">
+            <.event_table events={@events} contains={@contains} />
+          </.panel>
         </div>
       </div>
     </Layouts.app>
@@ -499,4 +518,14 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   defp level_class("error"), do: "badge-error"
   defp level_class("warning"), do: "badge-warning"
   defp level_class(_), do: "badge-ghost"
+
+  # the story scans by color: a left accent per row keyed to the lifecycle stage
+  defp row_tone(%{issue: true}), do: "border-warning/70"
+  defp row_tone(%{kind: "reply_sent"}), do: "border-success/60"
+  defp row_tone(%{kind: k}) when k in ["request_open", "routed"], do: "border-primary/50"
+
+  defp row_tone(%{kind: k}) when k in ["browse_dispatch", "browse_done", "spawn_start", "ask"],
+    do: "border-info/40"
+
+  defp row_tone(_row), do: "border-base-300/40"
 end
