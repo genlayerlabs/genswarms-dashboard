@@ -595,8 +595,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
         phx-key="Escape"
       >
       </div>
-      <aside class="inspector-panel scroll-thin">
-        <div class="p-5 space-y-5">
+      <aside id="inspector-panel" phx-hook="ScrollBottom" class="inspector-panel scroll-thin">
+        <div class="p-5 space-y-4">
           <div class="flex items-start justify-between gap-3">
             <.identity user={@inspect["user"]} session_id={@inspect["session_id"]} size={:lg} />
             <button
@@ -608,42 +608,47 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
             </button>
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
+          <%!-- one compact fact row — the cid already encodes chat/thread so there is
+                no transport_ref table, and empty slot/last-seen facts don't render --%>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
             <.live_dot state={@inspect["state"]} label />
             <span class="badge badge-ghost badge-sm">{@inspect["transport"]}</span>
             <span :if={chat_type(@inspect)} class="badge badge-outline badge-sm">
               {chat_type(@inspect)}
             </span>
+            <span class="badge badge-ghost badge-sm font-mono">{@inspect["session_id"]}</span>
+            <span :if={@inspect["agent"]} class="badge badge-ghost badge-sm font-mono">
+              slot {@inspect["agent"]}
+            </span>
+            <span :if={@inspect["last_activity"]} class="opacity-60 tnum">
+              seen {relative_time(@inspect["last_activity"])}
+            </span>
           </div>
 
-          <dl class="grid grid-cols-3 gap-x-3 gap-y-2.5 text-sm">
-            <dt class="opacity-50">session</dt>
-            <dd class="col-span-2 font-mono text-xs break-all">{@inspect["session_id"]}</dd>
-            <dt class="opacity-50">agent slot</dt>
-            <dd class="col-span-2 font-mono text-xs">{@inspect["agent"] || "—"}</dd>
-            <dt class="opacity-50">last seen</dt>
-            <dd class="col-span-2 tnum">{relative_time(@inspect["last_activity"])}</dd>
-            <%= for {k, v} <- transport_ref(@inspect) do %>
-              <dt class="opacity-50 font-mono text-xs">{k}</dt>
-              <dd class="col-span-2 font-mono text-xs break-all">{v}</dd>
+          <%!-- ONE timeline. The live slot log already IS the interleaved record
+                (real turns + tool machinery in true order), so when it exists it is
+                the timeline and the durable transcript collapses to a backbone;
+                when the slot is gone, the durable conversation IS the timeline. --%>
+          <.panel title="Timeline" body_class="p-4">
+            <:meta>
+              <span class="font-mono">{timeline_source(@activity, @transcript)}</span>
+            </:meta>
+            <%= if activity_present?(@activity) do %>
+              <details :if={transcript_turns(@transcript) != []} class="mb-3">
+                <summary class="cursor-pointer text-xs opacity-60">
+                  durable history · {length(transcript_turns(@transcript))} turns (survives restarts)
+                </summary>
+                <div class="mt-2"><.inspector_transcript transcript={@transcript} /></div>
+              </details>
+              <.activity_timeline activity={@activity} />
+            <% else %>
+              <.inspector_transcript transcript={@transcript} />
+              <p :if={match?({:ok, _}, @activity)} class="text-xs opacity-45 mt-3">
+                raw slot activity unavailable (slot recycled or never ran) — showing the
+                durable conversation
+              </p>
             <% end %>
-          </dl>
-
-          <div class="border-t border-base-300 pt-4">
-            <div class="text-xs uppercase tracking-wide opacity-50 mb-1">Conversation</div>
-            <p class="text-xs opacity-50 mb-2">
-              Clean user ↔ bot history, saved to the DB — survives restarts.
-            </p>
-            <.inspector_transcript transcript={@transcript} />
-          </div>
-
-          <div class="border-t border-base-300 pt-4">
-            <div class="text-xs uppercase tracking-wide opacity-50 mb-1">Agent activity · live</div>
-            <p class="text-xs opacity-50 mb-2">
-              The agent's raw working log for this slot — tool calls, results, sends. Ephemeral.
-            </p>
-            <.activity_timeline activity={@activity} />
-          </div>
+          </.panel>
         </div>
       </aside>
     </div>
@@ -964,8 +969,21 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp chat_type(%{"metadata" => %{"chat_type" => t}}) when is_binary(t), do: t
   defp chat_type(_), do: nil
 
-  defp transport_ref(%{"transport_ref" => ref}) when is_map(ref), do: ref
-  defp transport_ref(_), do: %{}
+  # ── inspector timeline source selection ──────────────────────────────────────
+  defp activity_present?({:ok, %{"logs" => [_ | _]}}), do: true
+  defp activity_present?(_activity), do: false
+
+  defp transcript_turns({:ok, %{"turns" => turns}}) when is_list(turns), do: turns
+  defp transcript_turns(_transcript), do: []
+
+  defp timeline_source(activity, transcript) do
+    cond do
+      activity_present?(activity) -> "live slot log"
+      transcript_turns(transcript) != [] -> "durable store"
+      activity == :loading or transcript == :loading -> "loading…"
+      true -> "no data"
+    end
+  end
 
   defp present(nil), do: nil
   defp present(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)

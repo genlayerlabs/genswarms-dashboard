@@ -182,13 +182,12 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     push_snap(view)
 
     html = view |> element("tr[phx-value-session_id='tg:1:0']") |> render_click()
-    # The inspector now shows the FULL detail inline — durable Conversation + live
-    # Agent activity — so there is no separate "open full session" step in the panel.
-    # (The sessions table keeps its own row deep-link, hence no global refute here.)
-    assert html =~ "Conversation"
-    assert html =~ "Agent activity"
+    # The inspector shows ONE timeline (live slot log when available, durable
+    # conversation otherwise) — no duplicated Conversation/Activity sections.
+    assert html =~ "Timeline"
+    assert html =~ "tg:1:0"
 
-    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Agent activity"
+    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Timeline"
   end
 
   test "session detail loads a transcript", %{conn: conn} do
