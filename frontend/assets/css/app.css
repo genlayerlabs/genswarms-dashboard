@@ -21,31 +21,33 @@
   curl -sLO https://github.com/saadeghi/daisyui/releases/latest/download/daisyui-theme.js
   We ship with two themes, a light one inspired on Phoenix colors and a dark one inspired
   on Elixir colors. Build your own at: https://daisyui.com/theme-generator/ */
+/* "Terminal night" — the genswarms.com hero panel as a whole theme: warm
+   near-black (never blue-slate), bone ink, the ember accent for everything live. */
 @plugin "../vendor/daisyui-theme" {
   name: "dark";
   default: false;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
-  --color-base-200: oklch(25.26% 0.014 253.1);
-  --color-base-300: oklch(20.15% 0.012 254.09);
-  --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(37% 0.044 257.287);
-  --color-neutral-content: oklch(98% 0.003 247.858);
-  --color-info: oklch(58% 0.158 241.966);
-  --color-info-content: oklch(97% 0.013 236.62);
-  --color-success: oklch(60% 0.118 184.704);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
+  --color-base-100: oklch(23% 0.012 70);
+  --color-base-200: oklch(19.5% 0.011 70);
+  --color-base-300: oklch(15.5% 0.01 70);
+  --color-base-content: oklch(93% 0.018 84);
+  --color-primary: oklch(68% 0.195 40);
+  --color-primary-content: oklch(16% 0.01 70);
+  --color-secondary: oklch(76% 0.04 84);
+  --color-secondary-content: oklch(18% 0.01 70);
+  --color-accent: oklch(74% 0.15 70);
+  --color-accent-content: oklch(18% 0.01 70);
+  --color-neutral: oklch(30% 0.013 70);
+  --color-neutral-content: oklch(93% 0.018 84);
+  --color-info: oklch(71% 0.1 235);
+  --color-info-content: oklch(18% 0.01 70);
+  --color-success: oklch(73% 0.13 155);
+  --color-success-content: oklch(18% 0.01 70);
+  --color-warning: oklch(76% 0.14 80);
+  --color-warning-content: oklch(18% 0.01 70);
+  --color-error: oklch(64% 0.2 27);
+  --color-error-content: oklch(96% 0.015 12);
   --radius-selector: 0.25rem;
   --radius-field: 0.25rem;
   --radius-box: 0.5rem;
@@ -56,31 +58,33 @@
   --noise: 0;
 }
 
+/* "Editorial paper" — genswarms.com's bone page: warm cream surfaces, near-black
+   warm ink, and the same ember accent doing all the talking. */
 @plugin "../vendor/daisyui-theme" {
   name: "light";
   default: true;
   prefersdark: false;
   color-scheme: "light";
-  --color-base-100: oklch(98% 0 0);
-  --color-base-200: oklch(96% 0.001 286.375);
-  --color-base-300: oklch(92% 0.004 286.32);
-  --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(70% 0.213 47.604);
-  --color-primary-content: oklch(98% 0.016 73.684);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(0% 0 0);
-  --color-accent-content: oklch(100% 0 0);
-  --color-neutral: oklch(44% 0.017 285.786);
-  --color-neutral-content: oklch(98% 0 0);
-  --color-info: oklch(62% 0.214 259.815);
-  --color-info-content: oklch(97% 0.014 254.604);
-  --color-success: oklch(70% 0.14 182.503);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
+  --color-base-100: oklch(96.5% 0.013 84);
+  --color-base-200: oklch(93.8% 0.016 84);
+  --color-base-300: oklch(88% 0.02 84);
+  --color-base-content: oklch(24% 0.015 55);
+  --color-primary: oklch(58% 0.205 36);
+  --color-primary-content: oklch(97% 0.012 84);
+  --color-secondary: oklch(40% 0.04 55);
+  --color-secondary-content: oklch(96.5% 0.013 84);
+  --color-accent: oklch(50% 0.18 32);
+  --color-accent-content: oklch(97% 0.012 84);
+  --color-neutral: oklch(32% 0.02 60);
+  --color-neutral-content: oklch(96.5% 0.013 84);
+  --color-info: oklch(54% 0.11 235);
+  --color-info-content: oklch(97% 0.014 254);
+  --color-success: oklch(54% 0.12 155);
+  --color-success-content: oklch(98% 0.014 180);
+  --color-warning: oklch(62% 0.15 70);
+  --color-warning-content: oklch(25% 0.05 70);
+  --color-error: oklch(54% 0.2 27);
+  --color-error-content: oklch(96% 0.015 12);
   --radius-selector: 0.25rem;
   --radius-field: 0.25rem;
   --radius-box: 0.5rem;
@@ -200,5 +204,21 @@ h1, h2 { font-family: var(--font-display); letter-spacing: -0.02em; }
 
 /* tidy thin scrollbars inside scroll regions */
 .scroll-thin { scrollbar-width: thin; scrollbar-color: var(--color-base-300) transparent; }
+
+/* ── the swarm terminal panel ────────────────────────────────────────────────
+   The Topology canvas is ALWAYS the brand's dark terminal window (the inset
+   panel on genswarms.com's hero): warm black, faint dot grid, an ember bloom
+   at the top. In the light theme it reads as a dark instrument set into the
+   paper page; in the dark theme it sinks one level deeper than the chrome.
+   The canvas itself draws with constant bone/ember inks — see pipeline.js. */
+.pipeline-terminal {
+  background-color: oklch(16% 0.012 60);
+  background-image:
+    radial-gradient(120% 90% at 50% -10%, oklch(45% 0.09 45 / 0.16), transparent 60%),
+    radial-gradient(oklch(90% 0.02 84 / 0.05) 1px, transparent 1.2px);
+  background-size: auto, 26px 26px;
+  border-color: oklch(38% 0.025 60 / 0.55);
+  box-shadow: inset 0 1px 0 oklch(60% 0.04 60 / 0.12), 0 18px 50px -30px rgb(0 0 0 / 0.55);
+}
 
 /* This file is for your main application CSS */

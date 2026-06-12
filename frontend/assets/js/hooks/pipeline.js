@@ -12,6 +12,7 @@
 const FLIGHT = 1100 // packet flight time (ms)
 const STAGGER = 200 // launch stagger when flushing a backlog (ms)
 const TAU = Math.PI * 2
+const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
 
 export const Pipeline = {
   mounted() {
@@ -493,7 +494,7 @@ export const Pipeline = {
     const gap = Math.min(0.1, 0.66 / Math.max(ags.length - 1, 1))
     ags.forEach((n, i) => {
       const y = 0.5 + (i - (ags.length - 1) / 2) * gap
-      this.POS[n] = {x: colX * W, y: y * H, r: 8, kind: "agent"}
+      this.POS[n] = {x: colX * W, y: y * H, r: 13, kind: "agent"}
     })
   },
 
@@ -519,17 +520,20 @@ export const Pipeline = {
   },
 
   // ── theme ────────────────────────────────────────────────────────────────────
+  // The canvas is ALWAYS the brand's dark terminal panel (the inset window on
+  // genswarms.com's hero): warm black behind (.pipeline-terminal in app.css),
+  // bone ink, ember = live. Page themes restyle the chrome AROUND the panel —
+  // in-panel contrast stays constant and high in light and dark alike.
   refreshTheme() {
-    const cs = getComputedStyle(this.el)
-    const v = (name, fb) => cs.getPropertyValue(name).trim() || fb
     this.C = {
-      ok: v("--color-success", "#22c55e"),
-      warn: v("--color-warning", "#f59e0b"),
-      err: v("--color-error", "#f43f5e"),
-      info: v("--color-info", "#3b82f6"),
-      traffic: v("--color-primary", "#6366f1"),
-      ink: v("--color-base-content", "#64748b"),
-      bg: v("--color-base-100", "#ffffff"),
+      ink: "#EDE3CF", //     bone — labels, edges, idle bodies
+      bg: "#191309", //      pill/badge fills on the panel
+      ember: "#FF5A1F", //   the brand accent: traffic, thinking
+      ok: "#62CD8E", //      replies / success verdicts
+      warn: "#F2B244", //    waiting / queued / stalled
+      err: "#F2604C", //     failures
+      info: "#82B6E8", //    spawning / browse dispatch
+      traffic: "#FF5A1F", // generic message packets (= ember)
     }
   },
 
@@ -551,6 +555,28 @@ export const Pipeline = {
     // causal contract: a state change becomes visible when its packet lands
     this.LANDS = this.LANDS.filter((l) => (l.at <= pnow ? (l.fn(), false) : true))
 
+    // the static spine: telegram → … → sender (+ the return arc) as faint rails,
+    // so the pipeline shape reads even when nothing is moving
+    const railA = this.POS["telegram"]
+    const railB = this.POS["sender"]
+    if (railA && railB) {
+      g.strokeStyle = C.ink
+      g.globalAlpha = 0.08
+      g.lineWidth = 2
+      g.beginPath()
+      g.moveTo(railA.x, railA.y)
+      g.lineTo(railB.x, railB.y)
+      g.stroke()
+      const rgm = this.geom("sender", "telegram")
+      if (rgm.q) {
+        g.beginPath()
+        g.moveTo(railB.x, railB.y)
+        g.quadraticCurveTo(rgm.cx, rgm.cy, railA.x, railA.y)
+        g.stroke()
+      }
+      g.globalAlpha = 1
+    }
+
     // edges (chatter accumulates faintly; user traffic glows and cools)
     this.EDGES.forEach((h, k) => {
       const [a, b] = k.split("|")
@@ -561,8 +587,8 @@ export const Pipeline = {
       const t = Math.min(h / 8, 1)
       const gm = this.geom(a, b)
       g.strokeStyle = C.ink
-      g.globalAlpha = bg ? 0.07 + 0.1 * t : 0.18 + 0.32 * t
-      g.lineWidth = bg ? 1 : 1 + t * 4
+      g.globalAlpha = bg ? 0.07 + 0.09 * t : 0.26 + 0.38 * t
+      g.lineWidth = bg ? 1 : 1.3 + t * 4
       g.beginPath()
       g.moveTo(A.x, A.y)
       gm.q ? g.quadraticCurveTo(gm.cx, gm.cy, B.x, B.y) : g.lineTo(B.x, B.y)
@@ -589,9 +615,9 @@ export const Pipeline = {
       if (!A || !B) continue
       g.save()
       g.strokeStyle = C.warn
-      g.lineWidth = 2
-      g.setLineDash([7, 5])
-      g.lineDashOffset = -(pnow / 40) % 12
+      g.lineWidth = 2.5
+      g.setLineDash([8, 6])
+      g.lineDashOffset = -(pnow / 40) % 14
       g.beginPath()
       g.moveTo(A.x, A.y)
       g.lineTo(B.x, B.y)
@@ -600,14 +626,14 @@ export const Pipeline = {
       const mx = (A.x + B.x) / 2
       const my = (A.y + B.y) / 2
       const lbl = (snow - ag.since).toFixed(1) + "s"
-      g.font = "10px ui-monospace"
+      g.font = `600 11px ${MONO}`
       g.textAlign = "center"
       g.textBaseline = "middle"
-      const w = g.measureText(lbl).width + 10
+      const w = g.measureText(lbl).width + 14
       g.fillStyle = C.bg
-      g.globalAlpha = 0.85
+      g.globalAlpha = 0.92
       g.beginPath()
-      g.roundRect(mx - w / 2, my - 9, w, 18, 5)
+      g.roundRect(mx - w / 2, my - 10, w, 20, 6)
       g.fill()
       g.globalAlpha = 1
       g.fillStyle = C.warn
@@ -634,16 +660,20 @@ export const Pipeline = {
         continue
       }
       const col = this.pktColor(p)
+      g.save()
+      g.shadowColor = col
+      g.shadowBlur = 12
       for (let j = 0; j < 3; j++) {
         const ut = u - j * 0.055
         if (ut < 0) continue
         const pt = this.pAt(A, B, gm, ut)
-        g.globalAlpha = [1, 0.45, 0.2][j]
+        g.globalAlpha = [1, 0.5, 0.22][j]
         g.fillStyle = col
         g.beginPath()
-        g.arc(pt.x, pt.y, [4, 3, 2.2][j], 0, TAU)
+        g.arc(pt.x, pt.y, [5, 3.6, 2.6][j], 0, TAU)
         g.fill()
       }
+      g.restore()
       g.globalAlpha = 1
     }
 
@@ -655,50 +685,92 @@ export const Pipeline = {
       const ag = P.kind === "agent" ? this.AG[n] : null
       const st = ag ? ag.state : null
       const objBusy = P.kind !== "agent" && busyObjs[n]
+      const label = this.short(n)
+      // chatter nodes recede so the user-request lane owns the eye
+      const dim = P.kind !== "agent" && this.BG.has(n) && !objBusy ? 0.5 : 1
+
+      // box half-extents: agents are dots, ext endpoints small circles, objects
+      // are chips SIZED TO THEIR LABEL (never clipped)
+      let hw, hh
+      if (P.kind === "agent") {
+        hw = hh = P.r
+      } else if (P.kind === "ext") {
+        hw = hh = 15
+      } else {
+        g.font = `600 12px ${MONO}`
+        hw = g.measureText(label).width / 2 + 11
+        hh = 13
+      }
 
       // body
       if (P.kind === "agent") {
-        g.fillStyle = st === "thinking" ? C.ok : st === "waiting" ? C.warn : C.ink
-        g.globalAlpha = st === "thinking" || st === "waiting" ? 0.9 : 0.3
+        if (st === "thinking") {
+          g.save()
+          g.shadowColor = C.ember
+          g.shadowBlur = 18
+          g.fillStyle = C.ember
+          g.beginPath()
+          g.arc(P.x, P.y, P.r, 0, TAU)
+          g.fill()
+          g.restore()
+        } else {
+          g.fillStyle = st === "waiting" ? C.warn : st === "spawning" ? C.info : C.ink
+          g.globalAlpha = st === "waiting" ? 0.9 : st === "spawning" ? 0.35 : 0.18
+          g.beginPath()
+          g.arc(P.x, P.y, P.r, 0, TAU)
+          g.fill()
+          g.globalAlpha = 1
+          g.strokeStyle = C.ink
+          g.globalAlpha = 0.4
+          g.lineWidth = 1.5
+          g.stroke()
+          g.globalAlpha = 1
+        }
       } else if (P.kind === "ext") {
         g.fillStyle = C.ink
-        g.globalAlpha = 0.14
+        g.globalAlpha = 0.1 * dim
+        g.beginPath()
+        g.arc(P.x, P.y, hw, 0, TAU)
+        g.fill()
+        g.globalAlpha = 0.45 * dim
+        g.strokeStyle = C.ink
+        g.lineWidth = 1.5
+        g.stroke()
+        g.globalAlpha = 1
       } else {
-        g.fillStyle = C.info
-        g.globalAlpha = 0.16
+        g.fillStyle = objBusy ? C.warn : C.ink
+        g.globalAlpha = (objBusy ? 0.14 : 0.08) * dim
+        g.beginPath()
+        g.roundRect(P.x - hw, P.y - hh, hw * 2, hh * 2, 8)
+        g.fill()
+        g.globalAlpha = (objBusy ? 0.8 : 0.42) * dim
+        g.strokeStyle = objBusy ? C.warn : C.ink
+        g.lineWidth = 1.5
+        g.stroke()
+        g.globalAlpha = 1
       }
-      g.beginPath()
-      P.kind === "agent"
-        ? g.arc(P.x, P.y, P.r, 0, TAU)
-        : g.roundRect(P.x - P.r, P.y - P.r * 0.7, P.r * 2, P.r * 1.4, 5)
-      g.fill()
-      g.globalAlpha = P.kind === "obj" ? 0.5 : 0.3
-      g.strokeStyle = P.kind === "obj" ? C.info : C.ink
-      g.lineWidth = 1.5
-      g.stroke()
-      g.globalAlpha = 1
 
       // activity rings: ● pulsing thinking, ◐ steady waiting, ◌ spawning sweep
       if (st === "thinking" || objBusy) {
-        g.strokeStyle = objBusy ? C.warn : C.ok
-        g.lineWidth = 2
+        g.strokeStyle = objBusy ? C.warn : C.ember
+        g.lineWidth = 2.5
         g.beginPath()
-        if (P.kind === "agent") g.arc(P.x, P.y, P.r + 3 + Math.sin(pnow / 170) * 1.6, 0, TAU)
-        else g.roundRect(P.x - P.r - 5, P.y - P.r * 0.7 - 5, P.r * 2 + 10, P.r * 1.4 + 10, 7)
+        if (P.kind === "agent") g.arc(P.x, P.y, P.r + 4 + Math.sin(pnow / 170) * 1.8, 0, TAU)
+        else g.roundRect(P.x - hw - 5, P.y - hh - 5, hw * 2 + 10, hh * 2 + 10, 11)
         g.stroke()
       } else if (st === "waiting") {
         g.strokeStyle = C.warn
-        g.lineWidth = 2.5
+        g.lineWidth = 3
         g.beginPath()
-        g.arc(P.x, P.y, P.r + 3, 0, TAU)
+        g.arc(P.x, P.y, P.r + 4, 0, TAU)
         g.stroke()
       } else if (st === "spawning") {
         const a0 = (pnow / 260) % TAU
         g.strokeStyle = C.info
-        g.lineWidth = 2.5
+        g.lineWidth = 3
         g.lineCap = "round"
         g.beginPath()
-        g.arc(P.x, P.y, P.r + 4, a0, a0 + 3.4)
+        g.arc(P.x, P.y, P.r + 5, a0, a0 + 3.4)
         g.stroke()
         g.lineCap = "butt"
       }
@@ -710,8 +782,8 @@ export const Pipeline = {
         g.strokeStyle = C.err
         g.lineWidth = 3
         g.beginPath()
-        if (P.kind === "agent") g.arc(P.x, P.y, P.r + 6, 0, TAU)
-        else g.roundRect(P.x - P.r - 6, P.y - P.r * 0.7 - 6, P.r * 2 + 12, P.r * 1.4 + 12, 8)
+        if (P.kind === "agent") g.arc(P.x, P.y, P.r + 7, 0, TAU)
+        else g.roundRect(P.x - hw - 7, P.y - hh - 7, hw * 2 + 14, hh * 2 + 14, 12)
         g.stroke()
         g.globalAlpha = 1
       }
@@ -720,31 +792,39 @@ export const Pipeline = {
       if (ag && ag.queue > 0) {
         g.fillStyle = C.warn
         g.beginPath()
-        g.arc(P.x + P.r + 4, P.y - P.r - 2, 7, 0, TAU)
+        g.arc(P.x + hw + 5, P.y - hh - 3, 9, 0, TAU)
         g.fill()
         g.fillStyle = C.bg
-        g.font = "bold 9px ui-monospace"
+        g.font = `700 10.5px ${MONO}`
         g.textAlign = "center"
         g.textBaseline = "middle"
-        g.fillText(String(ag.queue), P.x + P.r + 4, P.y - P.r - 2)
+        g.fillText(String(ag.queue), P.x + hw + 5, P.y - hh - 2.5)
       }
 
       // ☕ on compaction
       const bd = this.BADGE[n]
       if (bd && bd.until > pnow) {
-        g.font = "12px ui-monospace"
+        g.font = `14px ${MONO}`
         g.textAlign = "center"
         g.textBaseline = "middle"
-        g.fillText(bd.glyph, P.x - P.r - 8, P.y - P.r - 4)
+        g.fillText(bd.glyph, P.x - hw - 11, P.y - hh - 5)
       }
 
-      // labels
-      g.fillStyle = C.ink
-      g.globalAlpha = 0.85
-      g.font = (P.kind === "agent" ? "9px" : "11px") + " ui-monospace"
+      // labels — objects carry theirs INSIDE the chip; agents/ext below the dot
       g.textAlign = "center"
-      g.textBaseline = P.kind === "agent" ? "top" : "middle"
-      g.fillText(this.short(n), P.x, P.kind === "agent" ? P.y + P.r + 5 : P.y)
+      if (P.kind === "obj") {
+        g.fillStyle = C.ink
+        g.globalAlpha = (objBusy ? 1 : 0.95) * dim
+        g.font = `600 12px ${MONO}`
+        g.textBaseline = "middle"
+        g.fillText(label, P.x, P.y + 0.5)
+      } else {
+        g.fillStyle = C.ink
+        g.globalAlpha = P.kind === "agent" ? 0.95 : 0.75 * dim
+        g.font = `${P.kind === "agent" ? "600 11.5" : "500 11.5"}px ${MONO}`
+        g.textBaseline = "top"
+        g.fillText(label, P.x, P.y + hh + 7)
+      }
       g.globalAlpha = 1
 
       // status line under busy nodes
@@ -752,7 +832,7 @@ export const Pipeline = {
       let scol = null
       if (st === "thinking") {
         stxt = (snow - ag.since).toFixed(0) + "s"
-        scol = C.ok
+        scol = C.ember
       } else if (st === "waiting") {
         stxt = "» " + ag.waitOn
         scol = C.warn
@@ -765,10 +845,10 @@ export const Pipeline = {
       }
       if (stxt) {
         g.fillStyle = scol
-        g.font = "9px ui-monospace"
+        g.font = `600 10.5px ${MONO}`
         g.textAlign = "center"
         g.textBaseline = "top"
-        g.fillText(stxt, P.x, P.kind === "agent" ? P.y + P.r + 15 : P.y + P.r * 0.7 + 12)
+        g.fillText(stxt, P.x, P.kind === "obj" ? P.y + hh + 8 : P.y + hh + 21)
       }
     }
 

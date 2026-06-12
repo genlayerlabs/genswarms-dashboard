@@ -986,7 +986,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     ~H"""
     <time :if={@unix} id={@id} phx-hook="LocalTime" data-ts={@unix} data-fmt={@fmt} class="tnum">
       {utc_text(@unix, @fmt)}
-    </time><span :if={is_nil(@unix)}>—</span>
+    </time>
+    <span :if={is_nil(@unix)}>—</span>
     """
   end
 
