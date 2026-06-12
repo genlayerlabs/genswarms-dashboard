@@ -7,8 +7,9 @@ defmodule GenswarmsDashboard.Plug do
     * token nil  → the endpoint binds loopback (see `GenswarmsDashboard.start/1`); locality is the gate.
     * token set  → every request needs `Authorization: Bearer <t>` OR `?token=<t>`.
 
-  App-specific data comes from the configured `GenswarmsDashboard.DataSource`; events and
-  logs read the genswarms engine directly (public read APIs, same BEAM).
+  App-specific data comes from the configured `GenswarmsDashboard.DataSource` and the
+  optional `GenswarmsDashboard.EventsSource` (display event feed); events and logs read
+  the genswarms engine directly (public read APIs, same BEAM).
   """
   use Plug.Router
 
@@ -81,6 +82,24 @@ defmodule GenswarmsDashboard.Plug do
     json(conn, 200, %{events: events, count: length(events), swarm: name})
   end
 
+  # GET /api/swarms/:name/events/feed  → cursor read of the host's display event feed
+  # (the optional EventsSource — host-injected like DataSource). Distinct from /events
+  # above, which stays the engine-raw LogStore surface. This route relays {events, seq}
+  # verbatim and never interprets an event kind; the cursor semantics are pinned in the
+  # EventsSource @doc. The host impl may clamp limit tighter than @int_cap.
+  get "/api/swarms/:_name/events/feed" do
+    qp = conn |> fetch_query_params() |> Map.get(:query_params)
+    # since is a CURSOR, not a size: lifetime seqs legitimately exceed @int_cap, and a
+    # clamped cursor would re-deliver every event above the cap forever. Uncapped parse.
+    since = qp |> Map.get("since") |> to_cursor()
+    limit = qp |> Map.get("limit") |> to_int(500)
+
+    case feed_events(since, limit) do
+      %{events: events, seq: seq} -> json(conn, 200, %{events: events, seq: seq, source: "feed"})
+      :unavailable -> json(conn, 200, %{events: [], seq: 0, source: "unavailable"})
+    end
+  end
+
   # CORS preflight for the browser UI (read-only GETs from another origin/port).
   # NOTE: this sits AFTER :auth, so preflight is token-gated too. Intentional: the real
   # frontend is a server-side Phoenix app sending the header — no browser preflight path.
@@ -139,6 +158,14 @@ defmodule GenswarmsDashboard.Plug do
     case Integer.parse(to_string(s)) do
       {n, _} when n > 0 -> min(n, @int_cap)
       _ -> default
+    end
+  end
+
+  # Non-negative cursor parse, deliberately uncapped (see the events/feed route).
+  defp to_cursor(s) do
+    case Integer.parse(to_string(s)) do
+      {n, _} when n >= 0 -> n
+      _ -> 0
     end
   end
 
@@ -277,4 +304,23 @@ defmodule GenswarmsDashboard.Plug do
   defp format_ts(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp format_ts(ts) when is_binary(ts), do: ts
   defp format_ts(ts), do: inspect(ts)
+
+  # ── events feed (host EventsSource, cursor read) ────────────────────────────────
+  # No source configured ⇒ unavailable, same fail-soft posture as history/logs/skills.
+  # The call is wrapped because a feed crash must not 500 the dashboard.
+  defp feed_events(since, limit) do
+    case Config.get(:events_source) do
+      nil ->
+        :unavailable
+
+      source ->
+        try do
+          source.events_since(since, limit)
+        rescue
+          _ -> :unavailable
+        catch
+          :exit, _ -> :unavailable
+        end
+    end
+  end
 end

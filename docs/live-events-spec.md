@@ -140,8 +140,10 @@ GET /api/swarms/:name/events/feed?since=N&limit=M
 ```
 
 - Sits behind the existing `:auth` plug — token or loopback, nothing new.
-- `since` defaults 0, `limit` defaults 500, both via the existing `to_int/2`
-  (cap 10_000); the host impl may clamp tighter.
+- `since` defaults 0 and is an UNCAPPED non-negative parse — it is a cursor, not a
+  size, and lifetime seqs legitimately exceed any size cap (a clamped cursor would
+  re-deliver everything above the cap forever). `limit` defaults 500 via the
+  existing `to_int/2` (cap 10_000); the host impl may clamp tighter.
 - Distinct path from the existing `GET …/events` (engine LogStore), which is KEPT
   unchanged — it remains the "engine raw" surface (§5.6). Plug.Router matches whole
   segments, so order is irrelevant.
