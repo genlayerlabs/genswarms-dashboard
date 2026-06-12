@@ -44,20 +44,10 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
       inspect_activity={@inspect_activity}
     >
       <div class="space-y-5">
-        <div class="flex items-center justify-between gap-4 flex-wrap">
-          <div class="flex items-baseline gap-3">
-            <h1 class="text-2xl">Sessions</h1>
-            <span :if={@snapshot} class="text-sm opacity-60 tnum">
-              {length(@sessions)} total · <span class="text-[var(--signal)]">{@live_count} live</span>
-            </span>
-            <span
-              :if={@snapshot && @unanswered > 0}
-              class="badge badge-warning badge-sm gap-1"
-              title="conversations that received a message but got no reply"
-            >
-              ⚠ {@unanswered} unanswered
-            </span>
-          </div>
+        <h1 class="text-2xl">Sessions</h1>
+
+        <%!-- one toolbar: search left, the reply-health alarm anchored right --%>
+        <div class="flex flex-wrap gap-2 items-center rounded-box border border-base-300 bg-base-200/60 px-3 py-2.5 text-sm">
           <form phx-change="search" class="w-full max-w-sm">
             <label class="input input-bordered input-sm flex items-center gap-2 w-full">
               <.icon name="hero-magnifying-glass" class="size-4 opacity-50" />
@@ -71,65 +61,84 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
               />
             </label>
           </form>
+          <span
+            :if={@snapshot && @unanswered > 0}
+            class="badge badge-warning badge-sm gap-1 ml-auto"
+            title="conversations that received a message but got no reply"
+          >
+            ⚠ {@unanswered} unanswered
+          </span>
         </div>
 
-        <div :if={@snapshot} class="rounded-box border border-base-300 overflow-hidden">
-          <table class="table">
-            <thead>
-              <tr class="text-xs uppercase tracking-wide">
-                <th>User</th>
-                <th>State</th>
-                <th>Reply</th>
-                <th>Issues</th>
-                <th>Agent</th>
-                <th>Last seen</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                :for={s <- @sessions}
-                class="row-press"
-                phx-click="inspect"
-                phx-value-session_id={s["session_id"]}
-              >
-                <td>
-                  <.identity user={s["user"]} session_id={s["session_id"]} />
-                </td>
-                <td><.live_dot state={s["state"]} label /></td>
-                <td><.reply_badge status={reply_status(s, @deliveries, @now)} /></td>
-                <td>
-                  <.issue_badge sid={s["session_id"]} issues={@issues_by_cid[s["session_id"]] || []} />
-                </td>
-                <td class="font-mono text-xs opacity-70">{s["agent"]}</td>
-                <td class="text-sm opacity-70 tnum whitespace-nowrap">
-                  {relative_time(s["last_activity"])}
-                </td>
-                <td class="text-right">
-                  <.link
-                    navigate={~p"/sessions/#{Base.url_encode64(s["session_id"], padding: false)}"}
-                    class="btn btn-ghost btn-xs btn-circle"
-                    onclick="event.stopPropagation()"
-                    title="Open full session"
-                  >
-                    <.icon name="hero-arrow-up-right" class="size-4 opacity-60" />
-                  </.link>
-                </td>
-              </tr>
-              <tr :if={@sessions == []}>
-                <td colspan="7" class="text-center opacity-55 py-8">
-                  No sessions{if @q != "", do: " match \"#{@q}\""}.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <.panel
+          :if={@snapshot}
+          title="Sessions"
+          body_class={if(@sessions == [], do: "p-4", else: "overflow-x-auto")}
+        >
+          <:meta>
+            <span class="font-mono tnum">{length(@sessions)} total</span>
+            <span class="font-mono tnum text-[var(--signal)]">{@live_count} live</span>
+          </:meta>
+          <%= if @sessions == [] do %>
+            <.empty_state
+              icon="hero-magnifying-glass"
+              msg={"No sessions#{if(@q != "", do: " match \"#{@q}\"", else: "")}."}
+            />
+          <% else %>
+            <table class="table">
+              <thead>
+                <tr class="text-xs uppercase tracking-wide">
+                  <th>User</th>
+                  <th>State</th>
+                  <th>Reply</th>
+                  <th>Issues</th>
+                  <th>Agent</th>
+                  <th>Last seen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  :for={s <- @sessions}
+                  class="row-press"
+                  phx-click="inspect"
+                  phx-value-session_id={s["session_id"]}
+                >
+                  <td>
+                    <.identity user={s["user"]} session_id={s["session_id"]} />
+                  </td>
+                  <td><.live_dot state={s["state"]} label /></td>
+                  <td><.reply_badge status={reply_status(s, @deliveries, @now)} /></td>
+                  <td>
+                    <.issue_badge
+                      sid={s["session_id"]}
+                      issues={@issues_by_cid[s["session_id"]] || []}
+                    />
+                  </td>
+                  <td class="font-mono text-xs opacity-70">{s["agent"]}</td>
+                  <td class="text-sm opacity-70 tnum whitespace-nowrap">
+                    {relative_time(s["last_activity"])}
+                  </td>
+                  <td class="text-right">
+                    <.link
+                      navigate={~p"/sessions/#{Base.url_encode64(s["session_id"], padding: false)}"}
+                      class="btn btn-ghost btn-xs btn-circle"
+                      onclick="event.stopPropagation()"
+                      title="Open full session"
+                    >
+                      <.icon name="hero-arrow-up-right" class="size-4 opacity-60" />
+                    </.link>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          <% end %>
+        </.panel>
 
-        <div :if={consumers(@snapshot)} class="card bg-base-200/60 border border-base-300 p-4">
-          <h2 class="font-semibold mb-2 flex items-center gap-2">
-            Consumers
-            <span class="badge badge-ghost badge-sm tnum">{consumers(@snapshot)["count"]}</span>
-          </h2>
+        <.panel :if={consumers(@snapshot)} title="Consumers">
+          <:meta>
+            <span class="font-mono tnum">{consumers(@snapshot)["count"]}</span>
+          </:meta>
           <table class="table table-xs">
             <tbody>
               <tr :for={c <- consumers(@snapshot)["items"] || []}>
@@ -139,23 +148,19 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
               </tr>
             </tbody>
           </table>
-        </div>
+        </.panel>
 
-        <div
-          :if={@audience}
-          id="audience-footer"
-          class="card bg-base-200/60 border border-base-300 p-4"
-        >
-          <h2 class="font-semibold mb-2">Audience</h2>
-          <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm">
-            <span :for={{k, v} <- @audience} class="whitespace-nowrap">
-              <span class="opacity-60">{String.replace(to_string(k), "_", " ")}</span>
-              <span class="tnum font-semibold ml-1">{audience_value(v)}</span>
-            </span>
+        <.panel :if={@audience} id="audience-footer" title="Audience">
+          <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-x-4 gap-y-3">
+            <.metric
+              :for={{k, v} <- @audience}
+              label={String.replace(to_string(k), "_", " ")}
+              value={audience_value(v)}
+            />
           </div>
-        </div>
+        </.panel>
 
-        <div :if={is_nil(@snapshot)} class="opacity-60">Waiting for the first snapshot…</div>
+        <.empty_state :if={is_nil(@snapshot)} msg="Waiting for the first snapshot…" />
       </div>
     </Layouts.app>
     """

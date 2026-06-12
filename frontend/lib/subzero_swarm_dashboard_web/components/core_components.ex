@@ -972,6 +972,86 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp present(_), do: nil
 
   @doc """
+  THE section grammar — every block of content on every page lives in one of
+  these: a bordered card with a small-caps mono header (the instrument-label
+  look) and an optional right-aligned meta slot. One grammar, all pages.
+  """
+  attr :id, :string, default: nil
+  attr :title, :string, required: true
+  attr :class, :any, default: nil
+  attr :body_class, :any, default: "p-4"
+  slot :meta
+  slot :inner_block, required: true
+
+  def panel(assigns) do
+    ~H"""
+    <section id={@id} class={["rounded-box border border-base-300 bg-base-200/60", @class]}>
+      <header class="flex items-baseline justify-between gap-3 px-4 pt-3 pb-2">
+        <h2 class="font-mono text-[0.68rem] font-semibold uppercase tracking-[0.18em] opacity-55 whitespace-nowrap">
+          {@title}
+        </h2>
+        <div :if={@meta != []} class="flex items-baseline gap-2 text-xs opacity-70 min-w-0 truncate">
+          {render_slot(@meta)}
+        </div>
+      </header>
+      <div class={@body_class}>{render_slot(@inner_block)}</div>
+    </section>
+    """
+  end
+
+  @doc """
+  A telemetry tile: big display-face number over a small-caps label. The page's
+  numbers should pop; everything else recedes. `badge` marks durable "today"
+  values; `tone` colors the value when the number IS the alarm.
+  """
+  attr :label, :string, required: true
+  attr :value, :any, required: true
+  attr :badge, :string, default: nil
+  attr :sub, :string, default: nil
+  attr :tone, :string, default: nil, values: [nil, "warn", "error", "primary"]
+
+  def metric(assigns) do
+    ~H"""
+    <div class="min-w-0">
+      <div class="font-mono text-[0.62rem] uppercase tracking-[0.14em] opacity-50 truncate">
+        {@label}
+      </div>
+      <div class={[
+        "font-display text-2xl font-bold tnum leading-tight",
+        @tone == "warn" && "text-warning",
+        @tone == "error" && "text-error",
+        @tone == "primary" && "text-primary"
+      ]}>
+        {@value}<span
+          :if={@badge}
+          class="ml-1.5 align-middle badge badge-primary badge-outline badge-xs font-mono lowercase"
+        >{@badge}</span>
+      </div>
+      <div :if={@sub} class="text-xs opacity-50 truncate">{@sub}</div>
+    </div>
+    """
+  end
+
+  @doc "A designed empty state — never bare text floating on the page."
+  attr :icon, :string, default: "hero-signal"
+  attr :msg, :string, required: true
+  attr :hint, :string, default: nil
+  attr :id, :string, default: nil
+
+  def empty_state(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      class="flex flex-col items-center justify-center gap-1.5 py-10 px-4 rounded-box border border-dashed border-base-300 text-center"
+    >
+      <.icon name={@icon} class="size-6 opacity-30" />
+      <p class="text-sm opacity-70">{@msg}</p>
+      <p :if={@hint} class="text-xs opacity-45 max-w-md">{@hint}</p>
+    </div>
+    """
+  end
+
+  @doc """
   Absolute time rendered in the BROWSER's zone (the LocalTime hook converts; the
   server-rendered text is the UTC fallback until the hook runs). `ts` is unix
   seconds or a DateTime.
