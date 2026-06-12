@@ -39,4 +39,21 @@ defmodule SubzeroSwarmDashboard.SwarmClient.HttpTest do
 
     assert {:ok, [%{"message" => "hi"}]} = Http.events("wingston", %{level: "info"})
   end
+
+  test "events_feed hits the feed route with cursor params and passes the envelope through" do
+    Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn ->
+      assert conn.request_path == "/api/swarms/wingston/events/feed"
+      conn = Plug.Conn.fetch_query_params(conn)
+      assert conn.params == %{"since" => "42", "limit" => "500"}
+
+      Req.Test.json(conn, %{
+        "events" => [%{"kind" => "request_open", "seq" => 43, "novel_field" => true}],
+        "seq" => 43,
+        "source" => "feed"
+      })
+    end)
+
+    assert {:ok, %{"events" => [%{"novel_field" => true}], "seq" => 43, "source" => "feed"}} =
+             Http.events_feed("wingston", 42, 500)
+  end
 end
