@@ -107,14 +107,23 @@ defmodule GenswarmsDashboard.EventsSource do
 
   @doc """
   Events with seq > since, oldest first, plus the cursor to poll from next.
-  Seqs are expected gapless per feed instance: a gap observed by a consumer means
-  ring pruning (consumer should resync), a cursor REGRESSION means the feed
-  restarted (consumer should re-baseline).
+
+  PINNED cursor semantics: `seq` is ALWAYS the feed's current cursor — the
+  highest seq the feed has assigned (0 if none) — NEVER an echo of `since`.
+  This is what makes restart detection possible: seqs are gapless per feed
+  instance, so a gap observed by a consumer means ring pruning (resync), and a
+  returned `seq` BELOW the consumer's cursor means the feed restarted
+  (re-baseline). An echo-on-empty implementation would leave a consumer polling
+  a dead cursor forever after a host restart.
   """
   @callback events_since(since :: non_neg_integer(), limit :: pos_integer()) ::
               %{events: [map()], seq: non_neg_integer()} | :unavailable
 end
 ```
+
+> ⚠ Wingston's current `EventFeed.since/2` echoes `since` on an empty read —
+> it must be fixed to return `:ets.last(@table)` (0 when empty) BEFORE the
+> adapter ships (§6.1), or every wingston deploy silently blinds the dashboard.
 
 ### 4.2 `start/1` + Config
 
@@ -170,8 +179,15 @@ Sibling of `SwarmFeed`, supervised next to it, disabled in test via the existing
 - Each batch: fold every event through `Story.Reducer`, then broadcast on PubSub
   topic `"events"`:
   - `{:display_event, ev}` per event — arrival-ordered, for the canvas hook;
-  - `{:story, summary}` once per non-empty batch (and at most ~1/poll) — the folded
-    snapshot every page renders from.
+  - `{:story, summary}` on EVERY poll tick, including empty ones — LiveViews only
+    re-render on messages, so a quiet feed must still tick or in-flight elapsed
+    times freeze, stalled-episode detection never fires, and the header liveness
+    chip lies. Empty ticks fold `Reducer.tick(state, now)` (re-derives elapsed +
+    stall classification) before broadcasting.
+- `summary` is deliberately SMALL: in-flight rows, agent strip, KPI counters,
+  issues tail, last ~50 story rows. The full story ring is pulled on demand via
+  `EventsFeed.story_ring/0` (a call) by the Events page for filtering/paging —
+  never shipped to every LiveView at 700ms.
 - **Gap** (first event seq > cursor+1): ring pruned while we lagged — fold a
   synthetic `feed_gap` issue (lost count) and continue.
   **Regression** (returned seq < cursor): feed restarted — re-baseline, reset
@@ -191,6 +207,16 @@ events reducer (`broker_events.py`), the part that won the parity test:
   durations, browse ok/total, asks, compactions, inbox_full, …).
 - `Story.Reducer.apply(state, event) :: state` — total function; unknown kind ⇒
   generic story row, state otherwise untouched.
+- `Story.Reducer.tick(state, now) :: state` — wall-clock pass (every poll tick):
+  refreshes in-flight elapsed, classifies stalled episodes, expires the 24h
+  issues window.
+- **Clock discipline**: durations between event PAIRS (reply latency,
+  first-feedback, browse time) use event `ts` only — both ends are feed
+  timestamps, immune to host↔container clock skew. Only "elapsed so far" for
+  open episodes needs a now; use the feed-anchored clock (max event ts seen +
+  local monotonic delta since it arrived), never the container's wall clock.
+- Ring bounds (config): story ring 500 rows, issues ring 200 / 24h — both folded
+  in-state, no unbounded growth.
 
 Kind → fold (lifecycle vocabulary identical to the prototype):
 
@@ -254,9 +280,16 @@ TopologyLive is rewritten around the prototype's proven canvas:
 - **States**: thinking ring (●), waiting ring + elapsed + amber dashed edge to the
   waited-on service (◐), spawning (◌), queue badge (⁺¹), green reply arcs, red
   error flashes, ☕ on compaction.
-- **Debug rig**: ported, gated by `?debug=1` (handle_params → `data-debug` on the
-  hook el): raw event/op trace ring + pause-step + copy-to-clipboard. Invisible
-  otherwise.
+- **Debug rig**: ported, gated by `?debug=1` — read by the hook AT MOUNT from a
+  `data-debug` attribute (the el is `phx-update="ignore"`, so later attribute
+  changes never reach it; that's fine — the param arrives with the page load).
+  Raw event/op trace ring + pause-step + copy-to-clipboard. Invisible otherwise.
+- **Theme**: the canvas draws with the theme's CSS vars (`--color-success`,
+  `--color-warning`, `--color-error`, base-content opacities) like the rest of
+  the repo — NOT the prototype's hardcoded dark palette — so light/dark both work.
+- **State precedence** where `@snapshot` and `@story` disagree about an agent:
+  story (event-derived) wins for activity state (thinking/waiting/spawning),
+  snapshot wins for existence/leasing (which slots exist, who holds them).
 - Below the canvas: the in-flight strip (true state, instant — from `@story`, not
   the paced animation) and the node table fallback (kept).
 - **cytoscape + fcose vendor files and the old `topology.js` hook are deleted**
@@ -275,19 +308,32 @@ Common header: nav + `feed 2s ago` liveness chip (§5.4).
 │ @maria ·+1     agent_1   thinking (1 queued)         4.1s ▓▓░░░░░░  [session] │
 ├─ AGENTS ─────────────────────────────────────────────────────────────────────┤
 │ agent_0 ◐ waiting browse 12s │ agent_1 ● thinking 4s │ agent_2 ○ idle 10m    │
-│ pool 3/2048 leased · 4 spawns (avg backend-up 1.4s)                          │
-├─ TODAY (since 09:12) ────────────────────────────────────────────────────────┤
+│ pool 3/2048 leased · 4 spawns                                                │
+├─ SINCE 09:12 ────────────────────────────────────────────────────────────────┤
 │ replies 41   p50 9.2s   p95 51s   first-feedback p50 3.1s                    │
 │ failures 0   inbox_full 1   stalled 0   compactions 3   browse 84% ok        │
-├─ ISSUES (24h) ───────────────────────────────────────────────────────────────┤
+├─ ISSUES (last 24h · observed since 09:12) ───────────────────────────────────┤
 │ 14:19  tg:739…   stalled — no reply                                [events →]│
 │ 12:25  agent_0   browse not_allowed (allowlist)                    [events →]│
 │ 11:16  tg:568…   inbox_full → user notified                        [events →]│
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
+- The KPI/issues window labels are DYNAMIC (the story baseline) — never claim
+  "today"/"24h" the state can't back. When `extensions["metrics_today"]` is
+  present, the counter row upgrades to a real "TODAY" label for the durable
+  counters.
+- "avg backend-up" was cut: the feed has `spawn_start` but no spawn-ready event
+  (that residual is Proposal C, engine-side) — the panel never shows a number it
+  would have to guess.
+- **Idle empty state** (the most common view): when nothing is in flight, the
+  panel collapses to one reassuring line —
+  `nobody waiting · last: ✓ @albert replied in 9.0s at 14:26` — instead of an
+  empty box.
+
 Sources: `@story` (in-flight, agents, KPIs, issues) + `@snapshot` (pool, status,
-warnings — existing cards stay below). Issue rows deep-link to `/events?cid=…`.
+warnings — existing cards stay below). Issue rows deep-link to
+`/events?cid=…&issues=1`.
 
 **Topology — "watch it think; where is the flow stuck?"** — §5.5 canvas, controls
 (`⏸ pause · step › · ☑ causal · ☐ chatter`), legend, in-flight strip, table fallback.
@@ -306,10 +352,19 @@ audience footer (`reachable 214 DMs · push-eligible 198 …`) read from
 ```
 
 **Events — story-first.** View toggle `◉ story ○ engine raw`:
-- *story*: the `@story` ring rendered as lifecycle rows (LiveView stream), filters:
-  kind, cid, agent, **issues only**; rows link to session/topology.
+- *story*: the story ring rendered as lifecycle rows (LiveView stream; full ring
+  pulled via `EventsFeed.story_ring/0`), filters: kind, **user** (a @handle
+  dropdown built from the snapshot's sessions — nobody types `tg:5681202:0` by
+  hand — plus a free cid input for deep links), agent, **issues only**; rows link
+  to session/topology.
 - *engine raw*: the EXISTING LogStore table + its server-side filters, demoted
   behind the toggle — code kept as the current function components.
+- **Filters live in the URL** (`handle_params`): `/events?cid=…&issues=1` is
+  shareable and is the deep-link target for every issue row on Overview/Sessions.
+- **Reading vs live**: new rows prepend, which yanks the page out from under a
+  reader — add a `⏸ pause · ▶ live (+N new)` pill; pause buffers, resume
+  prepends the buffer. (The prototype only had pause inside the debug rig; here
+  it's a first-class control.)
 
 ```
 view ◉ story ○ engine-raw   kind [all▾]  cid [____]  agent [all▾]  ☐ issues only
@@ -335,6 +390,12 @@ asks / compactions (from `@story` counters; durable daily values from
    (clamping limit to the feed's own 2000). `run_live.exs` passes
    `events_source: Wingston.EventsSource` to `GenswarmsDashboard.start/1`.
    Submodule bump after backend PR merges.
+   **Includes the cursor fix (§4.1):** `EventFeed.since/2` currently returns
+   `{[], since}` on an empty read; it must return `{[], current_cursor}` where
+   current_cursor = the highest assigned seq (`:ets.last/1` on the ordered_set;
+   0 when empty), so a consumer's cursor visibly regresses after a bot restart.
+   Harness gains the assertion (poll with an inflated `since` → cursor comes
+   back as the feed's own max, not the echo).
 2. **Retirement** (after the frontend pages are live and verified):
    `Wingston.EventFeedPlug` + its Bandit listener on :4011 (`EVENTS_PORT`), the
    harness's plug-route checks, the whole `prototype/` directory (`broker.py`,
@@ -351,7 +412,7 @@ asks / compactions (from `@story` counters; durable daily values from
 | # | Repo · scope | Contents |
 |---|--------------|----------|
 | 1 | dashboard PR · `backend/` | `EventsSource` behaviour, Config + `start/1` opt, `/events/feed` route, golden contract + plug tests, README contract row |
-| 2 | wingston commit | `Wingston.EventsSource` + run_live wiring + submodule bump; verify `curl :4001/api/swarms/wingston/events/feed` live |
+| 2 | wingston commit | `EventFeed.since/2` cursor fix (§6.1) + `Wingston.EventsSource` + run_live wiring + submodule bump; verify `curl :4001/api/swarms/wingston/events/feed` live, including the restart case (inflated `since` → feed's own cursor) |
 | 3 | dashboard PR · `frontend/` foundation | `SwarmClient.events_feed`, `EventsFeed` poller, `Story.State`+`Story.Reducer` with the full unit-test port of the parity scenarios, DashHooks `@story`, header liveness chip. No page rework yet — invisible except the chip |
 | 4 | dashboard PR · Topology | `pipeline.js` + TopologyLive rewrite, causal default, `?debug=1` rig, cytoscape/fcose deletion |
 | 5 | dashboard PR · Overview + Events | in-flight/agents/KPI/issues panels; story-first Events with raw toggle |
@@ -371,7 +432,9 @@ only ever deliberate. Steps 2/7/8 follow the standing wingston deploy flow.
 - **Reducer**: pure unit tests replaying the recorded real traces that drove the
   prototype (single request, browse wait, queued follow-up + count merge, multi-user
   burst attribution, inbox_full, compaction mid-wait, unknown kind, feed_gap,
-  baseline reset) — assert episodes, agent states, KPIs, issues.
+  baseline reset) — assert episodes, agent states, KPIs, issues. Plus `tick/2`:
+  elapsed advances, an episode crosses `stall_after_ms` → stalled issue appears
+  exactly once, 24h issue expiry.
 - **EventsFeed**: Mox-driven — baseline-on-first-poll, cursor advance, gap → issue,
   regression → re-baseline, unavailable → degraded status. `start_supervised!`,
   no sleeps (drain via `:sys.get_state`).
@@ -391,6 +454,7 @@ only ever deliberate. Steps 2/7/8 follow the standing wingston deploy flow.
 | feed cursor regression (bot restart) | re-baseline + reset since-baseline counters, story note |
 | dashboard restart | counters restart at the new baseline — always labeled `since HH:MM`, never presented as a full day (until `metrics_today` overlay exists) |
 | event burst | reducer is O(1)/event; canvas paces display client-side; story ring + LiveView streams bound memory |
+| host↔container clock skew | pair durations use feed `ts` on both ends (immune); open-episode elapsed uses the feed-anchored clock (§5.3), so skew never shows up as wrong ages |
 
 ---
 
