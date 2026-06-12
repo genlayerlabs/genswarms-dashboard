@@ -79,7 +79,11 @@ config :subzero_swarm_dashboard, :pipeline_layout, %{
   ],
   agent_column_x: 0.47,
   chatter: ["rally", "policy", "cron", "roster", "metrics"],
-  return_arcs: [%{from: "sender", to: "telegram", cx: 0.41, cy: 0.99}]
+  return_arcs: [%{from: "sender", to: "telegram", cx: 0.41, cy: 0.99}],
+  # only pool slots belong in the agent column — sample/template agents
+  # (conversation_sample) are real swarm members but visual noise on the
+  # user-request pipeline. nil/absent ⇒ no filtering.
+  agent_pattern: "^wingston_agent_"
 }
 
 # Import environment specific config. This must remain at the bottom

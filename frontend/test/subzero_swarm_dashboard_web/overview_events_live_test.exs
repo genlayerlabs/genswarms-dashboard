@@ -191,7 +191,8 @@ defmodule SubzeroSwarmDashboardWeb.OverviewEventsLiveTest do
       html = push_story(view)
 
       assert has_element?(view, "#kpi-window-label")
-      assert html =~ "since 09:12"
+      # baseline rendered through <.local_time> (browser-local via hook; UTC fallback text)
+      assert has_element?(view, "#kpi-since", "09:12")
       assert html =~ "9.2s"
       # 21/25 browse ok
       assert html =~ "84% ok"

@@ -185,8 +185,19 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   defp pool_tone(pct) when pct >= 70, do: "var(--color-warning)"
   defp pool_tone(_pct), do: "var(--color-success)"
 
+  # Pool slots only (config :pipeline_layout agent_pattern) — sample/template
+  # agents are swarm members but not part of the user-request pipeline.
   defp agent_names(snap) do
-    for n <- snap["nodes"] || [], n["type"] == "agent", do: n["name"]
+    re =
+      case Application.get_env(:subzero_swarm_dashboard, :pipeline_layout, %{})[:agent_pattern] do
+        nil -> nil
+        pattern -> Regex.compile!(pattern)
+      end
+
+    for n <- snap["nodes"] || [],
+        n["type"] == "agent",
+        re == nil or Regex.match?(re, n["name"]),
+        do: n["name"]
   end
 
   # ── in-flight strip (TRUE state from @story — not the paced animation) ────────

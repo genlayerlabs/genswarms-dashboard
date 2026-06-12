@@ -971,6 +971,32 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp present(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)
   defp present(_), do: nil
 
+  @doc """
+  Absolute time rendered in the BROWSER's zone (the LocalTime hook converts; the
+  server-rendered text is the UTC fallback until the hook runs). `ts` is unix
+  seconds or a DateTime.
+  """
+  attr :id, :string, required: true
+  attr :ts, :any, required: true
+  attr :fmt, :string, default: "hm", values: ~w(hm hms)
+
+  def local_time(assigns) do
+    assigns = assign(assigns, :unix, time_to_unix(assigns.ts))
+
+    ~H"""
+    <time :if={@unix} id={@id} phx-hook="LocalTime" data-ts={@unix} data-fmt={@fmt} class="tnum">
+      {utc_text(@unix, @fmt)}
+    </time><span :if={is_nil(@unix)}>—</span>
+    """
+  end
+
+  defp time_to_unix(%DateTime{} = dt), do: DateTime.to_unix(dt)
+  defp time_to_unix(ts) when is_number(ts), do: ts
+  defp time_to_unix(_ts), do: nil
+
+  defp utc_text(unix, "hms"), do: SubzeroSwarmDashboardWeb.StoryHelpers.hms(unix)
+  defp utc_text(unix, _fmt), do: SubzeroSwarmDashboardWeb.StoryHelpers.hhmm(unix)
+
   @doc "Human relative time from an ISO8601 string (or `—`)."
   def relative_time(nil), do: "—"
 

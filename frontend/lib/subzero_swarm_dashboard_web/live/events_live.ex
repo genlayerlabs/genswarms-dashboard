@@ -374,7 +374,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
               id={id}
               class="flex items-baseline gap-3 py-1"
             >
-              <span class="opacity-50 whitespace-nowrap">{hms(row.ts)}</span>
+              <span class="opacity-50 whitespace-nowrap">
+                <.local_time id={id <> "-t"} ts={row.ts} fmt="hms" />
+              </span>
               <span class={["flex-1 truncate", row.issue && "text-warning"]}>{row.text}</span>
               <.link
                 :if={row.cid}

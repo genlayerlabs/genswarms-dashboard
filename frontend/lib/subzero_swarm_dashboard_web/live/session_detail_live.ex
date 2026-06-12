@@ -295,19 +295,24 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         id={"session-request-#{i}"}
         class="flex flex-wrap items-baseline gap-x-2"
       >
-        <span class="opacity-50 tnum whitespace-nowrap">{hms(r.opened_at)}</span>
+        <span class="opacity-50 tnum whitespace-nowrap">
+          <.local_time id={"session-request-#{i}-t"} ts={r.opened_at} fmt="hms" />
+        </span>
         <span class={[r.stalled && "text-warning"]}>{r.chain}</span>
         <span :if={r.queued > 0} class="opacity-60">·+{r.queued} queued</span>
       </div>
     </div>
-    <p class="text-xs opacity-40 mt-2">(requests observed since {hhmm(@story[:baseline_at])})</p>
+    <p class="text-xs opacity-40 mt-2">
+      (requests observed since <.local_time id="requests-since" ts={@story[:baseline_at]} />)
+    </p>
     """
   end
 
   defp requests(assigns) do
     ~H"""
     <div id="session-requests-empty" class="text-sm opacity-60">
-      No requests observed for this conversation (requests observed since {hhmm(@story[:baseline_at])}).
+      No requests observed for this conversation
+      (requests observed since <.local_time id="requests-since-empty" ts={@story[:baseline_at]} />).
     </div>
     """
   end

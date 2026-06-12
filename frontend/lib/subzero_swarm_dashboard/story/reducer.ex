@@ -26,6 +26,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     %{state | now: now}
     |> expire_issues(now)
     |> classify_stalled(now)
+    |> decay_agents(now)
   end
 
   # ── kind → fold (lifecycle vocabulary identical to the prototype) ────────────
@@ -57,11 +58,17 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     state =
       if busy?,
-        do: put_agent(state, %{ag | queue: min(ag.queue + 1, 99)}),
-        else: put_agent(state, %{ag | state: :thinking, wait_on: nil, since: now})
+        do: put_agent(state, %{ag | queue: min(ag.queue + 1, 99), last_act: now}),
+        else: put_agent(state, %{ag | state: :thinking, wait_on: nil, since: now, last_act: now})
 
     if ep do
-      note = if busy?, do: "queued behind current turn", else: "claims #{cid}"
+      note =
+        cond do
+          ag.state == :spawning -> "queued while spawning"
+          busy? -> "queued behind current turn"
+          true -> "claims #{cid}"
+        end
+
       row(state, ev, %{cid: cid, agent: slot, text: "⟳ #{slot} #{note}"})
     else
       state
@@ -72,7 +79,13 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     now = ts(ev, state)
 
     state =
-      put_agent(state, %{get_agent(state, slot) | state: :spawning, wait_on: nil, since: now})
+      put_agent(state, %{
+        get_agent(state, slot)
+        | state: :spawning,
+          wait_on: nil,
+          since: now,
+          last_act: now
+      })
 
     row(state, ev, %{agent: slot, text: "⚙ #{slot} spawning"})
   end
@@ -92,7 +105,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     ag = get_agent(state, from)
     # thinking refresh: keep the original since if already thinking
     since = if ag.state == :thinking, do: ag.since, else: now
-    state = put_agent(state, %{ag | state: :thinking, wait_on: nil, since: since})
+    state = put_agent(state, %{ag | state: :thinking, wait_on: nil, since: since, last_act: now})
     state = bump(state, :asks)
     row(state, ev, %{agent: from, text: "⇄ #{from} asked policy"})
   end
@@ -101,7 +114,13 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     now = ts(ev, state)
 
     state =
-      put_agent(state, %{get_agent(state, name) | state: :waiting, wait_on: "browse", since: now})
+      put_agent(state, %{
+        get_agent(state, name)
+        | state: :waiting,
+          wait_on: "browse",
+          since: now,
+          last_act: now
+      })
 
     row(state, ev, %{agent: name, text: "⏸ #{name} waiting on browse"})
   end
@@ -118,7 +137,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     state =
       if waiting?,
-        do: put_agent(state, %{ag | state: :thinking, wait_on: nil, since: now}),
+        do: put_agent(state, %{ag | state: :thinking, wait_on: nil, since: now, last_act: now}),
         else: state
 
     text =
@@ -233,6 +252,30 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     end)
   end
 
+  # Turn-end is invisible to the feed (the engine emits no turn-complete — that's
+  # Proposal C, upstream), so an agent that acted after its reply (a post-send ask)
+  # would stay "thinking" forever. Honesty rule: stop claiming activity we can't
+  # evidence — thinking decays to idle after think_decay_ms without ANY event from
+  # that agent; waiting likewise (a lost browse_done) after the longer
+  # wait_decay_ms. Decay is silent (no story row — we never claim "turn ended",
+  # we just stop claiming "thinking"); since resets to the last evidence.
+  defp decay_agents(state, now) do
+    Enum.reduce(state.agents, state, fn {_name, ag}, acc ->
+      quiet_s = now - (ag.last_act || now)
+
+      cond do
+        ag.state == :thinking and quiet_s > state.think_decay_ms / 1000 ->
+          put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act})
+
+        ag.state == :waiting and quiet_s > state.wait_decay_ms / 1000 ->
+          put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act})
+
+        true ->
+          acc
+      end
+    end)
+  end
+
   # ── episode lifecycle ─────────────────────────────────────────────────────────
 
   defp new_episode(cid, now) do
@@ -318,14 +361,22 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     if ag.queue > 0,
       do:
-        put_agent(state, %{ag | queue: ag.queue - 1, state: :thinking, wait_on: nil, since: now}),
-      else: put_agent(state, %{ag | state: :idle, wait_on: nil})
+        put_agent(state, %{
+          ag
+          | queue: ag.queue - 1,
+            state: :thinking,
+            wait_on: nil,
+            since: now,
+            last_act: now
+        }),
+      else: put_agent(state, %{ag | state: :idle, wait_on: nil, last_act: now})
   end
 
   # ── state plumbing ────────────────────────────────────────────────────────────
 
   defp get_agent(state, name) do
-    state.agents[name] || %{name: name, state: :idle, wait_on: nil, since: nil, queue: 0}
+    state.agents[name] ||
+      %{name: name, state: :idle, wait_on: nil, since: nil, last_act: nil, queue: 0}
   end
 
   defp put_agent(state, ag), do: %{state | agents: Map.put(state.agents, ag.name, ag)}
