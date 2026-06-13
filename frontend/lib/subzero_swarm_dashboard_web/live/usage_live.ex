@@ -80,33 +80,40 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp wingston(assigns) do
     kpis = (assigns.story || %{})[:kpis] || %{}
     today = metrics_today(assigns.snapshot)
-    since = since_label(assigns.story)
-    {browse_ok, browse_total, browse_src} = browse_counts(today, kpis)
+    {browse_ok, browse_total, _src} = browse_counts(today, kpis)
 
+    # ONE window for the whole card — durable "today" when the store publishes
+    # metrics_today (all four counters are durable now), else the story's
+    # since-baseline. Stated once in the meta, so a tile never juxtaposes a
+    # durable count against a session count (the "3 browses, 0 replies" nonsense).
     assigns =
       assign(assigns,
         today: today,
+        window: window_label(today, assigns.story),
         stats: [
-          counter_stat("Replies", today, "replies", kpis[:replies], since),
+          %{label: "Replies", value: num(counter(today, "replies", kpis[:replies])), sub: nil},
           %{
             label: "Browse ok",
             value: ok_rate(browse_ok, browse_total),
-            badge: nil,
-            sub: "#{num(browse_ok)}/#{num(browse_total)} · #{browse_src || since}"
+            sub: "#{num(browse_ok)}/#{num(browse_total)}"
           },
-          counter_stat("Asks", today, "asks", kpis[:asks], since),
-          counter_stat("Compactions", today, "compactions", kpis[:compactions], since)
+          %{label: "Asks", value: num(counter(today, "asks", kpis[:asks])), sub: nil},
+          %{
+            label: "Compactions",
+            value: num(counter(today, "compactions", kpis[:compactions])),
+            sub: nil
+          }
         ]
       )
 
     ~H"""
     <.panel :if={@story || @today} id="wingston-usage" title="Wingston">
       <:meta>
-        <span class="font-mono">replies · browse · asks · compactions (bot)</span>
+        <span class="font-mono">{@window}</span>
       </:meta>
       <%= if @today || (@story && @story[:baseline_at]) do %>
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-3">
-          <.metric :for={s <- @stats} label={s.label} value={s.value} badge={s.badge} sub={s.sub} />
+          <.metric :for={s <- @stats} label={s.label} value={s.value} sub={s.sub} />
         </div>
       <% else %>
         <.empty_state
@@ -118,14 +125,39 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     """
   end
 
-  # One counter tile: the durable daily value when the host publishes it
-  # ("today" badge, same convention as Overview's window panel), else the
-  # story's since-baseline counter — each labeled by its source so a tile
-  # never implies a window it can't back.
-  defp counter_stat(label, today, key, fallback, since) do
+  # the durable daily value when the host publishes it, else the story's
+  # since-baseline counter (the window is stated once, in the panel meta)
+  defp counter(today, key, fallback) do
     case (today || %{})[key] do
-      n when is_number(n) -> %{label: label, value: num(n), badge: "today", sub: nil}
-      _ -> %{label: label, value: num(fallback), badge: nil, sub: since}
+      n when is_number(n) -> n
+      _ -> fallback || 0
+    end
+  end
+
+  # the card's single window: durable "today · Jun 13" when metrics_today is
+  # present (its `day` names the server's UTC accounting day, which is exactly
+  # why a count can read low just after the 00:00-UTC rollover), else the
+  # observability session window
+  defp window_label(today, story) do
+    cond do
+      is_map(today) and map_size(today) > 0 ->
+        case today["day"] do
+          d when is_binary(d) -> "today · #{pretty_day(d)}"
+          _ -> "today"
+        end
+
+      story && story[:baseline_at] ->
+        since_label(story)
+
+      true ->
+        ""
+    end
+  end
+
+  defp pretty_day(iso) do
+    case Date.from_iso8601(iso) do
+      {:ok, d} -> Calendar.strftime(d, "%b %d")
+      _ -> iso
     end
   end
 
