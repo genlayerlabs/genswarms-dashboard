@@ -11,6 +11,12 @@
 
 const FLIGHT = 1100 // packet flight time (ms)
 const STAGGER = 200 // launch stagger when flushing a backlog (ms)
+// turn-end is invisible to the feed (no engine turn-complete event), so a node's
+// claimed activity DECAYS when it stops producing events — thinking quickly (a
+// finished turn), waiting slowly (a lost completion). Mirrors Story.Reducer so the
+// canvas and the in-flight strip below it never disagree about a stale agent.
+const THINK_DECAY = 60 // s of silence before a thinking node falls idle
+const WAIT_DECAY = 300 // s before a waiting node does
 const TAU = Math.PI * 2
 const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
 
@@ -105,6 +111,7 @@ export const Pipeline = {
     this.pumpTimer = setInterval(() => this.pump(), 80)
     this.decayTimer = setInterval(() => {
       this.decayEdges()
+      this.decayAgents() // stale thinking/waiting → idle (no turn-end event exists)
       this.refreshTheme() // tracks live theme switches; cheap at 1Hz
     }, 1000)
     if (this.debug) this.setDebug(true)
@@ -311,7 +318,11 @@ export const Pipeline = {
             kind: "reply",
             st: () => {
               const ag = this.AG[agent]
-              if (ag) this.setState(agent, "thinking", ag.state === "thinking" ? ag.since : ts)
+              if (!ag) return
+              // already thinking: hold `since` (elapsed = whole turn) but refresh
+              // the decay clock; otherwise a fresh thinking start
+              if (ag.state === "thinking") this.touchAct(agent, ts)
+              else this.setState(agent, "thinking", ts)
             },
           },
         ]
@@ -458,7 +469,10 @@ export const Pipeline = {
 
   // ── node + agent state plumbing ──────────────────────────────────────────────
   ag(name) {
-    return this.AG[name] || (this.AG[name] = {name, state: "idle", waitOn: null, since: 0, queue: 0})
+    return (
+      this.AG[name] ||
+      (this.AG[name] = {name, state: "idle", waitOn: null, since: 0, lastAct: 0, queue: 0})
+    )
   },
 
   setState(name, state, ts) {
@@ -467,6 +481,7 @@ export const Pipeline = {
     ag.state = state
     ag.waitOn = null
     ag.since = ts
+    ag.lastAct = ts
   },
 
   setWaiting(name, on, ts) {
@@ -475,6 +490,29 @@ export const Pipeline = {
     ag.state = "waiting"
     ag.waitOn = on
     ag.since = ts
+    ag.lastAct = ts
+  },
+
+  // an agent that keeps thinking (e.g. a stream of asks) holds its `since` so the
+  // displayed elapsed reflects the whole turn, but every event still refreshes
+  // `lastAct` — the decay clock — so genuine work never decays, only silence does
+  touchAct(name, ts) {
+    this.ag(name).lastAct = ts
+  },
+
+  // no turn-complete event exists; stop claiming activity a node can't evidence.
+  // Silent (no packet, no log spam) — we just drop the stale ring.
+  decayAgents() {
+    const snow = this.feedNow()
+    for (const ag of Object.values(this.AG)) {
+      if (ag.state === "thinking" && snow - ag.lastAct > THINK_DECAY) {
+        ag.state = "idle"
+        ag.waitOn = null
+      } else if (ag.state === "waiting" && snow - ag.lastAct > WAIT_DECAY) {
+        ag.state = "idle"
+        ag.waitOn = null
+      }
+    }
   },
 
   ensureAgent(name) {
