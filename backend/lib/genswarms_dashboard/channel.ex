@@ -20,24 +20,44 @@ defmodule GenswarmsDashboard.Channel do
   @impl true
   def join("swarm:" <> swarm_name, _params, socket) do
     # Succeed for the live swarm; a hard {:error,...} would make Slipstream reconnect-loop forever.
-    case Genswarms.SwarmManager.status(swarm_name) do
+    case swarm_status(swarm_name) do
       {:ok, _} ->
-        pubsub = GenswarmsDashboard.Config.get(:pubsub_server)
-        Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}")
-        Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}:output")
-        Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}:routing")
-        Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}:status")
-        # Heartbeat: a low-traffic swarm can sit idle for minutes, which would trip the
-        # dashboard's "no WS event in 15s → not co-located" guard even though the relay is fine.
-        Process.send_after(self(), :heartbeat, heartbeat_ms())
-        {:ok, %{swarm: swarm_name}, assign(socket, :swarm_name, swarm_name)}
+        join_ok(swarm_name, socket)
 
       {:error, :not_found} ->
         {:error, %{reason: "swarm_not_found"}}
+
+      # SwarmManager.status timed out (it is a GenServer.call that blocks behind in-flight
+      # docker ops — the head-of-line stall). A timeout means the swarm is UP but busy, not
+      # gone, so we must NOT hard-error here (that triggers the reconnect-loop noted above).
+      # Join and relay via PubSub anyway — the event feed flows independently of status.
+      {:error, :unavailable} ->
+        join_ok(swarm_name, socket)
     end
   end
 
   def join(_topic, _params, _socket), do: {:error, %{reason: "unknown_topic"}}
+
+  defp join_ok(swarm_name, socket) do
+    pubsub = GenswarmsDashboard.Config.get(:pubsub_server)
+    Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}")
+    Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}:output")
+    Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}:routing")
+    Phoenix.PubSub.subscribe(pubsub, "swarm:#{swarm_name}:status")
+    # Heartbeat: a low-traffic swarm can sit idle for minutes, which would trip the
+    # dashboard's "no WS event in 15s → not co-located" guard even though the relay is fine.
+    Process.send_after(self(), :heartbeat, heartbeat_ms())
+    {:ok, %{swarm: swarm_name}, assign(socket, :swarm_name, swarm_name)}
+  end
+
+  # SwarmManager.status is a 5s GenServer.call; it can :exit (timeout) when SwarmManager is
+  # blocked behind an in-flight docker op. Guard the exit so a status hiccup degrades the join
+  # to "up but busy" (relay anyway) instead of crashing the channel and reconnect-looping.
+  defp swarm_status(swarm_name) do
+    Genswarms.SwarmManager.status(swarm_name)
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
 
   # The dashboard is a passive relay — ignore anything it might send (no write path).
   @impl true

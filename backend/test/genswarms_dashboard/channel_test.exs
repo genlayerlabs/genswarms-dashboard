@@ -59,6 +59,18 @@ defmodule GenswarmsDashboard.ChannelTest do
              |> subscribe_and_join(GenswarmsDashboard.Channel, "other:fix")
   end
 
+  test "join degrades to OK (relay anyway) when SwarmManager.status times out" do
+    # A status timeout means the swarm is UP but busy (SwarmManager blocked behind a
+    # docker op) — the channel must NOT hard-error (that reconnect-loops); it joins and
+    # relays via PubSub regardless. Stub status to :exit to simulate the GenServer timeout.
+    Application.put_env(:genswarms_dashboard, :stub_status, fn _ -> exit(:timeout) end)
+    on_exit(fn -> Application.delete_env(:genswarms_dashboard, :stub_status) end)
+
+    assert {:ok, %{swarm: "fix"}, _socket} =
+             socket(GenswarmsDashboard.Socket, nil, %{})
+             |> subscribe_and_join(GenswarmsDashboard.Channel, "swarm:fix")
+  end
+
   test "pushes a heartbeat (configurable interval)" do
     assert_push "heartbeat", %{at: at}, 1_000
     assert is_integer(at)
