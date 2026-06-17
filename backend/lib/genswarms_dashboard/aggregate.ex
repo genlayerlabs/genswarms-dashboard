@@ -17,7 +17,7 @@ defmodule GenswarmsDashboard.Aggregate do
   # ── live wrapper (pinned by tests in the next task) ─────────────────────────
   @spec build(String.t()) :: {:ok, map()} | {:error, :not_found}
   def build(swarm_name) do
-    case Genswarms.SwarmManager.status(swarm_name) do
+    case swarm_status(swarm_name) do
       {:ok, status} ->
         ds = Config.get(:data_source)
         snap = ds.snapshot(swarm_name)
@@ -32,9 +32,20 @@ defmodule GenswarmsDashboard.Aggregate do
 
         {:ok, assemble(status, topology_for(swarm_name), data, DateTime.utc_now())}
 
-      {:error, :not_found} ->
-        {:error, :not_found}
+      {:error, reason} ->
+        # :not_found (unknown swarm) or :unavailable (status timed out — SwarmManager
+        # blocked behind an in-flight docker op; degrade, don't crash the API to 500).
+        {:error, reason}
     end
+  end
+
+  # SwarmManager.status is a 5s GenServer.call; it can time out when SwarmManager is
+  # blocked behind a docker operation (e.g. a cold-spawn `docker run`). Guard the exit
+  # so the aggregate degrades to :unavailable instead of crashing the read API.
+  defp swarm_status(swarm_name) do
+    Genswarms.SwarmManager.status(swarm_name)
+  catch
+    :exit, _ -> {:error, :unavailable}
   end
 
   defp fabricator(ds) do

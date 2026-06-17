@@ -276,4 +276,24 @@ defmodule GenswarmsDashboard.PlugTest do
     assert conn.status == 200
     assert Jason.decode!(conn.resp_body)["source"] == "unavailable"
   end
+
+  # The /dashboard aggregate route must DEGRADE (503), not crash to a 500, when
+  # SwarmManager.status times out (it's blocked behind a docker op).
+  test "dashboard route returns 503 when SwarmManager.status times out, not a 500" do
+    Application.put_env(:genswarms_dashboard, :stub_status, fn _ ->
+      exit({:timeout, {GenServer, :call, [Genswarms.SwarmManager, :status, 5000]}})
+    end)
+
+    conn = call(conn(:get, "/api/swarms/fix/dashboard"))
+
+    assert conn.status == 503
+    assert Jason.decode!(conn.resp_body) == %{"error" => "swarm_status_unavailable"}
+  end
+
+  # The JSON error view (wired via render_errors) renders a clean body — so a 500 that
+  # does reach the endpoint doesn't fail again on a missing template.
+  test "ErrorJSON renders a clean JSON error body" do
+    assert GenswarmsDashboard.ErrorJSON.render("500.json", %{}) == %{error: "Internal Server Error"}
+    assert GenswarmsDashboard.ErrorJSON.render("404.json", %{}) == %{error: "Not Found"}
+  end
 end
