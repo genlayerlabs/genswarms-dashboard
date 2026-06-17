@@ -29,6 +29,14 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     |> decay_agents(now)
   end
 
+  @doc """
+  Refresh the cid → @handle map from a `/dashboard` snapshot. Events carry only
+  the cid, so this is how the story fold learns who a conversation belongs to;
+  `user/2` reads it. Newly-baked rows pick up the handle; rows already folded
+  keep whatever was known when they were written (the fold is append-only).
+  """
+  def put_users(%State{} = state, users) when is_map(users), do: %{state | users: users}
+
   # ── kind → fold (lifecycle vocabulary identical to the prototype) ────────────
 
   defp fold("request_open", state, %{"cid" => cid} = ev) when is_binary(cid) do
@@ -38,10 +46,10 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
       case state.open[cid] do
         # an open request gets a queued follow-up: merge, don't double-count
         %{} = ep -> put_open(state, %{ep | count: ep.count + 1, last_open: now})
-        nil -> put_open(state, new_episode(cid, now))
+        nil -> put_open(state, new_episode(state, cid, now))
       end
 
-    row(state, ev, %{cid: cid, text: "▶ @#{user(cid)} request open"})
+    row(state, ev, %{cid: cid, text: "▶ @#{user(state, cid)} request open"})
   end
 
   defp fold("routed", state, %{"cid" => cid, "slot" => slot} = ev)
@@ -92,7 +100,20 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   defp fold("teardown", state, %{"slot" => slot} = ev) when is_binary(slot) do
     state = put_agent(state, %{get_agent(state, slot) | state: :idle, wait_on: nil, queue: 0})
-    row(state, ev, %{agent: slot, text: "✖ #{slot} torn down"})
+    cid = ev["cid"]
+
+    # A teardown carries the cid whose agent was torn down (e.g. H2 healing a dead
+    # agent mid-request). If that conversation still has an OPEN request, the turn was
+    # DROPPED, not stalled — close it and surface it as an issue so it can't age past
+    # stall_after_ms and masquerade as a generic stall (the host already logged
+    # "no reply delivered: agent unavailable" for it).
+    if is_binary(cid) and Map.has_key?(state.open, cid) do
+      state
+      |> drop_open(cid)
+      |> issue_row(ev, %{cid: cid, agent: slot, text: "✖ @#{user(state, cid)} dropped — agent torn down"})
+    else
+      row(state, ev, %{agent: slot, text: "✖ #{slot} torn down"})
+    end
   end
 
   defp fold("inbox_full", state, ev) do
@@ -152,7 +173,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   defp fold("progress_sent", state, %{"cid" => cid} = ev) when is_binary(cid) do
     state = touch_sent(state, cid, ts(ev, state))
-    row(state, ev, %{cid: cid, text: "✉ progress to @#{user(cid)}"})
+    row(state, ev, %{cid: cid, text: "✉ progress to @#{user(state, cid)}"})
   end
 
   defp fold("reply_sent", state, %{"cid" => cid} = ev) when is_binary(cid) do
@@ -170,7 +191,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
         ok? ->
           # reply to a request opened before our baseline — honest row, no KPI
-          row(state, ev, %{cid: cid, text: "✓ @#{user(cid)} replied"})
+          row(state, ev, %{cid: cid, text: "✓ @#{user(state, cid)} replied"})
 
         true ->
           state
@@ -279,10 +300,10 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   # ── episode lifecycle ─────────────────────────────────────────────────────────
 
-  defp new_episode(cid, now) do
+  defp new_episode(state, cid, now) do
     %{
       cid: cid,
-      user: user(cid),
+      user: user(state, cid),
       opened_at: now,
       last_open: nil,
       agent: nil,
@@ -338,14 +359,14 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
       |> reply_kpi(dur)
       |> row(ev, %{
         cid: cid,
-        text: "✓ @#{user(cid)} replied in #{fmt(dur)}s · +#{ep.count - 1} queued"
+        text: "✓ @#{user(state, cid)} replied in #{fmt(dur)}s · +#{ep.count - 1} queued"
       })
     else
       state
       |> push_closed(closed)
       |> drop_open(cid)
       |> reply_kpi(dur)
-      |> row(ev, %{cid: cid, text: "✓ @#{user(cid)} replied in #{fmt(dur)}s"})
+      |> row(ev, %{cid: cid, text: "✓ @#{user(state, cid)} replied in #{fmt(dur)}s"})
     end
   end
 
@@ -427,7 +448,17 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   defp ts(ev, state), do: ev["ts"] || state.now || 0.0
 
-  defp user(cid) do
+  # Display label for a conversation: its Telegram @handle when the latest
+  # snapshot knew it (put_users/2), else the raw chat id sliced from the cid —
+  # a live session not yet folded into the durable roster still renders.
+  defp user(%State{users: users}, cid) do
+    case Map.get(users, cid) do
+      handle when is_binary(handle) and handle != "" -> handle
+      _ -> chat_id(cid)
+    end
+  end
+
+  defp chat_id(cid) do
     case String.split(cid, ":") do
       [_, chat, _ | _] -> chat
       _ -> cid
