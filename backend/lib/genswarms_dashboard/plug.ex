@@ -225,11 +225,19 @@ defmodule GenswarmsDashboard.Plug do
           end
       end
 
-    pool_agent ||
-      case Genswarms.SwarmManager.status(swarm) do
-        {:ok, %{agents: [a | _]}} -> a[:name]
-        _ -> nil
-      end
+    pool_agent || swarm_status_agent(swarm)
+  end
+
+  # SwarmManager.status is a GenServer.call (5s) that can time out under docker
+  # latency; guard the exit like the sibling read paths (logs/skills) so a slow
+  # engine degrades this read to :unavailable instead of crashing the API to a 500.
+  defp swarm_status_agent(swarm) do
+    case Genswarms.SwarmManager.status(swarm) do
+      {:ok, %{agents: [a | _]}} -> a[:name]
+      _ -> nil
+    end
+  catch
+    :exit, _ -> nil
   end
 
   defp live_slot(swarm, cid) do

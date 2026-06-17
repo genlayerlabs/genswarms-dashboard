@@ -29,6 +29,9 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
 
   @pubsub SubzeroSwarmDashboard.PubSub
   @topic "events"
+  # SwarmFeed broadcasts /dashboard snapshots here; we read them only for the
+  # cid → @handle map (events themselves carry just the cid).
+  @snapshot_topic "feed"
   @limit 500
   # liveness chip turns amber when the last successful poll is older than this
   @stale_after_s 5
@@ -52,6 +55,7 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   def init(_opts) do
     interval = Application.get_env(:subzero_swarm_dashboard, :events_poll_ms, 700)
     swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
+    PubSub.subscribe(@pubsub, @snapshot_topic)
     send(self(), :poll)
 
     {:ok,
@@ -85,6 +89,15 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
     Process.send_after(self(), :poll, state.interval)
     {:noreply, state}
   end
+
+  # /dashboard snapshot (from SwarmFeed): refresh the story's cid → @handle map so
+  # event rows render the user, not the raw chat id. Snapshots arrive every few
+  # seconds; storing the map is cheap and doesn't touch the cursor or the fold.
+  def handle_info({:snapshot, snap}, state),
+    do: {:noreply, %{state | story: Reducer.put_users(state.story, handles(snap))}}
+
+  # other "feed" traffic (live WS events, disconnects, warnings) isn't ours to fold.
+  def handle_info(_other, state), do: {:noreply, state}
 
   # the route answers but no events_source is wired host-side (old backend)
   defp handle_poll({:ok, %{"source" => "unavailable"}}, state),
@@ -198,4 +211,17 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   end
 
   defp now_mono, do: System.monotonic_time(:millisecond)
+
+  # Build cid → @handle from a /dashboard snapshot's sessions, keeping only rows
+  # that actually carry a handle (a not-yet-rostered live session has user: nil →
+  # the reducer falls back to the chat id). Tolerant of a malformed snapshot.
+  defp handles(snap) do
+    for %{"session_id" => cid, "user" => %{"handle" => h}} <- sessions(snap),
+        is_binary(cid) and is_binary(h) and h != "",
+        into: %{},
+        do: {cid, h}
+  end
+
+  defp sessions(%{"sessions" => list}) when is_list(list), do: list
+  defp sessions(_), do: []
 end

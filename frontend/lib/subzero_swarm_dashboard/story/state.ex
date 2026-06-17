@@ -11,6 +11,10 @@ defmodule SubzeroSwarmDashboard.Story.State do
   """
 
   defstruct open: %{},
+            # cid → Telegram @handle, refreshed from each /dashboard snapshot
+            # (events carry only the cid). `user/2` resolves through this, falling
+            # back to the raw chat id so a not-yet-rostered live session still renders.
+            users: %{},
             closed: [],
             agents: %{},
             story: [],

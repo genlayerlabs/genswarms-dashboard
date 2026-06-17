@@ -12,6 +12,54 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
   defp fold(events, state \\ State.new()),
     do: Enum.reduce(events, state, &Reducer.apply(&2, &1))
 
+  describe "user labels resolve the @handle from put_users/2" do
+    test "story rows and the episode carry the handle when the snapshot knew it" do
+      state =
+        State.new()
+        |> Reducer.put_users(%{@cid => "kstellana"})
+        |> then(
+          &fold(
+            [
+              ev("request_open", 1, 100.0, %{"cid" => @cid}),
+              ev("routed", 2, 101.0, %{"cid" => @cid, "slot" => @agent}),
+              ev("reply_sent", 3, 109.0, %{"cid" => @cid, "ok" => true})
+            ],
+            &1
+          )
+        )
+
+      texts = Enum.map(state.story, & &1.text)
+      assert Enum.any?(texts, &(&1 =~ "@kstellana request open"))
+      assert Enum.any?(texts, &(&1 =~ "@kstellana replied in 9.0s"))
+      refute Enum.any?(texts, &(&1 =~ "@5681202"))
+
+      # the episode's user feeds topology's `@{ep.user}` (rendered raw, no join)
+      assert [closed] = State.episodes(state, @cid)
+      assert closed.user == "kstellana"
+    end
+
+    test "put_users re-stamps an already-open episode (first turn before first snapshot)" do
+      # request_open folds before any snapshot → ep.user baked as the chat id
+      state = fold([ev("request_open", 1, 100.0, %{"cid" => @cid})])
+      assert [ep] = Map.values(state.open)
+      assert ep.user == "5681202"
+
+      # the snapshot lands; the OPEN episode picks up the handle (Topology reads it raw)
+      state = Reducer.put_users(state, %{@cid => "kstellana"})
+      assert [ep2] = Map.values(state.open)
+      assert ep2.user == "kstellana"
+    end
+
+    test "falls back to the raw chat id for a cid the snapshot didn't include" do
+      state =
+        State.new()
+        |> Reducer.put_users(%{"tg:999:0" => "someone-else"})
+        |> then(&fold([ev("request_open", 1, 100.0, %{"cid" => @cid})], &1))
+
+      assert Enum.any?(Enum.map(state.story, & &1.text), &(&1 =~ "@5681202 request open"))
+    end
+  end
+
   describe "single request lifecycle" do
     test "a failed delivery (ok: false) never stamps first-feedback — the user saw nothing" do
       state =
@@ -70,6 +118,47 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert_in_delta ff, 3.1, 0.001
       ff_p50 = State.summary(state).kpis.first_feedback_p50
       assert_in_delta ff_p50, 3.1, 0.001
+    end
+  end
+
+  describe "teardown of a dead agent closes the open request (not a stall)" do
+    test "an open request torn down is dropped as an issue, never ages into a stall" do
+      state =
+        State.new()
+        |> Reducer.put_users(%{@cid => "kstellana"})
+        |> then(
+          &fold(
+            [
+              ev("request_open", 1, 100.0, %{"cid" => @cid}),
+              ev("routed", 2, 101.0, %{"cid" => @cid, "slot" => @agent}),
+              # the agent died; ingress tears the slot down (H2), carrying the cid
+              ev("teardown", 3, 102.0, %{"cid" => @cid, "slot" => @agent})
+            ],
+            &1
+          )
+        )
+
+      # the open request was closed at teardown, not left orphaned
+      assert state.open == %{}
+      # surfaced honestly as an issue with the handle + "dropped" label
+      assert [issue] = state.issues
+      assert issue.text =~ "@kstellana dropped"
+      assert issue.text =~ "agent torn down"
+      # the agent slot is released
+      assert state.agents[@agent].state == :idle
+
+      # crucial regression guard: a tick far past stall_after_ms cannot resurrect it
+      # as a stalled episode (the masquerade the fix removes)
+      ticked = Reducer.tick(state, 100.0 + 10_000)
+      assert ticked.open == %{}
+    end
+
+    test "a teardown with no open request is just a plain slot teardown" do
+      state = fold([ev("teardown", 1, 100.0, %{"cid" => @cid, "slot" => @agent})])
+
+      assert state.open == %{}
+      assert state.issues == []
+      assert hd(state.story).text =~ "#{@agent} torn down"
     end
   end
 
