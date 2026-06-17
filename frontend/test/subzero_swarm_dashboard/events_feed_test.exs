@@ -123,6 +123,46 @@ defmodule SubzeroSwarmDashboard.EventsFeedTest do
     assert_receive {:story, %{feed_status: :unavailable}}
   end
 
+  test "a /dashboard snapshot feeds the cid→handle map into the story state" do
+    script(%{0 => feed([], 0)})
+
+    EventsFeed.subscribe()
+    pid = start_supervised!(EventsFeed)
+    assert_receive {:story, %{feed_status: :ok}}
+
+    Phoenix.PubSub.broadcast(
+      SubzeroSwarmDashboard.PubSub,
+      "feed",
+      {:snapshot,
+       %{
+         "sessions" => [
+           %{"session_id" => "tg:5681202:0", "user" => %{"handle" => "kstellana"}},
+           # robustness: a not-yet-rostered live session (user: nil) and a
+           # malformed row (no user) are skipped, not crashed on
+           %{"session_id" => "tg:9:0", "user" => nil},
+           %{"session_id" => "tg:8:0"}
+         ]
+       }}
+    )
+
+    state = :sys.get_state(pid)
+    assert state.story.users == %{"tg:5681202:0" => "kstellana"}
+  end
+
+  test "other feed-topic traffic (live events, disconnects) is ignored, not crashed on" do
+    script(%{0 => feed([], 0)})
+
+    pid = start_supervised!(EventsFeed)
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:event, "agent_output", %{}})
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:disconnected, :boom})
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:warning, :endpoint_not_colocated})
+
+    # still alive and well after the catch-all handler
+    assert is_map(:sys.get_state(pid))
+    assert Process.alive?(pid)
+  end
+
   test "story_ring/0 and episodes/1 expose the full fold on demand" do
     cid = "tg:1:0"
 

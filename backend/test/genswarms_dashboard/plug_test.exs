@@ -259,4 +259,21 @@ defmodule GenswarmsDashboard.PlugTest do
     conn = call(conn(:options, "/api/swarms/fix/dashboard"))
     assert conn.status == 204
   end
+
+  # B5: SwarmManager.status is a 5s GenServer.call; under docker latency it can
+  # time out (exit). The skills route falls through to it (via any_live_agent) and
+  # MUST degrade to source:"unavailable", not crash the read API to a 500.
+  test "skills route survives a SwarmManager.status timeout (exit), not a 500" do
+    # no data_source ⇒ live_slot + pool_agent are nil, so the route reaches status.
+    put_config(%{data_source: nil})
+
+    Application.put_env(:genswarms_dashboard, :stub_status, fn _ ->
+      exit({:timeout, {GenServer, :call, [Genswarms.SwarmManager, :status, 5000]}})
+    end)
+
+    conn = call(conn(:get, "/api/swarms/fix/sessions/fix:99/skills"))
+
+    assert conn.status == 200
+    assert Jason.decode!(conn.resp_body)["source"] == "unavailable"
+  end
 end

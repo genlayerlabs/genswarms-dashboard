@@ -75,6 +75,9 @@ defmodule GenswarmsDashboard do
       url: [host: Keyword.get(opts, :host) || "localhost", port: port],
       server: true,
       check_origin: false,
+      # JSON error view so an unguarded crash returns a clean 500 body instead of
+      # failing again on a missing ErrorView (this is a JSON read API, no HTML).
+      render_errors: [formats: [json: GenswarmsDashboard.ErrorJSON], layout: false],
       pubsub_server: Keyword.fetch!(opts, :pubsub_server),
       secret_key_base: secret_key_base(Keyword.get(opts, :secret_key_base))
     ]

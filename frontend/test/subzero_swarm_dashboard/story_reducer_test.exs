@@ -38,6 +38,18 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert closed.user == "kstellana"
     end
 
+    test "put_users re-stamps an already-open episode (first turn before first snapshot)" do
+      # request_open folds before any snapshot → ep.user baked as the chat id
+      state = fold([ev("request_open", 1, 100.0, %{"cid" => @cid})])
+      assert [ep] = Map.values(state.open)
+      assert ep.user == "5681202"
+
+      # the snapshot lands; the OPEN episode picks up the handle (Topology reads it raw)
+      state = Reducer.put_users(state, %{@cid => "kstellana"})
+      assert [ep2] = Map.values(state.open)
+      assert ep2.user == "kstellana"
+    end
+
     test "falls back to the raw chat id for a cid the snapshot didn't include" do
       state =
         State.new()

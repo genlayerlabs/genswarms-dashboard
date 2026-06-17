@@ -35,7 +35,14 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   `user/2` reads it. Newly-baked rows pick up the handle; rows already folded
   keep whatever was known when they were written (the fold is append-only).
   """
-  def put_users(%State{} = state, users) when is_map(users), do: %{state | users: users}
+  def put_users(%State{} = state, users) when is_map(users) do
+    state = %{state | users: users}
+    # Re-stamp OPEN episodes so a first-turn conversation whose request_open was
+    # folded before its first snapshot (ep.user baked as the chat id) picks up the
+    # @handle now. Topology renders ep.user raw, so without this it would lag
+    # Overview (which re-resolves at render) until the episode closed.
+    %{state | open: Map.new(state.open, fn {cid, ep} -> {cid, %{ep | user: user(state, cid)}} end)}
+  end
 
   # ── kind → fold (lifecycle vocabulary identical to the prototype) ────────────
 
