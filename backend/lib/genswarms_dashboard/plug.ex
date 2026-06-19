@@ -25,6 +25,7 @@ defmodule GenswarmsDashboard.Plug do
     case Aggregate.build(name) do
       {:ok, data} -> json(conn, 200, data)
       {:error, :not_found} -> json(conn, 404, %{error: "swarm_not_found"})
+      {:error, :unavailable} -> json(conn, 503, %{error: "swarm_status_unavailable"})
     end
   end
 
