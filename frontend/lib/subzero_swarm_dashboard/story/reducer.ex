@@ -294,10 +294,10 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
       cond do
         ag.state == :thinking and quiet_s > state.think_decay_ms / 1000 ->
-          put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act})
+          put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act, queue: 0})
 
         ag.state == :waiting and quiet_s > state.wait_decay_ms / 1000 ->
-          put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act})
+          put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act, queue: 0})
 
         true ->
           acc
