@@ -239,6 +239,29 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert state.counters.replies == 2
       assert state.agents[@agent].state == :idle
     end
+
+    test "a queued agent that decays to idle clears its stale queue count (no phantom badge)" do
+      # busy agent with a queued follow-up: queue == 1, state thinking
+      state =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => @cid}),
+          ev("routed", 2, 101.0, %{"cid" => @cid, "slot" => @agent}),
+          ev("request_open", 3, 104.0, %{"cid" => @cid}),
+          ev("routed", 4, 104.1, %{"cid" => @cid, "slot" => @agent})
+        ])
+
+      assert state.agents[@agent].queue == 1
+      assert state.agents[@agent].state == :thinking
+
+      # decay runs on the wall-clock tick (not on event folds). A tick at t=200,
+      # >think_decay_ms (60s) past the agent's last activity (104.1), decays the
+      # thinking agent to idle. The stale queue MUST clear with it, else the canvas
+      # keeps painting a phantom "queued turns" badge on an idle node.
+      state = Reducer.tick(state, 200.0)
+
+      assert state.agents[@agent].state == :idle
+      assert state.agents[@agent].queue == 0
+    end
   end
 
   describe "multi-user burst" do

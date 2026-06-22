@@ -508,9 +508,11 @@ export const Pipeline = {
       if (ag.state === "thinking" && snow - ag.lastAct > THINK_DECAY) {
         ag.state = "idle"
         ag.waitOn = null
+        ag.queue = 0
       } else if (ag.state === "waiting" && snow - ag.lastAct > WAIT_DECAY) {
         ag.state = "idle"
         ag.waitOn = null
+        ag.queue = 0
       }
     }
   },
@@ -846,8 +848,9 @@ export const Pipeline = {
         g.globalAlpha = 1
       }
 
-      // queue badge (⁺¹)
-      if (ag && ag.queue > 0) {
+      // queue badge (⁺¹) — only while the agent is actually busy; a decayed-idle
+      // node has no in-flight turn, so any residual queue is stale and must not paint
+      if (ag && ag.queue > 0 && ag.state !== "idle") {
         g.fillStyle = C.warn
         g.beginPath()
         g.arc(P.x + hw + 5, P.y - hh - 3, 9, 0, TAU)
