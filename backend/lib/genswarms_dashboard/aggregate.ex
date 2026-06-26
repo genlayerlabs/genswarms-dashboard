@@ -101,7 +101,14 @@ defmodule GenswarmsDashboard.Aggregate do
   @doc "The fully-defaulted generic session row for a pool-only cid (no host override)."
   @spec default_session(String.t()) :: map()
   def default_session(cid) do
-    %{session_id: cid, transport: "unknown", transport_ref: %{}, user: nil, metadata: %{}, last_activity: nil}
+    %{
+      session_id: cid,
+      transport: "unknown",
+      transport_ref: %{},
+      user: nil,
+      metadata: %{},
+      last_activity: nil
+    }
   end
 
   # ── sessions: union of durable rows + currently-leased live cids ─────────────
@@ -113,7 +120,9 @@ defmodule GenswarmsDashboard.Aggregate do
     assigned = Map.get(pool, :assigned, %{})
     pool_seen = Map.get(pool, :last_seen, %{})
     durable_cids = MapSet.new(rows, & &1.session_id)
-    pool_only = for cid <- Map.keys(assigned), not MapSet.member?(durable_cids, cid), do: fabricate.(cid)
+
+    pool_only =
+      for cid <- Map.keys(assigned), not MapSet.member?(durable_cids, cid), do: fabricate.(cid)
 
     Enum.map(rows ++ pool_only, fn row ->
       cid = row.session_id
@@ -153,13 +162,128 @@ defmodule GenswarmsDashboard.Aggregate do
         %{name: to_string(o.name), type: "object", subtype: subtype(o[:handler])}
       end)
 
-    agents =
-      Enum.map(status.agents, fn a ->
-        %{name: to_string(a.name), type: "agent", state: to_string(a.state)}
-      end)
+    agents = Enum.map(status.agents, &agent_node/1)
 
     objects ++ agents
   end
+
+  defp agent_node(agent) do
+    %{name: to_string(agent.name), type: "agent", state: to_string(agent.state)}
+    |> maybe_put_backend(agent)
+  end
+
+  defp maybe_put_backend(node, agent) do
+    case backend_value(agent) do
+      {:ok, nil} -> node
+      {:ok, backend} -> Map.put(node, :backend, safe_backend(backend))
+      :error -> node
+    end
+  end
+
+  defp backend_value(agent) do
+    cond do
+      Map.has_key?(agent, :backend) -> {:ok, Map.get(agent, :backend)}
+      Map.has_key?(agent, "backend") -> {:ok, Map.get(agent, "backend")}
+      true -> :error
+    end
+  end
+
+  @doc "Project a live backend spec to the public dashboard-safe shape."
+  def safe_backend({:bwrap, opts}) when is_map(opts),
+    do: %{type: "bwrap", opts: safe_backend_opts(opts)}
+
+  def safe_backend(:bwrap), do: %{type: "bwrap", opts: %{}}
+  def safe_backend(backend) when is_atom(backend), do: to_string(backend)
+  def safe_backend(backend) when is_binary(backend), do: backend
+  def safe_backend(other), do: inspect(other)
+
+  @doc "Project a live agent spec to the public dashboard-safe shape."
+  def safe_agent_spec(%{} = spec) do
+    [:name, :model, :backend]
+    |> Enum.reduce(%{}, fn key, acc ->
+      case safe_agent_spec_value(key, get_any(spec, key)) do
+        nil -> acc
+        value -> Map.put(acc, to_string(key), value)
+      end
+    end)
+  end
+
+  def safe_agent_spec(_spec), do: %{}
+
+  @doc "Project LogStore metadata to the public dashboard-safe shape."
+  def safe_event_metadata(%{} = metadata) do
+    metadata
+    |> Enum.reduce(%{}, fn {key, value}, acc ->
+      key = to_string(key)
+
+      if safe_metadata_key?(key) do
+        case safe_public_value(value) do
+          nil -> acc
+          value -> Map.put(acc, key, value)
+        end
+      else
+        acc
+      end
+    end)
+  end
+
+  def safe_event_metadata(_metadata), do: %{}
+
+  defp safe_agent_spec_value(:backend, nil), do: nil
+
+  defp safe_agent_spec_value(:backend, backend),
+    do: backend |> safe_backend() |> stringify_public_keys()
+
+  defp safe_agent_spec_value(_key, value), do: safe_public_value(value)
+
+  defp get_any(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
+
+  defp safe_metadata_key?(key),
+    do: key in ~w(action agent from kind reason source slot state status to type)
+
+  defp safe_public_value(value) when is_atom(value) and value not in [nil, true, false],
+    do: to_string(value)
+
+  defp safe_public_value(value) when is_binary(value) do
+    if unsafe_public_string?(value), do: nil, else: value
+  end
+
+  defp safe_public_value(value) when is_boolean(value), do: value
+  defp safe_public_value(value) when is_integer(value), do: value
+  defp safe_public_value(value) when is_float(value), do: value
+  defp safe_public_value(_value), do: nil
+
+  defp unsafe_public_string?(value) do
+    String.contains?(value, ["/", "://", "sk-", "Bearer ", "tg:"]) or
+      Regex.match?(~r/0x[0-9a-fA-F]{40}/, value)
+  end
+
+  defp stringify_public_keys(%{} = map) do
+    Map.new(map, fn {key, value} -> {to_string(key), stringify_public_keys(value)} end)
+  end
+
+  defp stringify_public_keys(value), do: value
+
+  # Backend specs can carry host paths or credentials. The dashboard only needs
+  # the resource caps that explain bwrap pool behavior.
+  defp safe_backend_opts(opts) do
+    opts
+    |> Map.take([
+      :memory_limit,
+      :cpu_shares,
+      :tasks_max,
+      "memory_limit",
+      "cpu_shares",
+      "tasks_max"
+    ])
+    |> Map.new(fn {key, value} -> {key, safe_backend_value(value)} end)
+  end
+
+  defp safe_backend_value(value) when is_atom(value) and value not in [nil, true, false],
+    do: to_string(value)
+
+  defp safe_backend_value(value) when is_tuple(value), do: inspect(value)
+  defp safe_backend_value(value), do: value
 
   defp subtype(nil), do: nil
   defp subtype(handler), do: handler |> Module.split() |> List.last() |> Macro.underscore()
