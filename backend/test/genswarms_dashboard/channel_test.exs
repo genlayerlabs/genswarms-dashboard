@@ -25,6 +25,7 @@ defmodule GenswarmsDashboard.ChannelTest do
       if Process.alive?(pid) do
         ref = Process.monitor(pid)
         Process.exit(pid, :shutdown)
+
         receive do
           {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
         after
@@ -32,12 +33,17 @@ defmodule GenswarmsDashboard.ChannelTest do
         end
       end
     end)
+
     :ok
   end
 
   setup do
     Application.put_env(:genswarms_dashboard, :stub_status, %{
-      name: "fix", status: :running, started_at: ~U[2026-06-09 10:00:00Z], agents: [], objects: []
+      name: "fix",
+      status: :running,
+      started_at: ~U[2026-06-09 10:00:00Z],
+      agents: [],
+      objects: []
     })
 
     on_exit(fn -> Application.delete_env(:genswarms_dashboard, :stub_status) end)
@@ -72,29 +78,92 @@ defmodule GenswarmsDashboard.ChannelTest do
   end
 
   test "pushes a heartbeat (configurable interval)" do
-    assert_push "heartbeat", %{at: at}, 1_000
+    assert_push("heartbeat", %{at: at}, 1_000)
     assert is_integer(at)
   end
 
   test "relays PubSub events with the engine channel's names/payloads" do
-    Phoenix.PubSub.broadcast(GenswarmsDashboard.TestPubSub, "swarm:fix:status", {:agent_status, "agent_1", :working})
-    assert_push "agent_status", %{agent: "agent_1", state: :working}
+    Phoenix.PubSub.broadcast(
+      GenswarmsDashboard.TestPubSub,
+      "swarm:fix:status",
+      {:agent_status, "agent_1", :working}
+    )
 
-    Phoenix.PubSub.broadcast(GenswarmsDashboard.TestPubSub, "swarm:fix:routing", {:message_routed, %{from: "a"}})
-    assert_push "message_routed", %{from: "a"}
+    assert_push("agent_status", %{agent: "agent_1", state: :working})
 
-    Phoenix.PubSub.broadcast(GenswarmsDashboard.TestPubSub, "swarm:fix", {:agent_added, "fix", :agent_9, %{model: :fast}})
-    assert_push "agent_added", %{name: "agent_9", spec: %{"model" => "fast"}}
+    Phoenix.PubSub.broadcast(
+      GenswarmsDashboard.TestPubSub,
+      "swarm:fix:routing",
+      {:message_routed, %{from: "a"}}
+    )
 
-    Phoenix.PubSub.broadcast(GenswarmsDashboard.TestPubSub, "swarm:fix", {:topology_changed, "fix"})
-    assert_push "topology_changed", %{}
+    assert_push("message_routed", %{from: "a"})
+
+    Phoenix.PubSub.broadcast(
+      GenswarmsDashboard.TestPubSub,
+      "swarm:fix",
+      {:agent_added, "fix", :agent_9, %{model: :fast}}
+    )
+
+    assert_push("agent_added", %{name: "agent_9", spec: %{"model" => "fast"}})
+
+    Phoenix.PubSub.broadcast(
+      GenswarmsDashboard.TestPubSub,
+      "swarm:fix",
+      {:topology_changed, "fix"}
+    )
+
+    assert_push("topology_changed", %{})
 
     Phoenix.PubSub.broadcast(GenswarmsDashboard.TestPubSub, "swarm:fix", {:swarm_stopped, "fix"})
-    assert_push "swarm_stopped", %{}
+    assert_push("swarm_stopped", %{})
+  end
+
+  test "agent_added websocket payload redacts backend secrets and host paths" do
+    spec = %{
+      name: :agent_9,
+      model: :fast,
+      backend:
+        {:bwrap,
+         %{
+           workspace: "/tmp/mm-tg_1_0",
+           api_key: "opaque-router-token",
+           endpoint: "http://127.0.0.1:4318/v1/chat/completions",
+           extra_env: %{"OPENAI_API_KEY" => "sk-upstream", "SUBZEROCLAW_AGENT_NAME" => "agent_9"},
+           memory_limit: "32M",
+           cpu_shares: 1,
+           tasks_max: 50
+         }}
+    }
+
+    Phoenix.PubSub.broadcast(
+      GenswarmsDashboard.TestPubSub,
+      "swarm:fix",
+      {:agent_added, "fix", :agent_9, spec}
+    )
+
+    assert_push(
+      "agent_added",
+      payload = %{
+        name: "agent_9",
+        spec: %{
+          "name" => "agent_9",
+          "model" => "fast",
+          "backend" => %{
+            "type" => "bwrap",
+            "opts" => %{"memory_limit" => "32M", "cpu_shares" => 1, "tasks_max" => 50}
+          }
+        }
+      }
+    )
+
+    refute inspect(payload) =~ "opaque-router-token"
+    refute inspect(payload) =~ "/tmp/mm-tg_1_0"
+    refute inspect(payload) =~ "OPENAI_API_KEY"
   end
 
   test "has no write path: any inbound event is ignored", %{socket: socket} do
     ref = push(socket, "send_task", %{cmd: "rm -rf"})
-    refute_reply ref, :ok, _, 200
+    refute_reply(ref, :ok, _, 200)
   end
 end

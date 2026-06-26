@@ -123,13 +123,23 @@ defmodule GenswarmsDashboard.Channel do
 
   # ── spec serialization (same as the engine channel) ─────────────────────────────
   defp serialize_spec(spec) when is_map(spec),
-    do: Map.new(spec, fn {k, v} -> {to_string(k), serialize_spec_value(v)} end)
+    do:
+      Map.new(spec, fn
+        {k, v} when k in [:backend, "backend"] ->
+          {"backend", GenswarmsDashboard.Aggregate.safe_backend(v) |> serialize_spec_value()}
+
+        {k, v} ->
+          {to_string(k), serialize_spec_value(v)}
+      end)
 
   defp serialize_spec(spec), do: inspect(spec)
 
   defp serialize_spec_value(v) when is_atom(v) and v not in [nil, true, false], do: to_string(v)
   defp serialize_spec_value(v) when is_list(v), do: Enum.map(v, &serialize_spec_value/1)
   defp serialize_spec_value(v) when is_map(v), do: serialize_spec(v)
-  defp serialize_spec_value(v) when is_tuple(v), do: v |> Tuple.to_list() |> Enum.map(&serialize_spec_value/1)
+
+  defp serialize_spec_value(v) when is_tuple(v),
+    do: v |> Tuple.to_list() |> Enum.map(&serialize_spec_value/1)
+
   defp serialize_spec_value(v), do: v
 end

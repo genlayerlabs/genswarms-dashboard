@@ -175,7 +175,7 @@ defmodule GenswarmsDashboard.Aggregate do
   defp maybe_put_backend(node, agent) do
     case backend_value(agent) do
       {:ok, nil} -> node
-      {:ok, backend} -> Map.put(node, :backend, normalize_backend(backend))
+      {:ok, backend} -> Map.put(node, :backend, safe_backend(backend))
       :error -> node
     end
   end
@@ -188,13 +188,14 @@ defmodule GenswarmsDashboard.Aggregate do
     end
   end
 
-  defp normalize_backend({:bwrap, opts}) when is_map(opts),
+  @doc "Project a live backend spec to the public dashboard-safe shape."
+  def safe_backend({:bwrap, opts}) when is_map(opts),
     do: %{type: "bwrap", opts: safe_backend_opts(opts)}
 
-  defp normalize_backend(:bwrap), do: %{type: "bwrap", opts: %{}}
-  defp normalize_backend(backend) when is_atom(backend), do: to_string(backend)
-  defp normalize_backend(backend) when is_binary(backend), do: backend
-  defp normalize_backend(other), do: inspect(other)
+  def safe_backend(:bwrap), do: %{type: "bwrap", opts: %{}}
+  def safe_backend(backend) when is_atom(backend), do: to_string(backend)
+  def safe_backend(backend) when is_binary(backend), do: backend
+  def safe_backend(other), do: inspect(other)
 
   # Backend specs can carry host paths or credentials. The dashboard only needs
   # the resource caps that explain bwrap pool behavior.
