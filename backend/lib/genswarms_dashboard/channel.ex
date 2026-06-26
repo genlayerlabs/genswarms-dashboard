@@ -77,17 +77,21 @@ defmodule GenswarmsDashboard.Channel do
   end
 
   def handle_info({:message_routed, data}, socket) do
-    push(socket, "message_routed", data)
+    push(socket, "message_routed", GenswarmsDashboard.Aggregate.safe_event_metadata(data))
     {:noreply, socket}
   end
 
   def handle_info({:message_broadcast, data}, socket) do
-    push(socket, "message_broadcast", data)
+    push(socket, "message_broadcast", GenswarmsDashboard.Aggregate.safe_event_metadata(data))
     {:noreply, socket}
   end
 
   def handle_info({:agent_added, _swarm, name, spec}, socket) do
-    push(socket, "agent_added", %{name: to_string(name), spec: serialize_spec(spec)})
+    push(socket, "agent_added", %{
+      name: to_string(name),
+      spec: GenswarmsDashboard.Aggregate.safe_agent_spec(spec)
+    })
+
     {:noreply, socket}
   end
 
@@ -101,8 +105,8 @@ defmodule GenswarmsDashboard.Channel do
     {:noreply, socket}
   end
 
-  def handle_info({:agent_output, agent, content}, socket) do
-    push(socket, "agent_output", %{agent: agent, content: content})
+  def handle_info({:agent_output, agent, _content}, socket) do
+    push(socket, "agent_output", %{agent: to_string(agent)})
     {:noreply, socket}
   end
 
@@ -120,26 +124,4 @@ defmodule GenswarmsDashboard.Channel do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp heartbeat_ms, do: GenswarmsDashboard.Config.get(:heartbeat_ms, @heartbeat_ms_default)
-
-  # ── spec serialization (same as the engine channel) ─────────────────────────────
-  defp serialize_spec(spec) when is_map(spec),
-    do:
-      Map.new(spec, fn
-        {k, v} when k in [:backend, "backend"] ->
-          {"backend", GenswarmsDashboard.Aggregate.safe_backend(v) |> serialize_spec_value()}
-
-        {k, v} ->
-          {to_string(k), serialize_spec_value(v)}
-      end)
-
-  defp serialize_spec(spec), do: inspect(spec)
-
-  defp serialize_spec_value(v) when is_atom(v) and v not in [nil, true, false], do: to_string(v)
-  defp serialize_spec_value(v) when is_list(v), do: Enum.map(v, &serialize_spec_value/1)
-  defp serialize_spec_value(v) when is_map(v), do: serialize_spec(v)
-
-  defp serialize_spec_value(v) when is_tuple(v),
-    do: v |> Tuple.to_list() |> Enum.map(&serialize_spec_value/1)
-
-  defp serialize_spec_value(v), do: v
 end

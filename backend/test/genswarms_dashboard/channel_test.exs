@@ -97,7 +97,7 @@ defmodule GenswarmsDashboard.ChannelTest do
       {:message_routed, %{from: "a"}}
     )
 
-    assert_push("message_routed", %{from: "a"})
+    assert_push("message_routed", %{"from" => "a"})
 
     Phoenix.PubSub.broadcast(
       GenswarmsDashboard.TestPubSub,
@@ -119,10 +119,58 @@ defmodule GenswarmsDashboard.ChannelTest do
     assert_push("swarm_stopped", %{})
   end
 
-  test "agent_added websocket payload redacts backend secrets and host paths" do
+  test "websocket route/output relays omit message bodies and unsafe metadata" do
+    Phoenix.PubSub.broadcast(
+      GenswarmsDashboard.TestPubSub,
+      "swarm:fix:routing",
+      {:message_routed,
+       %{
+         from: :tg_ingress,
+         to: :telegram_conversation_runtime,
+         type: :direct,
+         content_preview: "secret user text",
+         conversation_id: "tg:1:0",
+         market_address: "0x1111111111111111111111111111111111111111",
+         reason: "ok"
+       }}
+    )
+
+    assert_push(
+      "message_routed",
+      payload = %{
+        "from" => "tg_ingress",
+        "to" => "telegram_conversation_runtime",
+        "type" => "direct",
+        "reason" => "ok"
+      }
+    )
+
+    refute inspect(payload) =~ "secret user text"
+    refute inspect(payload) =~ "tg:1:0"
+    refute inspect(payload) =~ "0x111111"
+
+    Phoenix.PubSub.broadcast(
+      GenswarmsDashboard.TestPubSub,
+      "swarm:fix:output",
+      {:agent_output, :agent_9, "agent reply with secret"}
+    )
+
+    assert_push("agent_output", %{agent: "agent_9"})
+    refute_push("agent_output", %{content: "agent reply with secret"}, 100)
+  end
+
+  test "agent_added websocket payload redacts backend secrets, skills, and host paths" do
     spec = %{
       name: :agent_9,
       model: :fast,
+      skills: [
+        %{name: "SOUL.md", path: "/Users/albert/szc-workspace/tg:1:0/SOUL.md"},
+        "/tmp/mm-tg_1_0/private.md"
+      ],
+      config: %{
+        workspace: "/Users/albert/szc-workspace/tg:1:0",
+        llm_proxy: %{api_key: "opaque-router-token"}
+      },
       backend:
         {:bwrap,
          %{
@@ -159,6 +207,9 @@ defmodule GenswarmsDashboard.ChannelTest do
 
     refute inspect(payload) =~ "opaque-router-token"
     refute inspect(payload) =~ "/tmp/mm-tg_1_0"
+    refute inspect(payload) =~ "/Users/albert"
+    refute inspect(payload) =~ "skills"
+    refute inspect(payload) =~ "llm_proxy"
     refute inspect(payload) =~ "OPENAI_API_KEY"
   end
 

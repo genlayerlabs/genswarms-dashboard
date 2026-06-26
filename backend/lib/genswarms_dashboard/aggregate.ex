@@ -197,6 +197,73 @@ defmodule GenswarmsDashboard.Aggregate do
   def safe_backend(backend) when is_binary(backend), do: backend
   def safe_backend(other), do: inspect(other)
 
+  @doc "Project a live agent spec to the public dashboard-safe shape."
+  def safe_agent_spec(%{} = spec) do
+    [:name, :model, :backend]
+    |> Enum.reduce(%{}, fn key, acc ->
+      case safe_agent_spec_value(key, get_any(spec, key)) do
+        nil -> acc
+        value -> Map.put(acc, to_string(key), value)
+      end
+    end)
+  end
+
+  def safe_agent_spec(_spec), do: %{}
+
+  @doc "Project LogStore metadata to the public dashboard-safe shape."
+  def safe_event_metadata(%{} = metadata) do
+    metadata
+    |> Enum.reduce(%{}, fn {key, value}, acc ->
+      key = to_string(key)
+
+      if safe_metadata_key?(key) do
+        case safe_public_value(value) do
+          nil -> acc
+          value -> Map.put(acc, key, value)
+        end
+      else
+        acc
+      end
+    end)
+  end
+
+  def safe_event_metadata(_metadata), do: %{}
+
+  defp safe_agent_spec_value(:backend, nil), do: nil
+
+  defp safe_agent_spec_value(:backend, backend),
+    do: backend |> safe_backend() |> stringify_public_keys()
+
+  defp safe_agent_spec_value(_key, value), do: safe_public_value(value)
+
+  defp get_any(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
+
+  defp safe_metadata_key?(key),
+    do: key in ~w(action agent from kind reason source slot state status to type)
+
+  defp safe_public_value(value) when is_atom(value) and value not in [nil, true, false],
+    do: to_string(value)
+
+  defp safe_public_value(value) when is_binary(value) do
+    if unsafe_public_string?(value), do: nil, else: value
+  end
+
+  defp safe_public_value(value) when is_boolean(value), do: value
+  defp safe_public_value(value) when is_integer(value), do: value
+  defp safe_public_value(value) when is_float(value), do: value
+  defp safe_public_value(_value), do: nil
+
+  defp unsafe_public_string?(value) do
+    String.contains?(value, ["/", "://", "sk-", "Bearer ", "tg:"]) or
+      Regex.match?(~r/0x[0-9a-fA-F]{40}/, value)
+  end
+
+  defp stringify_public_keys(%{} = map) do
+    Map.new(map, fn {key, value} -> {to_string(key), stringify_public_keys(value)} end)
+  end
+
+  defp stringify_public_keys(value), do: value
+
   # Backend specs can carry host paths or credentials. The dashboard only needs
   # the resource caps that explain bwrap pool behavior.
   defp safe_backend_opts(opts) do

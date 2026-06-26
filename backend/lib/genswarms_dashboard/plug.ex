@@ -31,7 +31,12 @@ defmodule GenswarmsDashboard.Plug do
 
   # GET /api/swarms/:name/sessions/:session_id/history  → durable transcript (DataSource)
   get "/api/swarms/:_name/sessions/:session_id/history" do
-    max = conn |> fetch_query_params() |> Map.get(:query_params) |> Map.get("max_turns", "40") |> to_int(40)
+    max =
+      conn
+      |> fetch_query_params()
+      |> Map.get(:query_params)
+      |> Map.get("max_turns", "40")
+      |> to_int(40)
 
     case Config.get(:data_source).session_history(session_id, max) do
       {:ok, turns} -> json(conn, 200, %{session_id: session_id, turns: turns, source: "store"})
@@ -63,8 +68,11 @@ defmodule GenswarmsDashboard.Plug do
   # session's leased agent) | "pool" (another live agent) | "unavailable".
   get "/api/swarms/:name/sessions/:session_id/skills" do
     case session_skills(name, session_id) do
-      {:ok, skills, source} -> json(conn, 200, %{session_id: session_id, skills: skills, source: source})
-      :unavailable -> json(conn, 200, %{session_id: session_id, skills: [], source: "unavailable"})
+      {:ok, skills, source} ->
+        json(conn, 200, %{session_id: session_id, skills: skills, source: source})
+
+      :unavailable ->
+        json(conn, 200, %{session_id: session_id, skills: [], source: "unavailable"})
     end
   end
 
@@ -261,8 +269,12 @@ defmodule GenswarmsDashboard.Plug do
   end
 
   # The per-entry session_id from AgentServer logs is the log filename, not a session id.
-  defp rename_log_file(%{"session_id" => f} = e), do: e |> Map.delete("session_id") |> Map.put("log_file", f)
-  defp rename_log_file(%{session_id: f} = e), do: e |> Map.delete(:session_id) |> Map.put(:log_file, f)
+  defp rename_log_file(%{"session_id" => f} = e),
+    do: e |> Map.delete("session_id") |> Map.put("log_file", f)
+
+  defp rename_log_file(%{session_id: f} = e),
+    do: e |> Map.delete(:session_id) |> Map.put(:log_file, f)
+
   defp rename_log_file(e), do: e
 
   # ── events (mirror of the engine's EventsController query/format) ──────────────
@@ -306,7 +318,7 @@ defmodule GenswarmsDashboard.Plug do
       agent: e.agent,
       event_type: e.event_type,
       message: e.message,
-      metadata: e.metadata
+      metadata: Aggregate.safe_event_metadata(e.metadata)
     }
   end
 

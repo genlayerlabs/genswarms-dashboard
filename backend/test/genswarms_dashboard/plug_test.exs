@@ -229,7 +229,17 @@ defmodule GenswarmsDashboard.PlugTest do
         agent: nil,
         event_type: "message_routed",
         message: "m",
-        metadata: %{}
+        metadata: %{
+          reason: "ok",
+          status: :sent,
+          conversation_id: "tg:1:0",
+          market_address: "0x1111111111111111111111111111111111111111",
+          oracle_address: "0x2222222222222222222222222222222222222222",
+          api_key: "sk-secret",
+          workspace: "/Users/albert/szc-workspace/tg:1:0",
+          url: "https://example.invalid/private",
+          amount: 123
+        }
       }
     ])
 
@@ -242,8 +252,21 @@ defmodule GenswarmsDashboard.PlugTest do
     body = Jason.decode!(conn.resp_body)
     assert body["count"] == 1 and body["swarm"] == "fix"
 
-    assert [%{"timestamp" => "2026-06-09T10:00:00Z", "event_type" => "message_routed"}] =
-             body["events"]
+    assert [
+             %{
+               "timestamp" => "2026-06-09T10:00:00Z",
+               "event_type" => "message_routed",
+               "metadata" => %{"reason" => "ok", "status" => "sent"}
+             } = event
+           ] = body["events"]
+
+    refute inspect(event) =~ "tg:1:0"
+    refute inspect(event) =~ "0x111111"
+    refute inspect(event) =~ "0x222222"
+    refute inspect(event) =~ "sk-secret"
+    refute inspect(event) =~ "/Users/albert"
+    refute inspect(event) =~ "example.invalid"
+    refute inspect(event) =~ "123"
 
     opts = Application.get_env(:genswarms_dashboard, :stub_last_events_query)
     assert opts[:limit] == 5
