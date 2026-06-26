@@ -27,10 +27,22 @@ defmodule GenswarmsDashboard.AggregateTest do
 
   test "assembles rows + live overlay: agent/state/last_activity, pool counts, extensions pass through" do
     rows = [
-      %{session_id: "tg:1:0", transport: "telegram", transport_ref: %{chat_id: "1", thread_id: "0"},
-        user: %{handle: "alberto", name: "Alberto C"}, metadata: %{chat_type: "dm"}, last_activity: nil},
-      %{session_id: "tg:-99:0", transport: "telegram", transport_ref: %{chat_id: "-99", thread_id: "0"},
-        user: nil, metadata: %{chat_type: "group"}, last_activity: 1_700_000_000}
+      %{
+        session_id: "tg:1:0",
+        transport: "telegram",
+        transport_ref: %{chat_id: "1", thread_id: "0"},
+        user: %{handle: "alberto", name: "Alberto C"},
+        metadata: %{chat_type: "dm"},
+        last_activity: nil
+      },
+      %{
+        session_id: "tg:-99:0",
+        transport: "telegram",
+        transport_ref: %{chat_id: "-99", thread_id: "0"},
+        user: nil,
+        metadata: %{chat_type: "group"},
+        last_activity: 1_700_000_000
+      }
     ]
 
     pool = %{
@@ -46,7 +58,14 @@ defmodule GenswarmsDashboard.AggregateTest do
     }
 
     topo = [%{from: :ingress, targets: [:roster, :agent_1]}]
-    agg = Aggregate.assemble(status(), topo, data(%{sessions: rows, pool: pool, extensions: extensions}), now())
+
+    agg =
+      Aggregate.assemble(
+        status(),
+        topo,
+        data(%{sessions: rows, pool: pool, extensions: extensions}),
+        now()
+      )
 
     assert agg.swarm == "wingston"
     assert agg.data_source == "host_sql"
@@ -92,9 +111,16 @@ defmodule GenswarmsDashboard.AggregateTest do
 
   test "a pool-only cid uses the host's fabricate override when provided" do
     pool = %{assigned: %{"tg:7:0" => :agent_3}, last_seen: %{}, leased: 1, size: 2048}
+
     fabricate = fn cid ->
-      %{session_id: cid, transport: "telegram", transport_ref: %{chat_id: "7", thread_id: "0"},
-        user: nil, metadata: %{chat_type: "dm"}, last_activity: nil}
+      %{
+        session_id: cid,
+        transport: "telegram",
+        transport_ref: %{chat_id: "7", thread_id: "0"},
+        user: nil,
+        metadata: %{chat_type: "dm"},
+        last_activity: nil
+      }
     end
 
     agg = Aggregate.assemble(status(), [], data(%{pool: pool, fabricate: fabricate}), now())
@@ -129,6 +155,35 @@ defmodule GenswarmsDashboard.AggregateTest do
     assert agg.summary.sessions == 2
   end
 
+  test "agent backend tuple specs are projected to JSON-safe backend maps" do
+    status = %{
+      status()
+      | agents: [
+          %{
+            name: :agent_1,
+            state: :idle,
+            backend: {:bwrap, %{memory_limit: "32M", cpu_shares: 1, tasks_max: 50}}
+          }
+        ]
+    }
+
+    agg = Aggregate.assemble(status, [], data(), now())
+
+    assert [
+             %{
+               name: "agent_1",
+               type: "agent",
+               state: "idle",
+               backend: %{
+                 type: "bwrap",
+                 opts: %{memory_limit: "32M", cpu_shares: 1, tasks_max: 50}
+               }
+             }
+           ] = Enum.filter(agg.nodes, &(&1.type == "agent"))
+
+    assert %{} = Jason.decode!(Jason.encode!(agg))
+  end
+
   test "empty everything yields a well-formed, empty aggregate with the default label" do
     agg = Aggregate.assemble(status(), [], Map.delete(data(), :label), now())
     assert agg.data_source == "genswarms"
@@ -149,7 +204,10 @@ defmodule GenswarmsDashboard.AggregateTest do
       })
 
       Application.put_env(:genswarms_dashboard, :stub_status, %{status() | name: "fix"})
-      Application.put_env(:genswarms_dashboard, :stub_topology, [%{from: :ingress, targets: [:agent_1]}])
+
+      Application.put_env(:genswarms_dashboard, :stub_topology, [
+        %{from: :ingress, targets: [:agent_1]}
+      ])
 
       on_exit(fn ->
         Application.delete_env(:genswarms_dashboard, :config)

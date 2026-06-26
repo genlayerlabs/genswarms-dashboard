@@ -10,8 +10,12 @@ defmodule GenswarmsDashboard.PlugTest do
   defp put_config(over \\ %{}) do
     Config.put(
       Map.merge(
-        %{swarm: "fix", data_source: GenswarmsDashboard.FixtureDataSource,
-          data_source_label: "fixture_sql", token: nil},
+        %{
+          swarm: "fix",
+          data_source: GenswarmsDashboard.FixtureDataSource,
+          data_source_label: "fixture_sql",
+          token: nil
+        },
         over
       )
     )
@@ -22,8 +26,16 @@ defmodule GenswarmsDashboard.PlugTest do
 
     on_exit(fn ->
       Application.delete_env(:genswarms_dashboard, :config)
-      for k <- [:stub_status, :stub_topology, :stub_events, :stub_logs, :stub_skills,
-                :stub_last_events_query, :stub_last_feed_query],
+
+      for k <- [
+            :stub_status,
+            :stub_topology,
+            :stub_events,
+            :stub_logs,
+            :stub_skills,
+            :stub_last_events_query,
+            :stub_last_feed_query
+          ],
           do: Application.delete_env(:genswarms_dashboard, k)
     end)
 
@@ -48,7 +60,13 @@ defmodule GenswarmsDashboard.PlugTest do
 
   test "token configured + WRONG bearer ⇒ 401" do
     put_config(%{token: "s3cret"})
-    conn = call(conn(:get, "/api/swarms/fix/dashboard") |> put_req_header("authorization", "Bearer nope"))
+
+    conn =
+      call(
+        conn(:get, "/api/swarms/fix/dashboard")
+        |> put_req_header("authorization", "Bearer nope")
+      )
+
     assert conn.status == 401
   end
 
@@ -80,7 +98,11 @@ defmodule GenswarmsDashboard.PlugTest do
   # ── routes (new — pinned against fixture + stubs) ───────────────────────────
   test "GET /dashboard returns the aggregate; unknown swarm is 404 swarm_not_found" do
     Application.put_env(:genswarms_dashboard, :stub_status, %{
-      name: "fix", status: :running, started_at: ~U[2026-06-09 10:00:00Z], agents: [], objects: []
+      name: "fix",
+      status: :running,
+      started_at: ~U[2026-06-09 10:00:00Z],
+      agents: [],
+      objects: []
     })
 
     conn = call(conn(:get, "/api/swarms/fix/dashboard"))
@@ -95,10 +117,44 @@ defmodule GenswarmsDashboard.PlugTest do
     assert Jason.decode!(conn.resp_body) == %{"error" => "swarm_not_found"}
   end
 
+  test "GET /dashboard JSON-encodes bwrap backend resource caps from live agent status" do
+    Application.put_env(:genswarms_dashboard, :stub_status, %{
+      name: "fix",
+      status: :running,
+      started_at: ~U[2026-06-09 10:00:00Z],
+      agents: [
+        %{
+          name: :agent_1,
+          state: :idle,
+          backend: {:bwrap, %{memory_limit: "32M", cpu_shares: 1, tasks_max: 50}}
+        }
+      ],
+      objects: []
+    })
+
+    conn = call(conn(:get, "/api/swarms/fix/dashboard"))
+
+    assert conn.status == 200
+
+    assert %{
+             "nodes" => [
+               %{
+                 "name" => "agent_1",
+                 "backend" => %{
+                   "type" => "bwrap",
+                   "opts" => %{"memory_limit" => "32M", "cpu_shares" => 1, "tasks_max" => 50}
+                 }
+               }
+             ]
+           } = Jason.decode!(conn.resp_body)
+  end
+
   test "GET /history serves the durable transcript; unknown session ⇒ source unavailable" do
     conn = call(conn(:get, "/api/swarms/fix/sessions/fix:1/history"))
     assert conn.status == 200
-    assert %{"session_id" => "fix:1", "turns" => [_], "source" => "store"} = Jason.decode!(conn.resp_body)
+
+    assert %{"session_id" => "fix:1", "turns" => [_], "source" => "store"} =
+             Jason.decode!(conn.resp_body)
 
     conn = call(conn(:get, "/api/swarms/fix/sessions/ghost/history"))
     assert %{"turns" => [], "source" => "unavailable"} = Jason.decode!(conn.resp_body)
@@ -131,7 +187,10 @@ defmodule GenswarmsDashboard.PlugTest do
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)
     assert body["source"] == "slot"
-    assert [%{"name" => "browse.md", "content" => "# Browse\nRender pages."} = skill] = body["skills"]
+
+    assert [%{"name" => "browse.md", "content" => "# Browse\nRender pages."} = skill] =
+             body["skills"]
+
     # the engine also returns the host filesystem :path — must never reach the wire
     refute Map.has_key?(skill, "path")
   end
@@ -161,15 +220,30 @@ defmodule GenswarmsDashboard.PlugTest do
 
   test "GET /events queries LogStore with normalized opts and formats events" do
     Application.put_env(:genswarms_dashboard, :stub_events, [
-      %{id: 1, timestamp: ~U[2026-06-09 10:00:00Z], level: :info, category: :routing,
-        swarm: "fix", agent: nil, event_type: "message_routed", message: "m", metadata: %{}}
+      %{
+        id: 1,
+        timestamp: ~U[2026-06-09 10:00:00Z],
+        level: :info,
+        category: :routing,
+        swarm: "fix",
+        agent: nil,
+        event_type: "message_routed",
+        message: "m",
+        metadata: %{}
+      }
     ])
 
-    conn = call(conn(:get, "/api/swarms/fix/events?limit=5&minutes=10&category=router&level=bogus_level"))
+    conn =
+      call(
+        conn(:get, "/api/swarms/fix/events?limit=5&minutes=10&category=router&level=bogus_level")
+      )
+
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)
     assert body["count"] == 1 and body["swarm"] == "fix"
-    assert [%{"timestamp" => "2026-06-09T10:00:00Z", "event_type" => "message_routed"}] = body["events"]
+
+    assert [%{"timestamp" => "2026-06-09T10:00:00Z", "event_type" => "message_routed"}] =
+             body["events"]
 
     opts = Application.get_env(:genswarms_dashboard, :stub_last_events_query)
     assert opts[:limit] == 5
@@ -227,7 +301,12 @@ defmodule GenswarmsDashboard.PlugTest do
   test "GET /events/feed without an events_source configured ⇒ source unavailable, still 200" do
     conn = call(conn(:get, "/api/swarms/fix/events/feed"))
     assert conn.status == 200
-    assert Jason.decode!(conn.resp_body) == %{"events" => [], "seq" => 0, "source" => "unavailable"}
+
+    assert Jason.decode!(conn.resp_body) == %{
+             "events" => [],
+             "seq" => 0,
+             "source" => "unavailable"
+           }
   end
 
   test "GET /events/feed degrades to unavailable when the source returns :unavailable, raises, or exits" do
@@ -239,7 +318,12 @@ defmodule GenswarmsDashboard.PlugTest do
       put_config(%{events_source: source})
       conn = call(conn(:get, "/api/swarms/fix/events/feed"))
       assert conn.status == 200
-      assert Jason.decode!(conn.resp_body) == %{"events" => [], "seq" => 0, "source" => "unavailable"}
+
+      assert Jason.decode!(conn.resp_body) == %{
+               "events" => [],
+               "seq" => 0,
+               "source" => "unavailable"
+             }
     end
   end
 
@@ -250,7 +334,12 @@ defmodule GenswarmsDashboard.PlugTest do
     assert conn.status == 401
     assert conn.halted
 
-    conn = call(conn(:get, "/api/swarms/fix/events/feed") |> put_req_header("authorization", "Bearer s3cret"))
+    conn =
+      call(
+        conn(:get, "/api/swarms/fix/events/feed")
+        |> put_req_header("authorization", "Bearer s3cret")
+      )
+
     assert conn.status == 200
     assert Jason.decode!(conn.resp_body)["source"] == "feed"
   end

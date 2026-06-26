@@ -101,7 +101,14 @@ defmodule GenswarmsDashboard.Aggregate do
   @doc "The fully-defaulted generic session row for a pool-only cid (no host override)."
   @spec default_session(String.t()) :: map()
   def default_session(cid) do
-    %{session_id: cid, transport: "unknown", transport_ref: %{}, user: nil, metadata: %{}, last_activity: nil}
+    %{
+      session_id: cid,
+      transport: "unknown",
+      transport_ref: %{},
+      user: nil,
+      metadata: %{},
+      last_activity: nil
+    }
   end
 
   # ── sessions: union of durable rows + currently-leased live cids ─────────────
@@ -113,7 +120,9 @@ defmodule GenswarmsDashboard.Aggregate do
     assigned = Map.get(pool, :assigned, %{})
     pool_seen = Map.get(pool, :last_seen, %{})
     durable_cids = MapSet.new(rows, & &1.session_id)
-    pool_only = for cid <- Map.keys(assigned), not MapSet.member?(durable_cids, cid), do: fabricate.(cid)
+
+    pool_only =
+      for cid <- Map.keys(assigned), not MapSet.member?(durable_cids, cid), do: fabricate.(cid)
 
     Enum.map(rows ++ pool_only, fn row ->
       cid = row.session_id
@@ -153,13 +162,60 @@ defmodule GenswarmsDashboard.Aggregate do
         %{name: to_string(o.name), type: "object", subtype: subtype(o[:handler])}
       end)
 
-    agents =
-      Enum.map(status.agents, fn a ->
-        %{name: to_string(a.name), type: "agent", state: to_string(a.state)}
-      end)
+    agents = Enum.map(status.agents, &agent_node/1)
 
     objects ++ agents
   end
+
+  defp agent_node(agent) do
+    %{name: to_string(agent.name), type: "agent", state: to_string(agent.state)}
+    |> maybe_put_backend(agent)
+  end
+
+  defp maybe_put_backend(node, agent) do
+    case backend_value(agent) do
+      {:ok, nil} -> node
+      {:ok, backend} -> Map.put(node, :backend, normalize_backend(backend))
+      :error -> node
+    end
+  end
+
+  defp backend_value(agent) do
+    cond do
+      Map.has_key?(agent, :backend) -> {:ok, Map.get(agent, :backend)}
+      Map.has_key?(agent, "backend") -> {:ok, Map.get(agent, "backend")}
+      true -> :error
+    end
+  end
+
+  defp normalize_backend({:bwrap, opts}) when is_map(opts),
+    do: %{type: "bwrap", opts: safe_backend_opts(opts)}
+
+  defp normalize_backend(:bwrap), do: %{type: "bwrap", opts: %{}}
+  defp normalize_backend(backend) when is_atom(backend), do: to_string(backend)
+  defp normalize_backend(backend) when is_binary(backend), do: backend
+  defp normalize_backend(other), do: inspect(other)
+
+  # Backend specs can carry host paths or credentials. The dashboard only needs
+  # the resource caps that explain bwrap pool behavior.
+  defp safe_backend_opts(opts) do
+    opts
+    |> Map.take([
+      :memory_limit,
+      :cpu_shares,
+      :tasks_max,
+      "memory_limit",
+      "cpu_shares",
+      "tasks_max"
+    ])
+    |> Map.new(fn {key, value} -> {key, safe_backend_value(value)} end)
+  end
+
+  defp safe_backend_value(value) when is_atom(value) and value not in [nil, true, false],
+    do: to_string(value)
+
+  defp safe_backend_value(value) when is_tuple(value), do: inspect(value)
+  defp safe_backend_value(value), do: value
 
   defp subtype(nil), do: nil
   defp subtype(handler), do: handler |> Module.split() |> List.last() |> Macro.underscore()
