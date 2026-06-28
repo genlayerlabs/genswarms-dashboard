@@ -106,7 +106,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
               value: num(counter(today, "compactions", kpis[:compactions])),
               sub: nil
             }
-          ] ++ llm_token_tiles(llm)
+          ] ++ snag_tiles(today) ++ llm_token_tiles(llm)
       )
 
     ~H"""
@@ -190,6 +190,17 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       m when is_map(m) and map_size(m) > 0 -> m
       _ -> nil
     end
+  end
+
+  # Agent-snag split (one tile, value = total, sub = the breakdown). max_turns is the
+  # empty/malformed tool-call spiral (the signal the @agent model-pin A/B should move);
+  # api is provider overload (orthogonal). Absent metrics_today ⇒ no tile.
+  defp snag_tiles(nil), do: []
+
+  defp snag_tiles(today) do
+    mt = today["llm_error_max_turns"] || 0
+    api = today["llm_error_api"] || 0
+    [%{label: "Snags", value: num(mt + api), sub: "#{num(mt)} max-turns · #{num(api)} api"}]
   end
 
   defp llm_token_tiles(nil), do: []
