@@ -86,24 +86,27 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     # metrics_today (all four counters are durable now), else the story's
     # since-baseline. Stated once in the meta, so a tile never juxtaposes a
     # durable count against a session count (the "3 browses, 0 replies" nonsense).
+    llm = llm_usage(assigns.snapshot)
+
     assigns =
       assign(assigns,
         today: today,
         window: window_label(today, assigns.story),
-        stats: [
-          %{label: "Replies", value: num(counter(today, "replies", kpis[:replies])), sub: nil},
-          %{
-            label: "Browse ok",
-            value: ok_rate(browse_ok, browse_total),
-            sub: "#{num(browse_ok)}/#{num(browse_total)}"
-          },
-          %{label: "Asks", value: num(counter(today, "asks", kpis[:asks])), sub: nil},
-          %{
-            label: "Compactions",
-            value: num(counter(today, "compactions", kpis[:compactions])),
-            sub: nil
-          }
-        ]
+        stats:
+          [
+            %{label: "Replies", value: num(counter(today, "replies", kpis[:replies])), sub: nil},
+            %{
+              label: "Browse ok",
+              value: ok_rate(browse_ok, browse_total),
+              sub: "#{num(browse_ok)}/#{num(browse_total)}"
+            },
+            %{label: "Asks", value: num(counter(today, "asks", kpis[:asks])), sub: nil},
+            %{
+              label: "Compactions",
+              value: num(counter(today, "compactions", kpis[:compactions])),
+              sub: nil
+            }
+          ] ++ llm_token_tiles(llm)
       )
 
     ~H"""
@@ -179,6 +182,33 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       _ -> nil
     end
   end
+
+  # Today's LLM-proxy cache split, published by the host as extensions["llm_usage"]
+  # (UTC accounting day, matching the budget ledger). Absent ⇒ no tiles, never zeros.
+  defp llm_usage(snap) do
+    case get_in(snap || %{}, ["extensions", "llm_usage"]) do
+      m when is_map(m) and map_size(m) > 0 -> m
+      _ -> nil
+    end
+  end
+
+  defp llm_token_tiles(nil), do: []
+
+  defp llm_token_tiles(llm) do
+    cached = llm["cached_tokens"] || 0
+    fresh = llm["non_cached_tokens"] || 0
+    prompt = llm["prompt_tokens"] || 0
+
+    [
+      %{label: "Cached tok", value: num(cached), sub: cache_rate(cached, prompt)},
+      %{label: "Fresh tok", value: num(fresh), sub: nil}
+    ]
+  end
+
+  defp cache_rate(cached, prompt) when is_number(cached) and is_number(prompt) and prompt > 0,
+    do: "#{round(cached * 100 / prompt)}% of prompt"
+
+  defp cache_rate(_, _), do: nil
 
   defp since_label(%{baseline_at: %DateTime{} = dt}),
     do: "since #{Calendar.strftime(dt, "%H:%M")}"
