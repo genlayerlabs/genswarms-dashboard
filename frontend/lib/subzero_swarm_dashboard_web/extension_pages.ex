@@ -151,8 +151,8 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
   defp normalize_pages(pages) when is_list(pages) do
     pages
-    |> Enum.map(&normalize_page/1)
-    |> Enum.reject(&is_nil/1)
+    |> Stream.map(&normalize_page/1)
+    |> Stream.reject(&is_nil/1)
     |> Enum.take(@max_pages)
   end
 
@@ -180,15 +180,15 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   defp normalize_icon(_), do: "hero-puzzle-piece"
 
   defp sections(%{"sections" => sections}) when is_list(sections),
-    do: sections |> Enum.filter(&is_map/1) |> Enum.take(@max_sections)
+    do: sections |> Stream.filter(&is_map/1) |> Enum.take(@max_sections)
 
   defp sections(_), do: []
 
   defp metric_items(items) when is_list(items) do
     items
-    |> Enum.filter(&is_map/1)
-    |> Enum.filter(&(is_binary(&1["label"]) and Map.has_key?(&1, "value")))
-    |> Enum.map(&normalize_metric_item/1)
+    |> Stream.filter(&is_map/1)
+    |> Stream.filter(&(is_binary(&1["label"]) and Map.has_key?(&1, "value")))
+    |> Stream.map(&normalize_metric_item/1)
     |> Enum.take(@max_metric_items)
   end
 
@@ -205,9 +205,9 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
   defp columns(cols) when is_list(cols) do
     cols
-    |> Enum.filter(&is_map/1)
-    |> Enum.filter(&(is_binary(&1["key"]) and is_binary(&1["label"])))
-    |> Enum.map(&normalize_column/1)
+    |> Stream.filter(&is_map/1)
+    |> Stream.filter(&(is_binary(&1["key"]) and is_binary(&1["label"])))
+    |> Stream.map(&normalize_column/1)
     |> Enum.take(@max_columns)
   end
 
@@ -222,7 +222,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     }
   end
 
-  defp rows(rows) when is_list(rows), do: rows |> Enum.filter(&is_map/1) |> Enum.take(@max_rows)
+  defp rows(rows) when is_list(rows), do: rows |> Stream.filter(&is_map/1) |> Enum.take(@max_rows)
   defp rows(_), do: []
 
   defp display(nil), do: nil
