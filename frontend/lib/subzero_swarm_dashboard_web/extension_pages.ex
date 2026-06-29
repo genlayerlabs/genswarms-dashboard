@@ -6,21 +6,27 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   LiveView code:
 
       %{
-        "id" => "proxy-router",
-        "label" => "Proxy router",
-        "icon" => "hero-shield-check",
+        "id" => "custom-report",
+        "label" => "Custom report",
+        "icon" => "hero-puzzle-piece",
         "sections" => [
-          %{"type" => "metrics", "title" => "Today", "items" => [...]},
-          %{"type" => "table", "title" => "Users", "columns" => [...], "rows" => [...]}
+          %{"type" => "metrics", "title" => "Summary", "items" => [...]},
+          %{"type" => "table", "title" => "Items", "columns" => [...], "rows" => [...]}
         ]
       }
 
   The renderer treats every value as display data. Unknown or malformed blocks are
-  ignored so an extension cannot crash the dashboard shell.
+  ignored, and large collections are capped so an extension cannot overwhelm the
+  dashboard shell.
   """
   use SubzeroSwarmDashboardWeb, :html
 
   @id_re ~r/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+  @max_pages 12
+  @max_sections 12
+  @max_metric_items 8
+  @max_columns 12
+  @max_rows 100
 
   def pages(snapshot) do
     snapshot
@@ -147,6 +153,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     pages
     |> Enum.map(&normalize_page/1)
     |> Enum.reject(&is_nil/1)
+    |> Enum.take(@max_pages)
   end
 
   defp normalize_pages(_), do: []
@@ -173,7 +180,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   defp normalize_icon(_), do: "hero-puzzle-piece"
 
   defp sections(%{"sections" => sections}) when is_list(sections),
-    do: Enum.filter(sections, &is_map/1)
+    do: sections |> Enum.filter(&is_map/1) |> Enum.take(@max_sections)
 
   defp sections(_), do: []
 
@@ -181,27 +188,52 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     items
     |> Enum.filter(&is_map/1)
     |> Enum.filter(&(is_binary(&1["label"]) and Map.has_key?(&1, "value")))
+    |> Enum.map(&normalize_metric_item/1)
+    |> Enum.take(@max_metric_items)
   end
 
   defp metric_items(_), do: []
+
+  defp normalize_metric_item(item) do
+    %{
+      "label" => display_label(item["label"]),
+      "value" => item["value"],
+      "sub" => item["sub"],
+      "tone" => item["tone"]
+    }
+  end
 
   defp columns(cols) when is_list(cols) do
     cols
     |> Enum.filter(&is_map/1)
     |> Enum.filter(&(is_binary(&1["key"]) and is_binary(&1["label"])))
+    |> Enum.map(&normalize_column/1)
+    |> Enum.take(@max_columns)
   end
 
   defp columns(_), do: []
 
-  defp rows(rows) when is_list(rows), do: Enum.filter(rows, &is_map/1)
+  defp normalize_column(col) do
+    %{
+      "key" => String.slice(col["key"], 0, 64),
+      "label" => display_label(col["label"]),
+      "align" => col["align"],
+      "mono" => col["mono"]
+    }
+  end
+
+  defp rows(rows) when is_list(rows), do: rows |> Enum.filter(&is_map/1) |> Enum.take(@max_rows)
   defp rows(_), do: []
 
   defp display(nil), do: nil
   defp display(value) when is_binary(value), do: String.slice(value, 0, 240)
   defp display(value) when is_integer(value), do: num(value)
-  defp display(value) when is_float(value), do: num(value)
+  defp display(value) when is_float(value), do: float(value)
   defp display(value) when is_boolean(value), do: to_string(value)
   defp display(_), do: "—"
+
+  defp display_label(value) when is_binary(value), do: String.slice(value, 0, 40)
+  defp display_label(_), do: ""
 
   defp tone(tone) when tone in ["warn", "error", "primary"], do: tone
   defp tone(_), do: nil
@@ -215,5 +247,13 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
   defp num(n) when is_number(n) do
     n |> trunc() |> Integer.to_string() |> then(&Regex.replace(~r/\B(?=(\d{3})+(?!\d))/, &1, ","))
+  end
+
+  defp float(n) when is_float(n) do
+    if n == trunc(n) do
+      num(n)
+    else
+      :erlang.float_to_binary(n, [:compact, decimals: 6])
+    end
   end
 end

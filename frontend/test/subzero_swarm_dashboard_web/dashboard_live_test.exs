@@ -4,6 +4,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
   import Mox
 
   alias SubzeroSwarmDashboard.{SwarmClientMock, RouterClientMock}
+  alias SubzeroSwarmDashboardWeb.ExtensionPages
 
   setup :set_mox_global
 
@@ -321,41 +322,70 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Usage"
   end
 
-  test "extension pages register nav and render declarative metrics and tables", %{conn: conn} do
+  test "extension page registry validates ids and caps page payloads" do
+    sections = Enum.map(1..13, &%{"type" => "text", "title" => "Section #{&1}"})
+
+    pages =
+      [%{"id" => "../bad", "label" => "Bad"}] ++
+        Enum.map(1..14, fn n ->
+          %{
+            "id" => "page-#{n}",
+            "label" => String.duplicate("L", 80),
+            "sections" => sections
+          }
+        end)
+
+    normalized = ExtensionPages.pages(%{"extensions" => %{"dashboard_pages" => pages}})
+
+    assert length(normalized) == 12
+    refute Enum.any?(normalized, &(&1["id"] == "../bad"))
+    assert hd(normalized)["label"] == String.duplicate("L", 40)
+    assert length(hd(normalized)["sections"]) == 12
+  end
+
+  test "extension pages register nav and render declarative metrics and bounded tables", %{
+    conn: conn
+  } do
+    rows =
+      Enum.map(1..101, fn n ->
+        %{"name" => "item-#{n}", "score" => n / 10}
+      end)
+
     snap =
       put_in(@snap, ["extensions", "dashboard_pages"], [
         %{
-          "id" => "proxy-router",
-          "label" => "Proxy router",
-          "icon" => "hero-shield-check",
+          "id" => "custom-report",
+          "label" => "Custom report",
+          "icon" => "hero-puzzle-piece",
           "sections" => [
             %{
               "type" => "metrics",
-              "title" => "Today",
-              "items" => [%{"label" => "Spend", "value" => "$0.12"}]
+              "title" => "Summary",
+              "items" => [%{"label" => "Ratio", "value" => 0.125}]
             },
             %{
               "type" => "table",
-              "title" => "Users",
+              "title" => "Items",
               "columns" => [
-                %{"key" => "user", "label" => "user"},
-                %{"key" => "spent", "label" => "spent", "align" => "right"}
+                %{"key" => "name", "label" => "name"},
+                %{"key" => "score", "label" => "score", "align" => "right"}
               ],
-              "rows" => [%{"user" => "@alice", "spent" => "$0.12"}]
+              "rows" => rows
             }
           ]
         }
       ])
 
     {:ok, overview, _} = live(conn, "/")
-    assert push_snap(overview, snap) =~ "Proxy router"
+    assert push_snap(overview, snap) =~ "Custom report"
 
-    {:ok, page, _} = live(conn, "/extensions/proxy-router")
+    {:ok, page, _} = live(conn, "/extensions/custom-report")
     html = push_snap(page, snap)
-    assert html =~ "Proxy router"
-    assert html =~ "Spend"
-    assert html =~ "$0.12"
-    assert html =~ "@alice"
+    assert html =~ "Custom report"
+    assert html =~ "Ratio"
+    assert html =~ "0.125"
+    assert html =~ "item-100"
+    refute html =~ "item-101"
   end
 
   defp v2_usage do
