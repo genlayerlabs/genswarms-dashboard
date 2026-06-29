@@ -244,5 +244,26 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       assert html =~ "today"
       refute html =~ ">41<"
     end
+
+    test "renders generic extensions.usage_tiles without dashboard-specific logic", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/usage")
+
+      snap =
+        @snap
+        |> put_in(["extensions", "metrics_today"], %{"replies" => 1})
+        |> put_in(["extensions", "usage_tiles"], [
+          %{"label" => "Queue", "value" => 12, "sub" => "3 blocked"},
+          %{"label" => "Mode", "value" => "guarded"}
+        ])
+
+      html = push_snap(view, snap)
+
+      assert has_element?(view, "#wingston-usage")
+      assert html =~ "Queue"
+      assert html =~ "12"
+      assert html =~ "3 blocked"
+      assert html =~ "Mode"
+      assert html =~ "guarded"
+    end
   end
 end

@@ -86,8 +86,6 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     # metrics_today (all four counters are durable now), else the story's
     # since-baseline. Stated once in the meta, so a tile never juxtaposes a
     # durable count against a session count (the "3 browses, 0 replies" nonsense).
-    llm = llm_usage(assigns.snapshot)
-
     assigns =
       assign(assigns,
         today: today,
@@ -106,7 +104,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
               value: num(counter(today, "compactions", kpis[:compactions])),
               sub: nil
             }
-          ] ++ snag_tiles(today) ++ llm_token_tiles(llm)
+          ] ++ extension_tiles(assigns.snapshot)
       )
 
     ~H"""
@@ -183,43 +181,43 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     end
   end
 
-  # Today's LLM-proxy cache split, published by the host as extensions["llm_usage"]
-  # (UTC accounting day, matching the budget ledger). Absent ⇒ no tiles, never zeros.
-  defp llm_usage(snap) do
-    case get_in(snap || %{}, ["extensions", "llm_usage"]) do
-      m when is_map(m) and map_size(m) > 0 -> m
-      _ -> nil
+  # Host-specific projects can append usage-card tiles without dashboard code changes:
+  # extensions["usage_tiles"] = [%{"label" => "...", "value" => 12, "sub" => "..."}].
+  # Values are display data only; invalid/incomplete entries are ignored.
+  defp extension_tiles(snap) do
+    case get_in(snap || %{}, ["extensions", "usage_tiles"]) do
+      tiles when is_list(tiles) ->
+        tiles
+        |> Enum.map(&normalize_tile/1)
+        |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
     end
   end
 
-  # Agent-snag split (one tile, value = total, sub = the breakdown). max_turns is the
-  # empty/malformed tool-call spiral (the signal the @agent model-pin A/B should move);
-  # api is provider overload (orthogonal). Absent metrics_today ⇒ no tile.
-  defp snag_tiles(nil), do: []
-
-  defp snag_tiles(today) do
-    mt = today["llm_error_max_turns"] || 0
-    api = today["llm_error_api"] || 0
-    [%{label: "Snags", value: num(mt + api), sub: "#{num(mt)} max-turns · #{num(api)} api"}]
+  defp normalize_tile(%{"label" => label, "value" => value} = tile) when is_binary(label) do
+    %{
+      label: label,
+      value: display_value(value),
+      sub: display_sub(Map.get(tile, "sub"))
+    }
   end
 
-  defp llm_token_tiles(nil), do: []
-
-  defp llm_token_tiles(llm) do
-    cached = llm["cached_tokens"] || 0
-    fresh = llm["non_cached_tokens"] || 0
-    prompt = llm["prompt_tokens"] || 0
-
-    [
-      %{label: "Cached tok", value: num(cached), sub: cache_rate(cached, prompt)},
-      %{label: "Fresh tok", value: num(fresh), sub: nil}
-    ]
+  defp normalize_tile(%{label: label, value: value} = tile) when is_binary(label) do
+    %{label: label, value: display_value(value), sub: display_sub(Map.get(tile, :sub))}
   end
 
-  defp cache_rate(cached, prompt) when is_number(cached) and is_number(prompt) and prompt > 0,
-    do: "#{round(cached * 100 / prompt)}% of prompt"
+  defp normalize_tile(_), do: nil
 
-  defp cache_rate(_, _), do: nil
+  defp display_value(value) when is_number(value), do: num(value)
+  defp display_value(value) when is_binary(value), do: value
+  defp display_value(_), do: "—"
+
+  defp display_sub(nil), do: nil
+  defp display_sub(value) when is_binary(value), do: value
+  defp display_sub(value) when is_number(value), do: num(value)
+  defp display_sub(_), do: nil
 
   defp since_label(%{baseline_at: %DateTime{} = dt}),
     do: "since #{Calendar.strftime(dt, "%H:%M")}"
