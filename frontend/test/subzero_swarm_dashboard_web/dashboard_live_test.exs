@@ -70,8 +70,8 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     :ok
   end
 
-  defp push_snap(view) do
-    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, @snap})
+  defp push_snap(view, snap \\ @snap) do
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
     render(view)
   end
 
@@ -319,6 +319,43 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
   test "usage shows unavailable when the router has no usage endpoint", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/usage")
     assert html =~ "Usage"
+  end
+
+  test "extension pages register nav and render declarative metrics and tables", %{conn: conn} do
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "proxy-router",
+          "label" => "Proxy router",
+          "icon" => "hero-shield-check",
+          "sections" => [
+            %{
+              "type" => "metrics",
+              "title" => "Today",
+              "items" => [%{"label" => "Spend", "value" => "$0.12"}]
+            },
+            %{
+              "type" => "table",
+              "title" => "Users",
+              "columns" => [
+                %{"key" => "user", "label" => "user"},
+                %{"key" => "spent", "label" => "spent", "align" => "right"}
+              ],
+              "rows" => [%{"user" => "@alice", "spent" => "$0.12"}]
+            }
+          ]
+        }
+      ])
+
+    {:ok, overview, _} = live(conn, "/")
+    assert push_snap(overview, snap) =~ "Proxy router"
+
+    {:ok, page, _} = live(conn, "/extensions/proxy-router")
+    html = push_snap(page, snap)
+    assert html =~ "Proxy router"
+    assert html =~ "Spend"
+    assert html =~ "$0.12"
+    assert html =~ "@alice"
   end
 
   defp v2_usage do

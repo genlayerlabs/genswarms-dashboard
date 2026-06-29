@@ -156,7 +156,12 @@ defmodule SubzeroSwarmDashboard.EventsFeedTest do
 
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:event, "agent_output", %{}})
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:disconnected, :boom})
-    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:warning, :endpoint_not_colocated})
+
+    Phoenix.PubSub.broadcast(
+      SubzeroSwarmDashboard.PubSub,
+      "feed",
+      {:warning, :endpoint_not_colocated}
+    )
 
     # still alive and well after the catch-all handler
     assert is_map(:sys.get_state(pid))

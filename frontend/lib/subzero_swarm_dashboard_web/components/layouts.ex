@@ -28,6 +28,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   attr :flash, :map, required: true, doc: "the map of flash messages"
   attr :active, :atom, default: nil, doc: "the active nav key"
   attr :swarm, :string, default: nil, doc: "the swarm name shown in the sidebar"
+  attr :snapshot, :any, default: nil, doc: "the latest dashboard snapshot"
   attr :story, :any, default: nil, doc: "the folded story summary (feeds the liveness chip)"
   attr :inspect, :any, default: nil, doc: "the session currently open in the inspector"
   attr :inspect_transcript, :any, default: nil, doc: "lazily-loaded durable transcript"
@@ -35,6 +36,13 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   slot :inner_block, required: true
 
   def app(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :extension_pages,
+        SubzeroSwarmDashboardWeb.ExtensionPages.pages(assigns[:snapshot])
+      )
+
     ~H"""
     <div class="flex min-h-screen">
       <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
@@ -91,6 +99,14 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             label="Usage"
           />
           <.nav_item
+            :for={page <- @extension_pages}
+            active={@active}
+            key={SubzeroSwarmDashboardWeb.ExtensionPages.active_key(page)}
+            href={"/extensions/#{page["id"]}"}
+            icon={page["icon"]}
+            label={page["label"]}
+          />
+          <.nav_item
             active={@active}
             key={:logs}
             href={~p"/logs"}
@@ -144,8 +160,8 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   defp feed_label(%{feed_status: :ok} = story), do: "feed #{story[:feed_age_s] || 0}s ago"
   defp feed_label(_story), do: "feed unavailable"
 
-  attr :active, :atom, default: nil
-  attr :key, :atom, required: true
+  attr :active, :any, default: nil
+  attr :key, :any, required: true
   attr :href, :string, required: true
   attr :label, :string, required: true
   attr :icon, :string, default: nil

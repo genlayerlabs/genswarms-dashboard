@@ -31,6 +31,7 @@ defmodule SubzeroSwarmDashboardWeb.Router do
       live "/sessions/:id", SessionDetailLive
       live "/events", EventsLive
       live "/usage", UsageLive
+      live "/extensions/:id", ExtensionPageLive
       live "/logs", LogsLive
     end
   end

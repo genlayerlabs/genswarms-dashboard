@@ -23,6 +23,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       flash={@flash}
       active={:overview}
       swarm={@swarm}
+      snapshot={@snapshot}
       story={@story}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}

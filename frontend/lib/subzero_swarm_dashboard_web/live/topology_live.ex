@@ -42,6 +42,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       flash={@flash}
       active={:topology}
       swarm={@swarm}
+      snapshot={@snapshot}
       story={@story}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}

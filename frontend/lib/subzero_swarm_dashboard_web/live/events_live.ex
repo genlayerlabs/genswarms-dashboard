@@ -266,6 +266,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
       flash={@flash}
       active={:events}
       swarm={@swarm}
+      snapshot={@snapshot}
       story={@story}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}

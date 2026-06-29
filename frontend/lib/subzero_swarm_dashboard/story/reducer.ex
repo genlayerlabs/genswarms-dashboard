@@ -41,7 +41,10 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     # folded before its first snapshot (ep.user baked as the chat id) picks up the
     # @handle now. Topology renders ep.user raw, so without this it would lag
     # Overview (which re-resolves at render) until the episode closed.
-    %{state | open: Map.new(state.open, fn {cid, ep} -> {cid, %{ep | user: user(state, cid)}} end)}
+    %{
+      state
+      | open: Map.new(state.open, fn {cid, ep} -> {cid, %{ep | user: user(state, cid)}} end)
+    }
   end
 
   # ── kind → fold (lifecycle vocabulary identical to the prototype) ────────────
@@ -117,7 +120,11 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     if is_binary(cid) and Map.has_key?(state.open, cid) do
       state
       |> drop_open(cid)
-      |> issue_row(ev, %{cid: cid, agent: slot, text: "✖ @#{user(state, cid)} dropped — agent torn down"})
+      |> issue_row(ev, %{
+        cid: cid,
+        agent: slot,
+        text: "✖ @#{user(state, cid)} dropped — agent torn down"
+      })
     else
       row(state, ev, %{agent: slot, text: "✖ #{slot} torn down"})
     end

@@ -62,6 +62,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
       flash={@flash}
       active={:sessions}
       swarm={@swarm}
+      snapshot={@snapshot}
       story={@story}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}

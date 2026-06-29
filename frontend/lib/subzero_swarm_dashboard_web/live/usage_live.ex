@@ -39,6 +39,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       flash={@flash}
       active={:usage}
       swarm={@swarm}
+      snapshot={@snapshot}
       story={@story}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}
