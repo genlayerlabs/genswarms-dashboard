@@ -20,6 +20,7 @@ defmodule GenswarmsDashboard do
     * `:port` — string or integer, default 4001
     * `:host` — URL host, default "localhost"
     * `:secret_key_base` — ≥64 bytes for stability across restarts; per-boot random if unset
+    * `:dashboard_title` — user-facing dashboard title, default titleized `:swarm`
     * `:data_source_label` — the envelope's `data_source` field, default "genswarms"
     * `:heartbeat_ms` — WS heartbeat interval, default 5000
 
@@ -39,19 +40,26 @@ defmodule GenswarmsDashboard do
       end
 
     port = opts |> Keyword.get(:port, 4001) |> to_int(4001)
+    swarm = Keyword.fetch!(opts, :swarm)
 
     Config.put(%{
-      swarm: Keyword.fetch!(opts, :swarm),
+      swarm: swarm,
       data_source: Keyword.fetch!(opts, :data_source),
       events_source: Keyword.get(opts, :events_source),
       pubsub_server: Keyword.fetch!(opts, :pubsub_server),
       token: token,
       port: port,
+      dashboard_title: dashboard_title(Keyword.get(opts, :dashboard_title), swarm),
       data_source_label: Keyword.get(opts, :data_source_label, "genswarms"),
       heartbeat_ms: Keyword.get(opts, :heartbeat_ms, 5_000)
     })
 
-    Application.put_env(:genswarms_dashboard, GenswarmsDashboard.Endpoint, endpoint_config(opts, token, port))
+    Application.put_env(
+      :genswarms_dashboard,
+      GenswarmsDashboard.Endpoint,
+      endpoint_config(opts, token, port)
+    )
+
     GenswarmsDashboard.Endpoint.start_link([])
   end
 
@@ -92,6 +100,36 @@ defmodule GenswarmsDashboard do
     case Integer.parse(to_string(s)) do
       {n, _} when n > 0 -> n
       _ -> default
+    end
+  end
+
+  defp dashboard_title(title, swarm) do
+    case clean_string(title) do
+      nil -> titleize_swarm(swarm)
+      value -> value
+    end
+  end
+
+  defp clean_string(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      value -> value
+    end
+  end
+
+  defp clean_string(nil), do: nil
+  defp clean_string(value), do: value |> to_string() |> clean_string()
+
+  defp titleize_swarm(swarm) do
+    swarm
+    |> to_string()
+    |> String.replace(~r/[-_]+/, " ")
+    |> String.split()
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join(" ")
+    |> case do
+      "" -> "Swarm Console"
+      title -> title
     end
   end
 end

@@ -37,20 +37,28 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
 
   def app(assigns) do
     assigns =
-      assign(
-        assigns,
+      assigns
+      |> assign(
         :extension_pages,
         SubzeroSwarmDashboardWeb.ExtensionPages.pages(assigns[:snapshot])
       )
+      |> assign(:dashboard_title, dashboard_title(assigns[:snapshot], assigns[:swarm]))
 
     ~H"""
     <div class="flex min-h-screen">
       <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
-        <div class="px-2 mb-7 flex items-center gap-2.5">
+        <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
           <img src={~p"/images/logo.svg"} width="30" class="drop-shadow" />
-          <div class="leading-none">
-            <div class="font-display font-extrabold text-lg tracking-tight">SWARM</div>
-            <div class="text-[0.65rem] uppercase tracking-[0.22em] opacity-50 mt-0.5">console</div>
+          <div class="leading-none min-w-0">
+            <div
+              class="font-display font-extrabold text-lg tracking-tight truncate max-w-36"
+              title={@dashboard_title}
+            >
+              {@dashboard_title}
+            </div>
+            <div class="text-[0.65rem] uppercase tracking-[0.22em] opacity-50 mt-0.5">
+              swarm console
+            </div>
           </div>
         </div>
 
@@ -159,6 +167,29 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
 
   defp feed_label(%{feed_status: :ok} = story), do: "feed #{story[:feed_age_s] || 0}s ago"
   defp feed_label(_story), do: "feed unavailable"
+
+  defp dashboard_title(%{"dashboard_title" => title} = snapshot, swarm) when is_binary(title) do
+    case String.trim(title) do
+      "" -> dashboard_title(Map.delete(snapshot, "dashboard_title"), swarm)
+      title -> title
+    end
+  end
+
+  defp dashboard_title(%{"swarm" => swarm}, _swarm), do: titleize_swarm(swarm)
+  defp dashboard_title(_snapshot, swarm), do: titleize_swarm(swarm)
+
+  defp titleize_swarm(swarm) do
+    swarm
+    |> to_string()
+    |> String.replace(~r/[-_]+/, " ")
+    |> String.split()
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join(" ")
+    |> case do
+      "" -> "Swarm Console"
+      title -> title
+    end
+  end
 
   attr :active, :any, default: nil
   attr :key, :any, required: true

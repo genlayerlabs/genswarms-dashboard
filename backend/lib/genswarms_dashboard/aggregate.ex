@@ -1,10 +1,10 @@
 defmodule GenswarmsDashboard.Aggregate do
   @moduledoc """
   Generic, app-agnostic dashboard aggregate. Builds the envelope
-  `%{swarm, status, uptime_s, generated_at, data_source, summary, nodes, edges, sessions,
-  extensions, warnings}` from engine status/topology plus host-provided session rows and
-  extension blocks (`GenswarmsDashboard.DataSource`). The live overlay (active/idle, agent
-  slot, last_activity) comes from the host's `pool_snapshot`.
+  `%{swarm, dashboard_title, status, uptime_s, generated_at, data_source, summary, nodes,
+  edges, sessions, extensions, warnings}` from engine status/topology plus host-provided
+  session rows and extension blocks (`GenswarmsDashboard.DataSource`). The live overlay
+  (active/idle, agent slot, last_activity) comes from the host's `pool_snapshot`.
 
   Knows ZERO transport specifics: session rows pass through with mandatory safe defaults
   (`transport: "unknown"`, `transport_ref: %{}`, `metadata: %{}` — never nil).
@@ -27,6 +27,8 @@ defmodule GenswarmsDashboard.Aggregate do
           extensions: snap.extensions,
           pool: ds.pool_snapshot(swarm_name),
           fabricate: fabricator(ds),
+          dashboard_title:
+            clean_title(Config.get(:dashboard_title)) || titleize_swarm(swarm_name),
           label: Config.get(:data_source_label, @default_label)
         }
 
@@ -80,6 +82,8 @@ defmodule GenswarmsDashboard.Aggregate do
 
     %{
       swarm: status.name,
+      dashboard_title:
+        clean_title(Map.get(data, :dashboard_title)) || titleize_swarm(status.name),
       status: to_string(status.status),
       uptime_s: uptime(status, now),
       generated_at: now,
@@ -154,6 +158,29 @@ defmodule GenswarmsDashboard.Aggregate do
 
   defp uptime(%{started_at: %DateTime{} = t}, now), do: DateTime.diff(now, t)
   defp uptime(_, _), do: nil
+
+  defp clean_title(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      title -> title
+    end
+  end
+
+  defp clean_title(nil), do: nil
+  defp clean_title(value), do: value |> to_string() |> clean_title()
+
+  defp titleize_swarm(swarm) do
+    swarm
+    |> to_string()
+    |> String.replace(~r/[-_]+/, " ")
+    |> String.split()
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join(" ")
+    |> case do
+      "" -> "Swarm Console"
+      title -> title
+    end
+  end
 
   # ── nodes / edges (generic swarm shape, same as the engine aggregate) ────────
   defp classify_nodes(status) do

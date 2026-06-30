@@ -18,12 +18,14 @@ defmodule GenswarmsDashboard.EndpointTest do
         data_source: GenswarmsDashboard.FixtureDataSource,
         events_source: GenswarmsDashboard.FixtureEventsSource,
         pubsub_server: GenswarmsDashboard.TestPubSub,
+        dashboard_title: "",
         token: "",
         port: "4096"
       )
 
     on_exit(fn -> stop_endpoint(pid) end)
     assert GenswarmsDashboard.Config.get(:token) == nil
+    assert GenswarmsDashboard.Config.get(:dashboard_title) == "Fix"
     assert GenswarmsDashboard.Config.get(:events_source) == GenswarmsDashboard.FixtureEventsSource
     assert GenswarmsDashboard.describe() =~ "127.0.0.1:4096"
   end
@@ -43,7 +45,10 @@ defmodule GenswarmsDashboard.EndpointTest do
 
     req = fn path ->
       {:ok, s} = :gen_tcp.connect(~c"127.0.0.1", 4097, [:binary, active: false, packet: :raw])
-      :ok = :gen_tcp.send(s, "GET #{path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+
+      :ok =
+        :gen_tcp.send(s, "GET #{path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+
       {:ok, resp} = :gen_tcp.recv(s, 0, 5_000)
       :gen_tcp.close(s)
       resp
@@ -63,6 +68,7 @@ defmodule GenswarmsDashboard.EndpointTest do
     if Process.alive?(pid) do
       ref = Process.monitor(pid)
       Process.exit(pid, :shutdown)
+
       receive do
         {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
       after

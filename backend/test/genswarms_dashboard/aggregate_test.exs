@@ -20,7 +20,13 @@ defmodule GenswarmsDashboard.AggregateTest do
 
   defp data(over \\ %{}) do
     Map.merge(
-      %{sessions: [], extensions: %{}, pool: empty_pool(), label: "host_sql"},
+      %{
+        sessions: [],
+        extensions: %{},
+        pool: empty_pool(),
+        dashboard_title: "Wingston",
+        label: "host_sql"
+      },
       over
     )
   end
@@ -68,6 +74,7 @@ defmodule GenswarmsDashboard.AggregateTest do
       )
 
     assert agg.swarm == "wingston"
+    assert agg.dashboard_title == "Wingston"
     assert agg.data_source == "host_sql"
     assert agg.uptime_s == 300
     assert agg.summary.agents == 2 and agg.summary.objects == 2
@@ -93,6 +100,18 @@ defmodule GenswarmsDashboard.AggregateTest do
     assert grp.last_activity == 1_700_000_000
 
     assert agg.extensions == extensions
+  end
+
+  test "defaults the dashboard title from the swarm name" do
+    agg =
+      Aggregate.assemble(
+        %{status() | name: "micro-markets"},
+        [],
+        Map.delete(data(), :dashboard_title),
+        now()
+      )
+
+    assert agg.dashboard_title == "Micro Markets"
   end
 
   test "a pool-only cid appears as an active session via the DEFAULT fabricated row" do

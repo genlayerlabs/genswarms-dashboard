@@ -14,11 +14,16 @@ defmodule GoldenContractTest do
       swarm: "fix",
       data_source: GenswarmsDashboard.FixtureDataSource,
       data_source_label: "fixture_sql",
+      dashboard_title: "Fixture Console",
       token: nil
     })
 
     Application.put_env(:genswarms_dashboard, :stub_status, %{
-      name: "fix", status: :running, started_at: ~U[2026-06-09 10:00:00Z], agents: [], objects: []
+      name: "fix",
+      status: :running,
+      started_at: ~U[2026-06-09 10:00:00Z],
+      agents: [],
+      objects: []
     })
 
     on_exit(fn ->
@@ -32,7 +37,9 @@ defmodule GoldenContractTest do
     {:ok, agg} = Aggregate.build("fix")
 
     assert Map.keys(agg) |> Enum.sort() ==
-             ~w(data_source edges extensions generated_at nodes sessions status summary swarm uptime_s warnings)a
+             ~w(dashboard_title data_source edges extensions generated_at nodes sessions status summary swarm uptime_s warnings)a
+
+    assert agg.dashboard_title == "Fixture Console"
 
     assert Map.keys(agg.summary) |> Enum.sort() == ~w(agents objects pool sessions)a
     assert Map.keys(agg.summary.pool) |> Enum.sort() == ~w(leased size)a
@@ -75,7 +82,12 @@ defmodule GoldenContractTest do
     # no events_source configured (the setup map) ⇒ the exact unavailable envelope, still 200
     conn = call.("/api/swarms/fix/events/feed")
     assert conn.status == 200
-    assert Jason.decode!(conn.resp_body) == %{"events" => [], "seq" => 0, "source" => "unavailable"}
+
+    assert Jason.decode!(conn.resp_body) == %{
+             "events" => [],
+             "seq" => 0,
+             "source" => "unavailable"
+           }
 
     Config.put(%{
       swarm: "fix",

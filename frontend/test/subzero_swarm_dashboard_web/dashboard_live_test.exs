@@ -10,6 +10,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
   @snap %{
     "swarm" => "wingston",
+    "dashboard_title" => "Wingston",
     "status" => "running",
     "uptime_s" => 5821,
     "data_source" => "in_process",
@@ -82,6 +83,14 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     html = push_snap(view)
     assert html =~ "in_process"
     assert html =~ "2048"
+  end
+
+  test "layout renders the host-provided dashboard title from the snapshot", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    html = push_snap(view, Map.put(@snap, "dashboard_title", "Wingston Ops"))
+
+    assert html =~ "Wingston Ops"
   end
 
   test "topology mounts and lists nodes in the fallback table", %{conn: conn} do

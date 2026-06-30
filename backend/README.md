@@ -165,7 +165,7 @@ These MUST NOT change — the frontend (`subzero-swarm-dashboard`) reads them. P
 ### Dashboard envelope (`GET .../dashboard`)
 
 ```
-%{swarm, status, uptime_s, generated_at, data_source, warnings: [],
+%{swarm, dashboard_title, status, uptime_s, generated_at, data_source, warnings: [],
   summary: %{agents, objects, sessions, pool: %{leased, size}},
   nodes: [%{name, type, subtype|state}],
   edges: [%{from, to}],
@@ -175,6 +175,7 @@ These MUST NOT change — the frontend (`subzero-swarm-dashboard`) reads them. P
 
 `data_source` is set via the `:data_source_label` key in `GenswarmsDashboard.start/1`
 (config, not a callback); the library defaults it to `"genswarms"` if unset.
+`dashboard_title` is set via `:dashboard_title` and defaults to the titleized swarm name.
 
 ### Events feed envelope (`GET .../events/feed?since=N&limit=M`)
 
@@ -211,6 +212,7 @@ Call `GenswarmsDashboard.start/1` after requiring the library files. Options:
 - `:host` — URL host, default `"localhost"` (URL hint only — the actual bind address is
   controlled by `:token`: loopback without one, `0.0.0.0` with one)
 - `:secret_key_base` — ≥64 bytes for stability across restarts; per-boot random if unset
+- `:dashboard_title` — user-facing dashboard title, default titleized `:swarm`
 - `:data_source_label` — the envelope's `data_source` field, default `"genswarms"`
 - `:heartbeat_ms` — WS heartbeat interval, default `5000`
 
@@ -219,6 +221,7 @@ Example (wingston):
 ```elixir
 GenswarmsDashboard.start(
   swarm:             "wingston",
+  dashboard_title:   "Wingston",
   data_source:       Wingston.DashboardSource,
   data_source_label: "host_sql",
   token:             System.get_env("DASHBOARD_API_TOKEN"),
