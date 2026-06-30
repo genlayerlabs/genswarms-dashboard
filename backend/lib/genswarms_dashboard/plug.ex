@@ -15,6 +15,7 @@ defmodule GenswarmsDashboard.Plug do
 
   alias GenswarmsDashboard.{Aggregate, Config}
 
+  plug(:put_security_headers)
   plug(:put_cors)
   plug(:auth)
   plug(:match)
@@ -125,6 +126,18 @@ defmodule GenswarmsDashboard.Plug do
     conn
     |> put_resp_header("access-control-allow-origin", "*")
     |> put_resp_header("access-control-allow-headers", "authorization, content-type")
+  end
+
+  # Dashboard responses can include live session state and may be authorized with
+  # a query-token fallback for browser tabs. Keep intermediaries and browser caches
+  # from retaining those JSON bodies or token-bearing URLs.
+  defp put_security_headers(conn, _opts) do
+    conn
+    |> put_resp_header("cache-control", "no-store")
+    |> put_resp_header("pragma", "no-cache")
+    |> put_resp_header("x-content-type-options", "nosniff")
+    |> put_resp_header("x-frame-options", "SAMEORIGIN")
+    |> put_resp_header("referrer-policy", "no-referrer")
   end
 
   # No token ⇒ the listener is loopback-only (locality IS the auth). Token ⇒ require it via
