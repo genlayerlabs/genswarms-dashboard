@@ -41,6 +41,40 @@ never a glob like `lib/**/*.ex`.
 
 ---
 
+## As a genswarms object (the packaged form)
+
+Instead of calling `start/1` from a boot script, a swarm can declare the dashboard as
+DATA — an object in its definition, supervised by the engine, torn down deterministically:
+
+```elixir
+objects: [
+  %{
+    name: :dashboard,
+    handler: GenswarmsDashboard.Objects.Dashboard,
+    config: %{
+      swarm: "my-swarm",                     # required
+      port: 4001,
+      token: System.get_env("GENSWARMS_DASHBOARD_TOKEN"),
+      data_source: MyApp.DashboardSource,    # default: GenswarmsDashboard.DataSource.Null
+      events_source: MyApp.EventFeedSource,  # optional
+      pubsub_server: Genswarms.PubSub        # default
+    }
+  }
+]
+```
+
+- Module refs may be atoms (Elixir defs) or strings (JSON IR) — strings resolve via
+  `String.to_existing_atom` (no atom minting; unknown module ⇒ init fails, fail-closed).
+- With no `data_source` the endpoint boots on `DataSource.Null`: overview/topology/
+  events/logs work from engine data alone, sessions list empty — zero host code needed.
+- The object answers `{"action":"status"}` on the topology (listener address, liveness).
+- Limitation: one dashboard object per BEAM (single `Config` slot, global endpoint module).
+
+This is what the swarmidx package (`kind: handler`, `dir: backend`) delivers: the thing a
+`gsp add … --as object:dashboard` overlay names as the object's handler.
+
+---
+
 ## The DataSource contract
 
 Implement `GenswarmsDashboard.DataSource` in the host app and pass the module to

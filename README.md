@@ -24,10 +24,19 @@ SWARM_API_URL=http://127.0.0.1:4001 SWARM_WS_URL=http://127.0.0.1:4001 \
 SWARM_NAME=wingston PORT=4200 mix phx.server
 ```
 
-**Backend** — not started from this repo; the host app vendors it (e.g. as a git
-submodule at `vendor/genswarms-dashboard`) and calls `GenswarmsDashboard.start/1` at
-boot. Vendoring instructions, the pinned require order, and the `DataSource` contract:
-[`backend/README.md`](backend/README.md).
+**Backend** — not started from this repo; two ways to run it inside the host BEAM:
+
+1. **As a genswarms object** (preferred, the swarmidx-packaged form): declare
+   `GenswarmsDashboard.Objects.Dashboard` in the swarm's `objects:` list — the engine
+   supervises it and tears the listener down deterministically. Zero host code needed
+   to boot (`DataSource.Null` default).
+2. **Boot-script**: vendor it (e.g. a git submodule at `vendor/genswarms-dashboard`)
+   and call `GenswarmsDashboard.start/1` at boot, with the pinned require order.
+
+Vendoring instructions, the require order, the object config, and the `DataSource`
+contract: [`backend/README.md`](backend/README.md). The swarmidx package is
+`kind: handler` with `dir: backend` — the frontend is an external client app,
+deliberately not part of the package.
 
 ```sh
 cd backend && mix test   # standalone suite; engine calls are stubbed
