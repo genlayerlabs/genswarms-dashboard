@@ -12,7 +12,8 @@ defmodule SubzeroSwarmDashboard.Application do
         SubzeroSwarmDashboardWeb.Telemetry,
         {DNSCluster,
          query: Application.get_env(:subzero_swarm_dashboard, :dns_cluster_query) || :ignore},
-        {Phoenix.PubSub, name: SubzeroSwarmDashboard.PubSub}
+        {Phoenix.PubSub, name: SubzeroSwarmDashboard.PubSub},
+        SubzeroSwarmDashboard.RouterUsageCache
       ] ++
         feed_children() ++
         [

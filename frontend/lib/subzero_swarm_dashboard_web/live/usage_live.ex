@@ -2,6 +2,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.RouterClient
+  alias SubzeroSwarmDashboard.RouterUsageCache
 
   # Selectable look-back windows → seconds (nil = all recorded). Passed to the
   # router as a unix `since` (the v2 usage endpoint accepts since/until/bucket).
@@ -10,12 +11,23 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: send(self(), :load)
-    {:ok, assign(socket, page_title: "Usage", usage: :loading, range: "all")}
+
+    # Stale-while-revalidate: paint the last good payload for this range
+    # immediately (no :loading flash while the router round-trips — 8s worst
+    # case); the :load fetch replaces it when it lands.
+    {:ok,
+     assign(socket,
+       page_title: "Usage",
+       usage: RouterUsageCache.get("all") || :loading,
+       range: "all"
+     )}
   end
 
   @impl true
   def handle_info(:load, socket) do
-    {:noreply, assign(socket, usage: RouterClient.usage(range_opts(socket.assigns.range)))}
+    result = RouterClient.usage(range_opts(socket.assigns.range))
+    RouterUsageCache.put(socket.assigns.range, result)
+    {:noreply, assign(socket, usage: result)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -23,7 +35,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   @impl true
   def handle_event("range", %{"window" => w}, socket) when is_map_key(@windows, w) do
     send(self(), :load)
-    {:noreply, assign(socket, range: w, usage: :loading)}
+    {:noreply, assign(socket, range: w, usage: RouterUsageCache.get(w) || :loading)}
   end
 
   def handle_event("range", _params, socket), do: {:noreply, socket}
