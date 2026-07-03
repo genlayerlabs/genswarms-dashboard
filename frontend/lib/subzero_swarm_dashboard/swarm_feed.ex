@@ -78,9 +78,6 @@ defmodule SubzeroSwarmDashboard.SwarmFeed do
     {:noreply, state}
   end
 
-  @impl true
-  def handle_call(:current, _from, state), do: {:reply, state.last_snapshot, state}
-
   # Observe live WS events (from the Socket) to feed the silent-empty guard.
   def handle_info({:event, _type, _payload}, state),
     do: {:noreply, %{state | last_event_at: now_ms()}}
@@ -90,6 +87,9 @@ defmodule SubzeroSwarmDashboard.SwarmFeed do
   def handle_info({:disconnected, _}, state), do: {:noreply, state}
   def handle_info({:warning, _}, state), do: {:noreply, state}
   def handle_info(_other, state), do: {:noreply, state}
+
+  @impl true
+  def handle_call(:current, _from, state), do: {:reply, state.last_snapshot, state}
 
   defp maybe_warn_silent(snap, state) do
     now = now_ms()
