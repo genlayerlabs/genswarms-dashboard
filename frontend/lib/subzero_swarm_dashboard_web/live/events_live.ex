@@ -14,8 +14,8 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   # event registry v1 + the synthetic/derived kinds the fold can emit (spec §2/§5.3)
   @kinds ~w(request_open routed spawn_start teardown inbox_full ask browse_dispatch
-            browse_done progress_sent reply_sent reply_failed compaction inbox_dropped
-            stalled feed_gap feed_restart)
+            browse_done browser_dispatch browser_done progress_sent reply_sent reply_failed
+            compaction inbox_dropped stalled feed_gap feed_restart)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -525,7 +525,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   defp row_tone(%{kind: "reply_sent"}), do: "border-success/60"
   defp row_tone(%{kind: k}) when k in ["request_open", "routed"], do: "border-primary/50"
 
-  defp row_tone(%{kind: k}) when k in ["browse_dispatch", "browse_done", "spawn_start", "ask"],
+  defp row_tone(%{kind: k}) when k in ["browse_dispatch", "browse_done", "browser_dispatch", "browser_done", "spawn_start", "ask"],
     do: "border-info/40"
 
   defp row_tone(_row), do: "border-base-300/40"
