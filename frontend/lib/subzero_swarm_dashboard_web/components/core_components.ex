@@ -507,13 +507,14 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   `user` is the dashboard's `session["user"]` map (`%{"handle", "name"}`) or nil.
   """
+  attr :label, :any, default: nil
   attr :user, :any, default: nil
   attr :session_id, :string, default: nil
   attr :size, :atom, default: :md, values: [:sm, :md, :lg]
   attr :class, :any, default: nil
 
   def identity(assigns) do
-    lines = identity_lines(assigns.user, assigns.session_id)
+    lines = identity_lines(assigns.user, assigns.session_id, assigns.label)
 
     size_class =
       case {assigns.size, lines.primary_mono} do
@@ -815,7 +816,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     trimmed = String.trim_leading(content)
 
     cond do
-      # The orchestrator relays the human's Telegram messages — that IS the user.
+      # The orchestrator relays the human's transport messages — that IS the user
+      # (whatever the transport: Telegram, Discord, a web chat…).
       role == "user" and String.starts_with?(trimmed, "[From orchestrator]") ->
         %{kind: :user, ts: ts, text: clean_chat(content)}
 
@@ -916,13 +918,19 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   # ── identity / formatting helpers ───────────────────────────────────────────
 
   @doc false
-  def identity_lines(user, session_id) do
+  def identity_lines(user, session_id, label \\ nil) do
+    # An adapter-provided display label beats everything — the dashboard renders
+    # DATA, it never parses transport dialects out of ids.
+    label = present(label)
     handle = present(user && user["handle"])
     name = present(user && user["name"])
     at = handle && "@#{handle}"
     cid = short_cid(session_id)
 
     cond do
+      label ->
+        %{monogram: initial(label), primary: label, secondary: at || cid, primary_mono: false}
+
       name && handle ->
         %{monogram: initial(name), primary: name, secondary: at, primary_mono: false}
 
@@ -961,9 +969,16 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     s |> String.trim() |> String.first() |> to_string() |> String.upcase()
   end
 
-  # "tg:903489662:0" -> "903489662"
-  defp short_cid("tg:" <> rest), do: rest |> String.split(":") |> List.first()
-  defp short_cid(cid) when is_binary(cid), do: cid
+  # Scheme-prefixed conversation ids ("<scheme>:<id>:<sub>") shorten to the id
+  # segment — transport-agnostic; the dashboard knows NO cid dialect. Adapters
+  # that want prettier names supply a session `label` instead.
+  defp short_cid(cid) when is_binary(cid) do
+    case String.split(cid, ":") do
+      [_scheme, mid | _] when mid != "" -> mid
+      _ -> cid
+    end
+  end
+
   defp short_cid(_), do: nil
 
   defp chat_type(%{"metadata" => %{"chat_type" => t}}) when is_binary(t), do: t

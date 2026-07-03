@@ -127,6 +127,11 @@ transport data override this so pool-only sessions keep a populated `transport` 
 
 ### Generic session-row shape
 
+
+The row's `label` is the ADAPTER-PROVIDED display name (a handle, a market
+title, whatever the domain calls a session). The dashboard renders `label` when
+present and falls back to an opaque short id — it never parses transport
+dialects (`tg:…`-style) out of ids; that knowledge belongs to the adapter.
 The library works for a swarm with no Telegram transport at all. The aggregate fills any
 key the `DataSource` omits, and replaces explicit `nil` for the never-nil keys:
 
@@ -297,3 +302,25 @@ Engine calls (`Genswarms.SwarmManager`, `Genswarms.Routing.Router`,
 `test/support/genswarms_stubs.ex` — no genswarms dependency needed. Tests steer the stubs
 via `Application.put_env/3` under `:genswarms_dashboard`. Because the stubs are global
 Application env, most tests run `async: false`.
+
+---
+
+## The extension contract (schema 1)
+
+Any package/object can contribute summary blocks and WHOLE PAGES to the
+dashboard **without a compile-time dependency on it** — the contract is data:
+
+- A provider exports `dashboard_extension/1` returning
+  `%{"<key>" => summary…, "dashboard_pages" => [page]}` (full page/section
+  schema and caps: `GenswarmsDashboard.Extensions` moduledoc; reference
+  implementation: genswarms-llm-proxy).
+- The HOST's `DataSource.snapshot/1` merges providers with
+  `GenswarmsDashboard.Extensions.collect([ProviderA, ProviderB, ready_map], opts)`
+  — guarded (a missing/raising provider contributes nothing), pages concatenate
+  with first-`id`-wins.
+- Versioning: a page may declare `"schema" => N`; a renderer skips pages newer
+  than it speaks (forward compatibility by omission). Current schema: **1**.
+
+This is how a transport package (e.g. genswarms-telegram) ships its own
+"Conversations" page: it implements the contract however it wants; a swarm
+without that package simply doesn't have the page.

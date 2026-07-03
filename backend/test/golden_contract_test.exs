@@ -46,13 +46,16 @@ defmodule GoldenContractTest do
 
     for session <- agg.sessions do
       assert Map.keys(session) |> Enum.sort() ==
-               ~w(agent last_activity metadata session_id state transport transport_ref user)a
+               ~w(agent label last_activity metadata session_id state transport transport_ref user)a
 
       # the never-nil invariants
       assert is_binary(session.transport)
       assert is_map(session.transport_ref)
       assert is_map(session.metadata)
       assert session.state in ["active", "idle"]
+      # label is the adapter-provided display name (schema-1 generic core):
+      # nil or a non-empty string, NEVER derived by parsing the session id.
+      assert is_nil(session.label) or (is_binary(session.label) and session.label != "")
     end
 
     assert %{} = Jason.decode!(Jason.encode!(agg))
