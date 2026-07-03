@@ -31,6 +31,18 @@ defmodule SubzeroSwarmDashboard.SwarmFeed do
   def topic, do: @topic
   def subscribe, do: PubSub.subscribe(@pubsub, @topic)
 
+  @doc """
+  Last snapshot the poller fetched, or nil before the first successful poll.
+  Lets a freshly mounted LiveView render the full menu + page immediately
+  instead of flashing the empty state for up to one poll interval (3s).
+  Nil-safe when the feed process isn't running (tests, boot races).
+  """
+  def current do
+    GenServer.call(__MODULE__, :current, 1_000)
+  catch
+    :exit, _ -> nil
+  end
+
   @impl true
   def init(_opts) do
     PubSub.subscribe(@pubsub, @topic)
@@ -65,6 +77,9 @@ defmodule SubzeroSwarmDashboard.SwarmFeed do
     Process.send_after(self(), :poll, state.interval)
     {:noreply, state}
   end
+
+  @impl true
+  def handle_call(:current, _from, state), do: {:reply, state.last_snapshot, state}
 
   # Observe live WS events (from the Socket) to feed the silent-empty guard.
   def handle_info({:event, _type, _payload}, state),

@@ -48,6 +48,17 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   @doc "Full story ring, newest first — pulled on demand by the Events page."
   def story_ring, do: GenServer.call(__MODULE__, :story_ring)
 
+  @doc """
+  Current folded story summary — same shape as the `{:story, summary}` broadcast.
+  Lets a freshly mounted LiveView render KPIs/canvas immediately instead of
+  waiting for the next poll tick. Nil-safe when the feed isn't running.
+  """
+  def current_story do
+    GenServer.call(__MODULE__, :current_story, 1_000)
+  catch
+    :exit, _ -> nil
+  end
+
   @doc "Episodes for one cid, newest first — the Session detail REQUESTS section."
   def episodes(cid), do: GenServer.call(__MODULE__, {:episodes, cid})
 
@@ -74,6 +85,8 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
 
   @impl true
   def handle_call(:story_ring, _from, state), do: {:reply, state.story.story, state}
+
+  def handle_call(:current_story, _from, state), do: {:reply, summary(state), state}
 
   def handle_call({:episodes, cid}, _from, state),
     do: {:reply, State.episodes(state.story, cid), state}

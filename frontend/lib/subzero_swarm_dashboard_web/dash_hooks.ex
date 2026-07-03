@@ -18,20 +18,26 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
   def on_mount(:default, _params, _session, socket) do
     swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
-    dashboard_title = dashboard_title(nil, swarm)
 
     if connected?(socket) do
       SwarmFeed.subscribe()
       EventsFeed.subscribe()
     end
 
+    # Seed from the feeds' caches so a fresh mount (page load, refresh, live nav)
+    # renders the full menu + page immediately — without this, every view opened
+    # with nil assigns and flashed the empty state ("Extension unavailable",
+    # incomplete menu) for up to one poll interval (3s).
+    cached_snapshot = SwarmFeed.current()
+    dashboard_title = dashboard_title(cached_snapshot, swarm)
+
     socket =
       socket
-      |> assign_new(:snapshot, fn -> nil end)
-      |> assign_new(:conn_status, fn -> :connecting end)
+      |> assign_new(:snapshot, fn -> cached_snapshot end)
+      |> assign_new(:conn_status, fn -> if(cached_snapshot, do: :connected, else: :connecting) end)
       |> assign_new(:feed_warning, fn -> nil end)
       |> assign_new(:dashboard_title, fn -> dashboard_title end)
-      |> assign_new(:story, fn -> nil end)
+      |> assign_new(:story, fn -> EventsFeed.current_story() end)
       # the shared slide-over inspector (any page can open it via phx-click="inspect")
       |> assign_new(:inspect, fn -> nil end)
       |> assign_new(:inspect_transcript, fn -> nil end)

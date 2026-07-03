@@ -16,6 +16,21 @@ defmodule SubzeroSwarmDashboard.SwarmFeedTest do
     assert_receive {:snapshot, ^snap}, 2_000
   end
 
+  test "current/0 serves the cached last snapshot (mount seed — no empty-state flash)" do
+    snap = %{"swarm" => "wingston", "summary" => %{"agents" => 2}}
+    stub(SwarmClientMock, :dashboard, fn "wingston" -> {:ok, snap} end)
+
+    Phoenix.PubSub.subscribe(SubzeroSwarmDashboard.PubSub, SwarmFeed.topic())
+    start_supervised!(SubzeroSwarmDashboard.SwarmFeed)
+    assert_receive {:snapshot, ^snap}, 2_000
+
+    assert SwarmFeed.current() == snap
+  end
+
+  test "current/0 is nil-safe when the feed isn't running" do
+    assert SwarmFeed.current() == nil
+  end
+
   test "broadcasts :disconnected when the swarm is unreachable" do
     stub(SwarmClientMock, :dashboard, fn _ -> {:error, :econnrefused} end)
 
