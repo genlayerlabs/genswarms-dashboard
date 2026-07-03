@@ -239,6 +239,27 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     issue_row(state, ev, %{cid: ev["cid"], text: "⚠ LLM error (#{ev["class"] || "?"})"})
   end
 
+  # llm-proxy quota block: a user (or the whole service) hit a spending wall —
+  # always an issue row; the reason names which wall
+  defp fold("llm_proxy_block", state, ev) do
+    issue_row(state, ev, %{cid: ev["cid"], text: "⛔ LLM blocked (#{ev["reason"] || "?"} cap)"})
+  end
+
+  # llm-proxy budget store degraded (failing open to the in-memory mirror)
+  defp fold("llm_proxy_degraded", state, ev) do
+    issue_row(state, ev, %{cid: ev["cid"], text: "⚠ LLM budget store degraded (#{ev["path"] || "?"})"})
+  end
+
+  # scheduled job finished: ok-runs fire every few minutes — canvas-level only
+  # (no story row, like typing/chatter); anything else IS the story
+  defp fold("job_run", state, %{"status" => "ok"} = _ev), do: state
+
+  defp fold("job_run", state, ev) do
+    issue_row(state, ev, %{
+      text: "⚠ cron #{ev["name"] || "?"} → #{ev["status"] || "?"}"
+    })
+  end
+
   defp fold("compaction", state, ev) do
     state = bump(state, :compactions)
     row(state, ev, %{text: "☕ compacting context"})

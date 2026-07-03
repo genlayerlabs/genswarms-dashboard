@@ -568,4 +568,36 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       refute Enum.any?(state.story, &(&1.text =~ "queued behind current turn"))
     end
   end
+
+  describe "package incident kinds (registry parity)" do
+    test "llm_proxy_block renders an issue row naming the cap" do
+      state = fold([ev("llm_proxy_block", 1, 100.0, %{"cid" => @cid, "reason" => "budget"})])
+      assert [row] = state.story
+      assert row.issue
+      assert row.text =~ "LLM blocked (budget cap)"
+    end
+
+    test "llm_proxy_degraded renders an issue row naming the path" do
+      state = fold([ev("llm_proxy_degraded", 1, 100.0, %{"cid" => @cid, "path" => "usage_store"})])
+      assert [row] = state.story
+      assert row.issue
+      assert row.text =~ "budget store degraded (usage_store)"
+    end
+
+    test "ok cron runs stay off the story; failures and breaker pauses are issue rows" do
+      ok = fold([ev("job_run", 1, 100.0, %{"name" => "tips", "status" => "ok"})])
+      assert ok.story == []
+
+      bad =
+        fold([
+          ev("job_run", 1, 100.0, %{"name" => "outreach", "status" => "error"}),
+          ev("job_run", 2, 101.0, %{"name" => "outreach", "status" => "breaker_paused"})
+        ])
+
+      texts = Enum.map(bad.story, & &1.text)
+      assert Enum.any?(texts, &(&1 =~ "cron outreach → error"))
+      assert Enum.any?(texts, &(&1 =~ "cron outreach → breaker_paused"))
+      assert Enum.all?(bad.story, & &1.issue)
+    end
+  end
 end
