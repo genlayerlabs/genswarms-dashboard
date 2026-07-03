@@ -60,6 +60,7 @@ defmodule GenswarmsDashboard.Extensions do
     providers
     |> Enum.map(&provider_extension(&1, opts))
     |> Enum.reduce(%{}, &merge/2)
+    |> drop_empty_pages()
   end
 
   defp provider_extension(%{} = ready, _opts), do: ready
@@ -88,6 +89,12 @@ defmodule GenswarmsDashboard.Extensions do
   end
 
   defp merge(_other, acc), do: acc
+  # collect/2 must not MANUFACTURE keys: with zero contributed pages the
+  # extensions map stays exactly what the providers gave (hosts pin
+  # "extensions == %{} when nothing to show" invariants).
+  defp drop_empty_pages(%{"dashboard_pages" => []} = ext), do: Map.delete(ext, "dashboard_pages")
+  defp drop_empty_pages(ext), do: ext
+
 
   defp dedupe_pages(%{"dashboard_pages" => pages} = ext) when is_list(pages) do
     %{ext | "dashboard_pages" => Enum.uniq_by(pages, &page_id/1)}

@@ -36,8 +36,9 @@ defmodule GenswarmsDashboard.ExtensionsTest do
 
   test "a raising, missing, or non-exporting provider contributes nothing (fail-open)" do
     ext = Extensions.collect([RaisingProvider, :definitely_not_a_loaded_module, Enum, %{"k" => %{}}])
-    assert Map.keys(ext) |> Enum.sort() == ["dashboard_pages", "k"]
-    assert ext["dashboard_pages"] == []
+    # collect never MANUFACTURES keys: zero contributed pages => no pages key.
+    assert Map.keys(ext) == ["k"]
+    refute Map.has_key?(ext, "dashboard_pages")
   end
 
   test "schema/0 names the contract version" do
