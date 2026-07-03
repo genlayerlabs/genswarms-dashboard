@@ -410,6 +410,11 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     end
   end
 
+  # Atom-keyed story KPIs only — the reducer still writes :browse_* here, so
+  # there's no legacy/new spelling split at this call site. The durable
+  # browse_*/browser_* overlay (string-keyed metrics_today) is handled in
+  # usage_live.ex's browse_counts/2; mirror that sum here if overview ever
+  # grows its own durable overlay.
   defp browse_rate(k) do
     total = k[:browse_total] || 0
     if total > 0, do: "#{round((k[:browse_ok] || 0) * 100 / total)}% ok", else: "—"

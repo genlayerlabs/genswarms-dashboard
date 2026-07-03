@@ -245,6 +245,23 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       refute html =~ ">41<"
     end
 
+    test "sums legacy browse_* durable counters with the new browser_* spelling", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/usage")
+
+      snap =
+        put_in(@snap, ["extensions", "metrics_today"], %{
+          "browser_ok" => 9,
+          "browser_total" => 10
+        })
+
+      push_snap(view, snap)
+      html = push_story(view, %{})
+
+      assert has_element?(view, "#wingston-usage")
+      assert html =~ "90%"
+      assert html =~ "9/10"
+    end
+
     test "renders generic extensions.usage_tiles without dashboard-specific logic", %{conn: conn} do
       {:ok, view, _} = live(conn, "/usage")
 

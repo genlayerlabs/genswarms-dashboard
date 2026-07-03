@@ -163,12 +163,22 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     end
   end
 
+  # Sums the legacy `browse_*` durable keys with the new `browser_*` spelling
+  # so the count is continuous across the cutover (rows written before the
+  # rename still carry `browse_*`; rows written after carry `browser_*`).
   defp browse_counts(today, kpis) do
-    case {(today || %{})["browse_ok"], (today || %{})["browse_total"]} do
-      {ok, total} when is_number(ok) and is_number(total) -> {ok, total, "today"}
-      _ -> {kpis[:browse_ok] || 0, kpis[:browse_total] || 0, nil}
+    t = today || %{}
+    ok = num0(t["browser_ok"]) + num0(t["browse_ok"])
+    total = num0(t["browser_total"]) + num0(t["browse_total"])
+
+    cond do
+      total > 0 -> {ok, total, "today"}
+      true -> {kpis[:browse_ok] || 0, kpis[:browse_total] || 0, nil}
     end
   end
+
+  defp num0(n) when is_number(n), do: n
+  defp num0(_), do: 0
 
   defp ok_rate(ok, total) when is_number(ok) and is_number(total) and total > 0,
     do: "#{round(ok * 100 / total)}%"
