@@ -208,7 +208,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     ~p"/events?#{params}"
   end
 
-  # nobody types tg:5681202:0 by hand — the dropdown maps @handle → session_id
+  # nobody types a raw scheme-prefixed cid by hand — the dropdown maps label → session_id
   defp user_options(snapshot) do
     for s <- (is_map(snapshot) && snapshot["sessions"]) || [],
         h = get_in(s, ["user", "handle"]),

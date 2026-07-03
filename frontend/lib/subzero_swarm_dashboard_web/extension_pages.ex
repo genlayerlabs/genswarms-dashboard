@@ -157,6 +157,12 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   end
 
   defp normalize_pages(_), do: []
+  # Contract versioning (schema 1): a page declaring a NEWER schema than this
+  # renderer speaks is skipped — forward compatibility by omission, never by
+  # guessing. Absent schema ⇒ 1.
+  @schema 1
+  defp normalize_page(%{"schema" => s}) when is_integer(s) and s > @schema, do: nil
+
 
   defp normalize_page(%{"id" => id, "label" => label} = page)
        when is_binary(id) and is_binary(label) do

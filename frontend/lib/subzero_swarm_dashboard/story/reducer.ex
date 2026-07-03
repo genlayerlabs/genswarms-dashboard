@@ -462,7 +462,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   defp ts(ev, state), do: ev["ts"] || state.now || 0.0
 
-  # Display label for a conversation: its Telegram @handle when the latest
+  # Display label for a conversation: the adapter-provided label/handle when the
   # snapshot knew it (put_users/2), else the raw chat id sliced from the cid —
   # a live session not yet folded into the durable roster still renders.
   defp user(%State{users: users}, cid) do

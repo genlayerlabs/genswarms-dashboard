@@ -106,7 +106,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   phx-value-session_id={s["session_id"]}
                 >
                   <td>
-                    <.identity user={s["user"]} session_id={s["session_id"]} />
+                    <.identity user={s["user"]} session_id={s["session_id"]} label={s["label"]} />
                   </td>
                   <td><.live_dot state={s["state"]} label /></td>
                   <td><.reply_badge status={reply_status(s, @deliveries, @now)} /></td>

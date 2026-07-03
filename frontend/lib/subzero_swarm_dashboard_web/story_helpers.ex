@@ -7,7 +7,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryHelpers do
 
   use SubzeroSwarmDashboardWeb, :verified_routes
 
-  @doc "Session deep link — cids carry colons (tg:<chat>:<thread>), so url-base64."
+  @doc "Session deep link — cids may carry colons (e.g. a transport's <scheme>:<id>:<sub>), so url-base64."
   def session_href(cid), do: ~p"/sessions/#{Base.url_encode64(cid, padding: false)}"
 
   @doc "HH:MM from a DateTime or unix ts — the story honesty-label format."

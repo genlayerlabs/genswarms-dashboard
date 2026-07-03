@@ -107,6 +107,7 @@ defmodule GenswarmsDashboard.Aggregate do
   def default_session(cid) do
     %{
       session_id: cid,
+      label: nil,
       transport: "unknown",
       transport_ref: %{},
       user: nil,

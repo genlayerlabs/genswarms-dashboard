@@ -20,7 +20,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
      )}
   end
 
-  # Session cids are "tg:<chat>:<thread>" — the colons trip Plug.Static (InvalidPathError) when
+  # Session cids may carry colons (scheme-prefixed transport ids) — they trip Plug.Static (InvalidPathError) when
   # used as a raw path segment, so SessionsLive URL-safe-base64-encodes them in the link. Decode
   # here; fall back to the raw value for any link that wasn't encoded.
   defp decode_id(id) do
@@ -76,7 +76,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         </div>
 
         <div class="flex items-center justify-between gap-4 flex-wrap">
-          <.identity user={@session && @session["user"]} session_id={@session_id} size={:lg} />
+          <.identity user={@session && @session["user"]} session_id={@session_id} label={@session && @session["label"]} size={:lg} />
           <.live_dot :if={@session} state={@session["state"]} label />
         </div>
 
