@@ -1,0 +1,18 @@
+{
+  "module": "GenswarmsDashboard.Objects.Dashboard",
+  "files": [
+    "lib/genswarms_dashboard/config.ex",
+    "lib/genswarms_dashboard/data_source.ex",
+    "lib/genswarms_dashboard/data_source/null.ex",
+    "lib/genswarms_dashboard/events_source.ex",
+    "lib/genswarms_dashboard/aggregate.ex",
+    "lib/genswarms_dashboard/extensions.ex",
+    "lib/genswarms_dashboard/error_json.ex",
+    "lib/genswarms_dashboard/plug.ex",
+    "lib/genswarms_dashboard/socket.ex",
+    "lib/genswarms_dashboard/channel.ex",
+    "lib/genswarms_dashboard/endpoint.ex",
+    "lib/genswarms_dashboard.ex",
+    "lib/genswarms_dashboard/objects/dashboard.ex"
+  ]
+}

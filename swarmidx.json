@@ -9,6 +9,7 @@
       "kind": "handler",
       "description": "Read-only observability dashboard for a genswarms swarm, packaged as an object handler (HTTP read-API + WS live feed)",
       "skill": ".claude/skills/genswarms-dashboard-use/SKILL.md",
+      "module": "GenswarmsDashboard.Objects.Dashboard",
       "note": "dir=backend on purpose: the package is what a swarm loads (the object handler + library). The LiveView frontend is an external client app, not slot content — see the README."
     }
   ]
