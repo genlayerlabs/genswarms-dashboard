@@ -198,6 +198,20 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     end
   end
 
+  describe "browser (renamed kind)" do
+    test "browser_dispatch/browser_done park+resume and count identically to legacy" do
+      state =
+        fold([
+          ev("browser_dispatch", 1, 100.0, %{"agent" => @agent, "url" => "https://x"}),
+          ev("browser_done", 2, 103.0, %{"agent" => @agent, "verdict" => "ok"})
+        ])
+
+      assert state.counters.browse_total == 1
+      assert state.counters.browse_ok == 1
+      assert hd(state.story).text =~ "browse ok"
+    end
+  end
+
   describe "queued follow-up" do
     test "merges into the open episode, leg-closes, then closes for real" do
       state =

@@ -145,6 +145,11 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     row(state, ev, %{agent: from, text: "⇄ #{from} asked policy"})
   end
 
+  # Renamed kinds (browse→browser). Delegate to the legacy folds so counters/story
+  # stay identical during the cutover; drop the browse_* heads a release later.
+  defp fold("browser_dispatch", state, ev), do: fold("browse_dispatch", state, ev)
+  defp fold("browser_done", state, ev), do: fold("browse_done", state, ev)
+
   defp fold("browse_dispatch", state, %{"agent" => name} = ev) when is_binary(name) do
     now = ts(ev, state)
 
