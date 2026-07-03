@@ -226,6 +226,19 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     issue_row(state, ev, %{text: "⚠ reply dropped (no target)"})
   end
 
+  # spam-window suppress (DeliveryEffects hook, telegram pkg ≥ 0.3.1): the bot
+  # chose silence — informational row, not an issue (suppression is the guard
+  # working, not a failure)
+  defp fold("reply_suppressed", state, ev) do
+    row(state, ev, %{cid: ev["cid"], text: "🤫 reply suppressed (spam window)"})
+  end
+
+  # agent LLM failure, classified by LlmErrorNotifier (max_turns / api / …)
+  defp fold("llm_error", state, ev) do
+    state = bump(state, :failures)
+    issue_row(state, ev, %{cid: ev["cid"], text: "⚠ LLM error (#{ev["class"] || "?"})"})
+  end
+
   defp fold("compaction", state, ev) do
     state = bump(state, :compactions)
     row(state, ev, %{text: "☕ compacting context"})

@@ -15,7 +15,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   # event registry v1 + the synthetic/derived kinds the fold can emit (spec §2/§5.3)
   @kinds ~w(request_open routed spawn_start teardown inbox_full ask browse_dispatch
             browse_done browser_dispatch browser_done progress_sent reply_sent reply_failed
-            compaction inbox_dropped stalled feed_gap feed_restart)
+            reply_suppressed llm_error compaction inbox_dropped stalled feed_gap feed_restart)
 
   @impl true
   def mount(_params, _session, socket) do
