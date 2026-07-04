@@ -42,6 +42,12 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
       |> assign_new(:inspect, fn -> nil end)
       |> assign_new(:inspect_transcript, fn -> nil end)
       |> assign_new(:inspect_activity, fn -> nil end)
+      # Sensitive-content gate: user conversations are NOT fetched (not merely
+      # hidden) until revealed. Default comes from config; the TranscriptGate
+      # JS hook replays a per-browser localStorage preference on every mount.
+      |> assign_new(:reveal_transcripts, fn ->
+        Application.get_env(:subzero_swarm_dashboard, :reveal_transcripts_default, false)
+      end)
       |> assign(:swarm, swarm)
       |> attach_hook(:dash_feed, :handle_info, &handle_feed/2)
       |> attach_hook(:dash_inspect_evt, :handle_event, &handle_inspect_event/3)
@@ -72,6 +78,37 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   defp handle_inspect_event("inspect_close", _params, socket),
     do: {:halt, assign(socket, inspect: nil, inspect_transcript: nil, inspect_activity: nil)}
 
+  # Sensitive-content gate: flip, persist to the browser (push_event → hook →
+  # localStorage), and — when the inspector sits open on gated placeholders —
+  # fetch the real detail now instead of waiting for the next snapshot tick.
+  defp handle_inspect_event("transcripts_reveal", _params, socket) do
+    socket = socket |> assign(reveal_transcripts: true) |> push_event("transcripts:store", %{show: true})
+
+    if connected?(socket) do
+      if socket.assigns[:inspect],
+        do: send(self(), {:load_inspect_detail, socket.assigns.inspect["session_id"]})
+
+      # pages that lazy-load gated content on :load (session detail) refresh now
+      send(self(), :load)
+    end
+
+    {:halt, socket}
+  end
+
+  defp handle_inspect_event("transcripts_hide", _params, socket) do
+    # re-gate page-owned content (session detail) immediately, not on next tick
+    if connected?(socket), do: send(self(), :load)
+
+    {:halt,
+     socket
+     |> assign(reveal_transcripts: false)
+     |> assign(
+       inspect_transcript: socket.assigns[:inspect] && :hidden,
+       inspect_activity: socket.assigns[:inspect] && :hidden
+     )
+     |> push_event("transcripts:store", %{show: false})}
+  end
+
   # Not an inspector event — let the page's own handle_event run.
   defp handle_inspect_event(_event, _params, socket), do: {:cont, socket}
 
@@ -79,14 +116,19 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   # so the inspector shows everything the dedicated page does. Ignore if the user
   # already moved on (closed it or opened a different session).
   defp handle_inspect_info({:load_inspect_detail, sid}, socket) do
-    swarm = socket.assigns.swarm
-    transcript = SwarmClient.session_history(swarm, sid)
-    activity = SwarmClient.session_logs(swarm, sid)
+    # gate BEFORE the fetch: hidden conversations never leave the swarm API
+    if socket.assigns[:reveal_transcripts] do
+      swarm = socket.assigns.swarm
+      transcript = SwarmClient.session_history(swarm, sid)
+      activity = SwarmClient.session_logs(swarm, sid)
 
-    if socket.assigns[:inspect] && socket.assigns.inspect["session_id"] == sid do
-      {:halt, assign(socket, inspect_transcript: transcript, inspect_activity: activity)}
+      if socket.assigns[:inspect] && socket.assigns.inspect["session_id"] == sid do
+        {:halt, assign(socket, inspect_transcript: transcript, inspect_activity: activity)}
+      else
+        {:halt, socket}
+      end
     else
-      {:halt, socket}
+      {:halt, assign(socket, inspect_transcript: :hidden, inspect_activity: :hidden)}
     end
   end
 
@@ -94,7 +136,8 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   # so it re-fetches every tick; the durable transcript only changes when the
   # session actually moved, so it re-fetches only when the roster row did.
   defp handle_inspect_info({:refresh_inspect, sid, row_changed?}, socket) do
-    if socket.assigns[:inspect] && socket.assigns.inspect["session_id"] == sid do
+    if socket.assigns[:reveal_transcripts] and socket.assigns[:inspect] != nil and
+         socket.assigns.inspect["session_id"] == sid do
       swarm = socket.assigns.swarm
       socket = assign(socket, inspect_activity: SwarmClient.session_logs(swarm, sid))
 

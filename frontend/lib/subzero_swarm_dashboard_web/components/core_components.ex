@@ -656,6 +656,27 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     """
   end
 
+  @doc """
+  The sensitive-content gate card: user conversations were NOT fetched (the gate
+  sits before the API call, so hidden content never reaches this process, the
+  DOM, or view-source). The reveal is per-browser (TranscriptGate hook persists
+  it in localStorage) — this is a shoulder-surfing/default-privacy control; real
+  access control stays at the reverse proxy.
+  """
+  def sensitive_reveal(assigns) do
+    ~H"""
+    <div class="flex flex-col items-start gap-2 py-2">
+      <p class="text-sm opacity-60">
+        <.icon name="hero-eye-slash" class="size-4 align-text-bottom mr-1" />
+        User conversation hidden — sensitive content.
+      </p>
+      <button type="button" phx-click="transcripts_reveal" class="btn btn-outline btn-xs gap-1">
+        <.icon name="hero-eye" class="size-3.5" /> Reveal conversations (this browser)
+      </button>
+    </div>
+    """
+  end
+
   attr :transcript, :any, default: nil
 
   # Full durable transcript — every turn, untruncated, as chat bubbles (mirrors the
@@ -664,7 +685,12 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     assigns = assign(assigns, turns: turns, source: body["source"])
 
     ~H"""
-    <div :if={@source} class="text-xs opacity-50 mb-2">source: {@source}</div>
+    <div class="flex items-center justify-between mb-2">
+      <span :if={@source} class="text-xs opacity-50">source: {@source}</span>
+      <button type="button" phx-click="transcripts_hide" class="btn btn-ghost btn-xs gap-1 opacity-60">
+        <.icon name="hero-eye-slash" class="size-3.5" /> hide
+      </button>
+    </div>
     <div class="space-y-2">
       <div :for={t <- @turns} class={["chat", (t["role"] == "user" && "chat-start") || "chat-end"]}>
         <div class="chat-header text-xs opacity-60">{t["role"]}</div>
@@ -685,6 +711,12 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp inspector_transcript(%{transcript: :loading} = assigns),
     do: ~H"""
     <div class="text-sm opacity-50">loading…</div>
+    """
+
+  # sensitive gate: content was never fetched — offer the per-browser reveal
+  defp inspector_transcript(%{transcript: :hidden} = assigns),
+    do: ~H"""
+    <.sensitive_reveal />
     """
 
   defp inspector_transcript(assigns),
@@ -726,6 +758,11 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   def activity_timeline(%{activity: {:ok, _}} = assigns),
     do: ~H"""
     <div class="text-sm opacity-50">No raw output (slot recycled or never ran).</div>
+    """
+
+  def activity_timeline(%{activity: :hidden} = assigns),
+    do: ~H"""
+    <.sensitive_reveal />
     """
 
   def activity_timeline(%{activity: :loading} = assigns),

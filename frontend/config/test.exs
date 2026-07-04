@@ -6,7 +6,10 @@ config :subzero_swarm_dashboard,
   swarm_client: SubzeroSwarmDashboard.SwarmClientMock,
   router_client: SubzeroSwarmDashboard.RouterClientMock,
   start_feed: false,
-  req_options: [plug: {Req.Test, SubzeroSwarmDashboard.HttpStub}]
+  req_options: [plug: {Req.Test, SubzeroSwarmDashboard.HttpStub}],
+  # content tests assert transcripts; the sensitive gate has its own dedicated
+  # tests that flip this to the (hidden) production default
+  reveal_transcripts_default: true
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.

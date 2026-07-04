@@ -34,12 +34,15 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   def handle_info(:load, socket) do
     swarm = socket.assigns.swarm
     id = socket.assigns.session_id
+    # sensitive gate (DashHooks assign): conversations aren't fetched until
+    # revealed — requests/skills carry no user content and always load
+    reveal? = socket.assigns[:reveal_transcripts]
 
     {:noreply,
      socket
      |> assign(
-       transcript: SwarmClient.session_history(swarm, id),
-       activity: SwarmClient.session_logs(swarm, id),
+       transcript: if(reveal?, do: SwarmClient.session_history(swarm, id), else: :hidden),
+       activity: if(reveal?, do: SwarmClient.session_logs(swarm, id), else: :hidden),
        requests: load_requests(id)
      )
      # skills = the agent's system-prompt source, read from its disk — it only
@@ -199,7 +202,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     assigns = assign(assigns, turns: turns, source: source)
 
     ~H"""
-    <div class="text-xs opacity-60 mb-2">source: {@source}</div>
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-xs opacity-60">source: {@source}</span>
+      <button type="button" phx-click="transcripts_hide" class="btn btn-ghost btn-xs gap-1 opacity-60">
+        <.icon name="hero-eye-slash" class="size-3.5" /> hide
+      </button>
+    </div>
     <div class="space-y-2">
       <div :for={t <- @turns} class={["chat", (t["role"] == "user" && "chat-start") || "chat-end"]}>
         <div class="chat-header text-xs opacity-60">{t["role"]}</div>
@@ -220,6 +228,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   defp transcript(%{transcript: :loading} = assigns) do
     ~H"""
     <div class="text-sm opacity-60">loading…</div>
+    """
+  end
+
+  defp transcript(%{transcript: :hidden} = assigns) do
+    ~H"""
+    <.sensitive_reveal />
     """
   end
 

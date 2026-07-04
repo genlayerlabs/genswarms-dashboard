@@ -46,6 +46,8 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
 
     ~H"""
     <div class="flex min-h-screen">
+      <%!-- replays the per-browser sensitive-content preference on every mount --%>
+      <span id="transcript-gate" phx-hook="TranscriptGate" class="hidden"></span>
       <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
         <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
           <img src={~p"/images/logo.svg"} width="30" class="drop-shadow" alt="" />

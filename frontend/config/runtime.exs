@@ -34,7 +34,9 @@ config :subzero_swarm_dashboard,
   router_api_key: System.get_env("ROUTER_API_KEY"),
   poll_interval_ms: String.to_integer(System.get_env("DASHBOARD_POLL_MS", "3000")),
   events_poll_ms: String.to_integer(System.get_env("DASHBOARD_EVENTS_POLL_MS", "700")),
-  stall_after_ms: String.to_integer(System.get_env("DASHBOARD_STALL_AFTER_MS", "180000"))
+  stall_after_ms: String.to_integer(System.get_env("DASHBOARD_STALL_AFTER_MS", "180000")),
+  # sensitive gate: user transcripts hidden until revealed unless "shown"
+  reveal_transcripts_default: System.get_env("DASHBOARD_TRANSCRIPTS_DEFAULT") == "shown"
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
