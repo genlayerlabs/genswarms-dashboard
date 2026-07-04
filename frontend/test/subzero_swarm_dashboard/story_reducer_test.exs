@@ -439,11 +439,16 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     end
 
     test "a re-armed follow-up leg can stall again" do
+      # a leg is a ROUTED turn landing mid-turn (coalesced same-batch messages
+      # no longer count — they get one comprehensive reply), so the queued
+      # follow-up here carries its own routed event
       state =
         fold(
           [
             ev("request_open", 1, 100.0, %{"cid" => @cid}),
-            ev("request_open", 2, 104.0, %{"cid" => @cid})
+            ev("routed", 2, 100.5, %{"cid" => @cid, "slot" => @agent}),
+            ev("request_open", 3, 104.0, %{"cid" => @cid}),
+            ev("routed", 4, 104.1, %{"cid" => @cid, "slot" => @agent})
           ],
           State.new(stall_after_ms: 5_000)
         )
@@ -452,7 +457,7 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert state.counters.stalled == 1
 
       # leg close re-arms at 104.0 with a fresh stall flag
-      state = fold([ev("reply_sent", 3, 107.0, %{"cid" => @cid, "ok" => true})], state)
+      state = fold([ev("reply_sent", 5, 107.0, %{"cid" => @cid, "ok" => true})], state)
       refute state.open[@cid].stalled
 
       state = Reducer.tick(state, 110.0)
@@ -566,6 +571,37 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
 
       assert Enum.any?(state.story, &(&1.text =~ "queued while spawning"))
       refute Enum.any?(state.story, &(&1.text =~ "queued behind current turn"))
+    end
+  end
+
+  describe "coalesced burst (legs are routed turns, not messages)" do
+    test "a 6-message burst answered by 3 replies leaves nothing open and never stalls" do
+      # exact live sequence 2026-07-04 16:24 (feed seq 3..45): 6 request_open,
+      # 2 routed turns, 3 replies. The old per-message leg counting left
+      # count=3 open → false "stalled — no reply in 180.6s" + a forever-red
+      # In-Flight row after every rapid-fire burst.
+      state =
+        fold([
+          ev("spawn_start", 3, 100.0, %{"cid" => @cid, "slot" => @agent}),
+          ev("request_open", 4, 100.1, %{"cid" => @cid}),
+          ev("routed", 7, 101.0, %{"cid" => @cid, "slot" => @agent}),
+          ev("request_open", 9, 102.0, %{"cid" => @cid}),
+          ev("request_open", 12, 104.0, %{"cid" => @cid}),
+          ev("request_open", 14, 106.0, %{"cid" => @cid}),
+          ev("request_open", 19, 108.0, %{"cid" => @cid}),
+          ev("request_open", 21, 109.0, %{"cid" => @cid}),
+          ev("routed", 23, 109.5, %{"cid" => @cid, "slot" => @agent}),
+          ev("reply_sent", 25, 111.0, %{"cid" => @cid, "ok" => true}),
+          ev("reply_sent", 28, 117.0, %{"cid" => @cid, "ok" => true}),
+          ev("reply_sent", 45, 168.0, %{"cid" => @cid, "ok" => true})
+        ])
+
+      assert state.open == %{}
+      assert state.counters.stalled == 0
+
+      # and the wall-clock stall sweep finds nothing to flag
+      swept = Reducer.tick(state, 999.0)
+      assert swept.counters.stalled == 0
     end
   end
 

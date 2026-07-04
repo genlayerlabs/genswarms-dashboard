@@ -54,8 +54,14 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     state =
       case state.open[cid] do
-        # an open request gets a queued follow-up: merge, don't double-count
-        %{} = ep -> put_open(state, %{ep | count: ep.count + 1, last_open: now})
+        # More messages while a request is open: track recency, but do NOT
+        # count a leg — ingress coalesces a burst into ONE agent turn, and one
+        # reply settles it. Counting per-message made a 6-message burst demand
+        # 6 replies: 3 comprehensive replies left count=3 → false "stalled" +
+        # a forever-red In-Flight row (live 2026-07-04). A leg is a ROUTED
+        # turn while the agent is mid-turn (see fold("routed")), because
+        # that's the unit the sender actually answers.
+        %{} = ep -> put_open(state, %{ep | last_open: now})
         nil -> put_open(state, new_episode(state, cid, now))
       end
 
@@ -73,6 +79,17 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
       if ep && ep.agent == nil,
         do: put_open(state, %{ep | agent: slot}),
         else: state
+
+    # A delivery landing while the agent is MID-TURN (thinking/waiting) is a
+    # genuinely queued turn — the one unit that will get its own reply, so it
+    # counts as a leg for close_episode's re-arm. A delivery to an idle or
+    # still-spawning agent is that episode's FIRST turn, never an extra leg.
+    state =
+      if ep && ag.state in [:thinking, :waiting] do
+        put_open(state, %{state.open[cid] | count: state.open[cid].count + 1})
+      else
+        state
+      end
 
     state =
       if busy?,

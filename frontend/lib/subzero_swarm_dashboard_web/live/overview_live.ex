@@ -358,7 +358,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
     ~H"""
     <div class="text-sm space-y-1">
-      <div><b>{@totals["total_tokens"] || 0}</b> tokens</div>
+      <div><b>{@totals["tokens_total"] || @totals["total_tokens"] || 0}</b> tokens</div>
       <div>{@totals["requests"] || 0} requests · {@totals["errors"] || 0} errors</div>
     </div>
     """
