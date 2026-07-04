@@ -12,7 +12,6 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   alias SubzeroSwarmDashboard.Story.State
 
-  @issue_window_s 86_400
   # A stalled episode this many stall-thresholds old is ABANDONED: the reply is
   # never coming (the stall issue row already told the story), so keeping it in
   # `open` pins a red In-Flight row forever and leaks the map. 10 × the default
@@ -326,7 +325,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   # ── tick passes ───────────────────────────────────────────────────────────────
 
   defp expire_issues(state, now),
-    do: %{state | issues: Enum.reject(state.issues, &(now - &1.ts > @issue_window_s))}
+    do: %{state | issues: Enum.reject(state.issues, &(now - &1.ts > state.issue_window_s))}
 
   defp classify_stalled(state, now) do
     threshold = state.stall_after_ms / 1000

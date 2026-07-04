@@ -161,15 +161,20 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   # Non-feed messages (e.g. a page's own :load_usage) also pass through.
   defp handle_feed(_other, socket), do: {:cont, socket}
 
-  defp dashboard_title(%{"dashboard_title" => title} = snapshot, swarm) when is_binary(title) do
+  @doc """
+  Host-provided title, else a titleized swarm name. Public because `Layouts.app`
+  derives the sidebar title from the same rule (it receives the snapshot as an
+  attr, not this hook's assign).
+  """
+  def dashboard_title(%{"dashboard_title" => title} = snapshot, swarm) when is_binary(title) do
     case String.trim(title) do
       "" -> dashboard_title(Map.delete(snapshot, "dashboard_title"), swarm)
       title -> title
     end
   end
 
-  defp dashboard_title(%{"swarm" => swarm}, _swarm), do: titleize_swarm(swarm)
-  defp dashboard_title(_snapshot, swarm), do: titleize_swarm(swarm)
+  def dashboard_title(%{"swarm" => swarm}, _swarm), do: titleize_swarm(swarm)
+  def dashboard_title(_snapshot, swarm), do: titleize_swarm(swarm)
 
   defp titleize_swarm(swarm) do
     swarm

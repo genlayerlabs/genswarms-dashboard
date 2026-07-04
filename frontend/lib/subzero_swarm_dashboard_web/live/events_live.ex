@@ -503,8 +503,15 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
         </tr>
       </thead>
       <tbody>
-        <tr :for={e <- @events}>
-          <td class="text-xs opacity-60 whitespace-nowrap">{e["timestamp"]}</td>
+        <tr :for={{e, i} <- Enum.with_index(@events)}>
+          <td class="text-xs opacity-60 whitespace-nowrap">
+            <%!-- browser-local like every story row; raw string only if unparseable --%>
+            <%= if unix = iso_unix(e["timestamp"]) do %>
+              <.local_time id={"raw-evt-#{i}-t"} ts={unix} fmt="hms" />
+            <% else %>
+              {e["timestamp"]}
+            <% end %>
+          </td>
           <td><span class={["badge badge-xs", level_class(e["level"])]}>{e["level"]}</span></td>
           <td class="text-xs">{e["category"]}</td>
           <td class="font-mono text-xs">{e["agent"]}</td>
@@ -536,6 +543,15 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     q = String.downcase(q)
     Enum.filter(events, &String.contains?(String.downcase(to_string(&1["message"])), q))
   end
+
+  defp iso_unix(ts) when is_binary(ts) do
+    case DateTime.from_iso8601(ts) do
+      {:ok, dt, _} -> DateTime.to_unix(dt)
+      _ -> nil
+    end
+  end
+
+  defp iso_unix(_), do: nil
 
   defp level_class("error"), do: "badge-error"
   defp level_class("warning"), do: "badge-warning"

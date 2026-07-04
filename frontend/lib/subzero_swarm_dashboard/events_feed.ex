@@ -92,7 +92,9 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
        baseline_at: nil,
        # feed-anchored clock: {ts of the newest folded event, monotonic ms at arrival}
        anchor: nil,
-       last_ok_mono: nil
+       last_ok_mono: nil,
+       # consecutive failed polls — drives the outage log (once) and backoff
+       fails: 0
      }}
   end
 
@@ -112,7 +114,7 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
       |> handle_poll(state)
 
     state = tick_and_broadcast(state)
-    Process.send_after(self(), :poll, state.interval)
+    Process.send_after(self(), :poll, poll_delay(state))
     {:noreply, state}
   end
 
@@ -125,9 +127,18 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   # other "feed" traffic (live WS events, disconnects, warnings) isn't ours to fold.
   def handle_info(_other, state), do: {:noreply, state}
 
-  # the route answers but no events_source is wired host-side (old backend)
+  # Back off while the source is failing (700ms → 10s cap) instead of hammering
+  # a down swarm; the first success resets to the base cadence. Story summaries
+  # still broadcast on every poll, so pages keep their degraded chip honest.
+  defp poll_delay(%{fails: 0, interval: interval}), do: interval
+
+  defp poll_delay(%{fails: n, interval: interval}),
+    do: min(interval * Integer.pow(2, min(n, 4)), 10_000)
+
+  # the route answers but no events_source is wired host-side (old backend) —
+  # a known, persistent condition: back off, but nothing to log
   defp handle_poll({:ok, %{"source" => "unavailable"}}, state),
-    do: %{state | feed_status: :unavailable}
+    do: %{state | feed_status: :unavailable, fails: state.fails + 1}
 
   # first successful poll: baseline — keep the feed's cursor, discard history
   defp handle_poll({:ok, %{"seq" => seq}}, %{cursor: nil} = state) when is_integer(seq) do
@@ -136,7 +147,8 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
       | cursor: seq,
         feed_status: :ok,
         baseline_at: DateTime.utc_now(),
-        last_ok_mono: now_mono()
+        last_ok_mono: now_mono(),
+        fails: 0
     }
   end
 
@@ -147,8 +159,20 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
       else: fold_batch(state, events, seq)
   end
 
-  defp handle_poll({:ok, _malformed}, state), do: %{state | feed_status: :unavailable}
-  defp handle_poll({:error, _reason}, state), do: %{state | feed_status: :unavailable}
+  defp handle_poll({:ok, malformed}, state), do: degrade(state, {:malformed, malformed})
+  defp handle_poll({:error, reason}, state), do: degrade(state, reason)
+
+  # The amber "feed unavailable" chip needs a diagnosable cause: log the reason
+  # ONCE per outage (fails 0 → 1), never per 700ms tick.
+  defp degrade(state, reason) do
+    if state.fails == 0 do
+      Logger.warning(
+        "events feed degraded: #{inspect(reason, limit: 5, printable_limit: 200)}"
+      )
+    end
+
+    %{state | feed_status: :unavailable, fails: state.fails + 1}
+  end
 
   # the feed's cursor went backwards: wingston restarted — start over from its
   # new cursor and reset since-baseline state (counters would lie across reboots)
@@ -162,12 +186,13 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
         feed_status: :ok,
         baseline_at: DateTime.utc_now(),
         anchor: nil,
-        last_ok_mono: now_mono()
+        last_ok_mono: now_mono(),
+        fails: 0
     }
   end
 
   defp fold_batch(state, [], seq),
-    do: %{state | cursor: seq, feed_status: :ok, last_ok_mono: now_mono()}
+    do: %{state | cursor: seq, feed_status: :ok, last_ok_mono: now_mono(), fails: 0}
 
   defp fold_batch(state, [first | _] = events, seq) do
     state =
@@ -199,7 +224,8 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
         cursor: seq,
         feed_status: :ok,
         anchor: anchor,
-        last_ok_mono: now_mono()
+        last_ok_mono: now_mono(),
+        fails: 0
     }
   end
 
@@ -233,6 +259,9 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
       stall_after_ms: Application.get_env(:subzero_swarm_dashboard, :stall_after_ms, 180_000),
       story_max: Application.get_env(:subzero_swarm_dashboard, :story_ring_max, 500),
       issues_max: Application.get_env(:subzero_swarm_dashboard, :issues_ring_max, 200),
+      think_decay_ms: Application.get_env(:subzero_swarm_dashboard, :think_decay_ms, 60_000),
+      wait_decay_ms: Application.get_env(:subzero_swarm_dashboard, :wait_decay_ms, 300_000),
+      issue_window_s: Application.get_env(:subzero_swarm_dashboard, :issue_window_s, 86_400),
       # Seed the clock so an event missing "ts" folded before the first tick
       # can never fall through Reducer.ts/2 to 0.0 (opened_at 0.0 → the next
       # tick computes a ~56-year elapsed and instantly classifies a stall).

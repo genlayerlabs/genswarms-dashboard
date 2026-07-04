@@ -32,4 +32,42 @@ defmodule SubzeroSwarmDashboardWeb.StoryHelpers do
   def duration(s) when is_number(s) and s < 60, do: "#{sec(s)}s"
   def duration(s) when is_number(s), do: "#{div(trunc(s), 60)}m #{rem(trunc(s), 60)}s"
   def duration(_), do: "—"
+
+  @doc ~S(Integer/float with thousands separators — 3862856 → "3,862,856".)
+  def num(n) when is_number(n) do
+    n |> trunc() |> Integer.to_string() |> then(&Regex.replace(~r/\B(?=(\d{3})+(?!\d))/, &1, ","))
+  end
+
+  def num(_), do: "0"
+
+  @doc """
+  A counter's number is only colored when it IS the alarm (nonzero) — the shared
+  rule behind Overview's window panel and the Usage error tiles.
+  """
+  def alarm_tone(n, tone \\ "error")
+  def alarm_tone(n, tone) when is_number(n) and n > 0, do: tone
+  def alarm_tone(_n, _tone), do: nil
+
+  @doc "The host's durable metrics_today extension block, or nil when absent/empty."
+  def metrics_today(snap) do
+    case get_in(snap || %{}, ["extensions", "metrics_today"]) do
+      m when is_map(m) and map_size(m) > 0 -> m
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Join the snapshot's session → user handle (events only carry the cid); falls
+  back to the label the story fold baked in.
+  """
+  def handle_for(snap, cid, fallback) do
+    sessions = (is_map(snap) && snap["sessions"]) || []
+
+    with %{} = s <- Enum.find(sessions, &(&1["session_id"] == cid)),
+         h when is_binary(h) and h != "" <- get_in(s, ["user", "handle"]) do
+      h
+    else
+      _ -> fallback
+    end
+  end
 end

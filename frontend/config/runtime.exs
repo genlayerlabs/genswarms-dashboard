@@ -32,7 +32,9 @@ config :subzero_swarm_dashboard,
   swarm_api_token: System.get_env("SWARM_API_TOKEN"),
   router_usage_url: System.get_env("ROUTER_USAGE_URL"),
   router_api_key: System.get_env("ROUTER_API_KEY"),
-  poll_interval_ms: String.to_integer(System.get_env("DASHBOARD_POLL_MS", "3000"))
+  poll_interval_ms: String.to_integer(System.get_env("DASHBOARD_POLL_MS", "3000")),
+  events_poll_ms: String.to_integer(System.get_env("DASHBOARD_EVENTS_POLL_MS", "700")),
+  stall_after_ms: String.to_integer(System.get_env("DASHBOARD_STALL_AFTER_MS", "180000"))
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.

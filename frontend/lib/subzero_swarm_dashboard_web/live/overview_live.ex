@@ -2,16 +2,27 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.RouterClient
+  alias SubzeroSwarmDashboard.RouterUsageCache
+
+  # The router-usage card refreshes on its own slow pulse — every other card on
+  # this page auto-updates, so a mount-once fetch froze visibly.
+  @usage_refresh_ms 60_000
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: send(self(), :load_usage)
-    {:ok, assign(socket, usage: :loading, page_title: "Overview")}
+
+    # stale-while-revalidate off the same cache the Usage page fills
+    {:ok,
+     assign(socket, usage: RouterUsageCache.get("all") || :loading, page_title: "Overview")}
   end
 
   @impl true
   def handle_info(:load_usage, socket) do
-    {:noreply, assign(socket, usage: RouterClient.usage())}
+    result = RouterClient.usage()
+    RouterUsageCache.put("all", result)
+    Process.send_after(self(), :load_usage, @usage_refresh_ms)
+    {:noreply, assign(socket, usage: result)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -262,10 +273,6 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     """
   end
 
-  # a counter's number is only colored when it IS the alarm (nonzero)
-  defp alarm_tone(n, tone) when is_number(n) and n > 0, do: tone
-  defp alarm_tone(_n, _tone), do: nil
-
   attr :story, :map, required: true
 
   defp issues_panel(assigns) do
@@ -358,8 +365,8 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
     ~H"""
     <div class="text-sm space-y-1">
-      <div><b>{@totals["tokens_total"] || @totals["total_tokens"] || 0}</b> tokens</div>
-      <div>{@totals["requests"] || 0} requests · {@totals["errors"] || 0} errors</div>
+      <div><b>{num(@totals["tokens_total"] || @totals["total_tokens"])}</b> tokens</div>
+      <div>{num(@totals["requests"])} requests · {num(@totals["errors"])} errors</div>
     </div>
     """
   end
@@ -380,25 +387,6 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   defp queue_note(story, agent) do
     q = Enum.find_value(story[:agents] || [], 0, &(&1.name == agent and &1.queue))
     if is_integer(q) and q > 0, do: " (#{q} queued)", else: ""
-  end
-
-  # join the snapshot's session → user handle (events only carry the cid)
-  defp handle_for(snap, cid, fallback) do
-    sessions = (is_map(snap) && snap["sessions"]) || []
-
-    with %{} = s <- Enum.find(sessions, &(&1["session_id"] == cid)),
-         h when is_binary(h) and h != "" <- get_in(s, ["user", "handle"]) do
-      h
-    else
-      _ -> fallback
-    end
-  end
-
-  defp metrics_today(snap) do
-    case get_in(snap || %{}, ["extensions", "metrics_today"]) do
-      %{} = m -> m
-      _ -> nil
-    end
   end
 
   defp today_val(nil, _key), do: nil

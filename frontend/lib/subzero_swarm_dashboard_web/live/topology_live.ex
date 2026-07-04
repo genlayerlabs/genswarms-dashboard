@@ -73,6 +73,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
               class="radial-progress tnum text-[0.6rem]"
               style={"--value:#{@gauge.pct}; --size:2.4rem; --thickness:3px; color:#{@gauge.tone}"}
               role="progressbar"
+              aria-label="pool saturation"
+              aria-valuenow={@gauge.pct}
+              aria-valuemin="0"
+              aria-valuemax="100"
             >
               <span class="text-base-content">{@gauge.leased}/{@gauge.size}</span>
             </div>
@@ -117,12 +121,21 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
               <div class="space-y-1 font-mono text-sm">
                 <div :for={ep <- @in_flight} class="flex items-baseline gap-3">
                   <span class="min-w-32 truncate">
-                    @{ep.user}<span :if={ep.count > 1} class="opacity-50"> ·+{ep.count - 1}</span>
+                    @{handle_for(@snapshot, ep.cid, ep.user)}<span
+                      :if={ep.count > 1}
+                      class="opacity-50"
+                    > ·+{ep.count - 1}</span>
                   </span>
                   <span class="opacity-80">{short(ep.agent) || "routing…"}</span>
                   <span class={activity_tone(ep.activity)}>{ep.activity}</span>
                   <span :if={ep.stalled} class="badge badge-error badge-xs">stalled</span>
-                  <span class="tnum ml-auto opacity-60">{sec(ep.elapsed_s)}s</span>
+                  <span class="tnum ml-auto opacity-60">{duration(ep.elapsed_s)}</span>
+                  <.link
+                    navigate={session_href(ep.cid)}
+                    class="link link-hover text-xs opacity-70 whitespace-nowrap"
+                  >
+                    session
+                  </.link>
                 </div>
               </div>
           <% end %>
@@ -147,7 +160,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
                 :for={n <- @nodes}
                 class={[n["type"] == "agent" && n["session_id"] && "row-press"]}
                 phx-click={n["type"] == "agent" && n["session_id"] && "inspect"}
+                phx-keydown={n["type"] == "agent" && n["session_id"] && "inspect"}
+                phx-key="Enter"
                 phx-value-session_id={n["session_id"]}
+                tabindex={if(n["type"] == "agent" && n["session_id"], do: "0")}
               >
                 <td>
                   <.identity
@@ -212,8 +228,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   defp short(nil), do: nil
   defp short(name), do: String.replace(name, "wingston_agent_", "agent_")
 
+  # thinking = primary everywhere (Overview strip, the legend dot above) —
+  # green is reserved for success/replied
   defp activity_tone("waiting on " <> _), do: "text-warning"
-  defp activity_tone("thinking"), do: "text-success"
+  defp activity_tone("thinking"), do: "text-primary"
   defp activity_tone("spawning"), do: "text-info"
   defp activity_tone(_activity), do: "opacity-60"
 

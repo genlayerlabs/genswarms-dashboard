@@ -7,6 +7,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   # Selectable look-back windows → seconds (nil = all recorded). Passed to the
   # router as a unix `since` (the v2 usage endpoint accepts since/until/bucket).
   @windows %{"1h" => 3_600, "24h" => 86_400, "7d" => 604_800, "all" => nil}
+  # Auto-refresh pulse — this page was fetch-once-per-mount while every
+  # snapshot-driven page auto-updated.
+  @refresh_ms 60_000
 
   @impl true
   def mount(_params, _session, socket) do
@@ -19,15 +22,20 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
      assign(socket,
        page_title: "Usage",
        usage: RouterUsageCache.get("all") || :loading,
-       range: "all"
+       range: "all",
+       usage_timer: nil
      )}
   end
 
   @impl true
   def handle_info(:load, socket) do
+    # a range switch fires :load immediately — cancel the pending pulse so
+    # timers never stack
+    if ref = socket.assigns.usage_timer, do: Process.cancel_timer(ref)
     result = RouterClient.usage(range_opts(socket.assigns.range))
     RouterUsageCache.put(socket.assigns.range, result)
-    {:noreply, assign(socket, usage: result)}
+    timer = Process.send_after(self(), :load, @refresh_ms)
+    {:noreply, assign(socket, usage: result, usage_timer: timer)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -196,13 +204,6 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     do: "#{round(ok * 100 / total)}%"
 
   defp ok_rate(_, _), do: "—"
-
-  defp metrics_today(snap) do
-    case get_in(snap || %{}, ["extensions", "metrics_today"]) do
-      m when is_map(m) and map_size(m) > 0 -> m
-      _ -> nil
-    end
-  end
 
   # Host-specific projects can append usage-card tiles without dashboard code changes:
   # extensions["usage_tiles"] = [%{"label" => "...", "value" => 12, "sub" => "..."}].
@@ -493,11 +494,6 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   # ── formatting / shaping helpers ────────────────────────────────────────────
 
-  # The number is only colored when it IS the alarm (nonzero) — same rule as
-  # Overview's window panel.
-  defp alarm_tone(n) when is_number(n) and n > 0, do: "error"
-  defp alarm_tone(_n), do: nil
-
   # A breakdown map (%{name => stats}) → list sorted by requests desc.
   defp breakdown_rows(map) when is_map(map),
     do: Enum.sort_by(map, fn {_k, s} -> -(s["requests"] || 0) end)
@@ -519,13 +515,6 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp routes_str([]), do: "all"
   defp routes_str(list) when is_list(list) and list != [], do: Enum.join(list, ", ")
   defp routes_str(_), do: "all"
-
-  # Integer/float with thousands separators ("3100000" → "3,100,000").
-  defp num(n) when is_number(n) do
-    n |> trunc() |> Integer.to_string() |> then(&Regex.replace(~r/\B(?=(\d{3})+(?!\d))/, &1, ","))
-  end
-
-  defp num(_), do: "0"
 
   # error_rate / success_rate are 0..1 floats → percent.
   defp pct(r) when is_number(r), do: "#{Float.round(r * 100.0, 2)}%"

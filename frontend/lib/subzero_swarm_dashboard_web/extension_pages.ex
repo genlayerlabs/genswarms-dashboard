@@ -251,10 +251,6 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   defp cell_class(%{"align" => "right"}), do: "tnum"
   defp cell_class(_), do: "break-words"
 
-  defp num(n) when is_number(n) do
-    n |> trunc() |> Integer.to_string() |> then(&Regex.replace(~r/\B(?=(\d{3})+(?!\d))/, &1, ","))
-  end
-
   defp float(n) when is_float(n) do
     if n == trunc(n) do
       num(n)

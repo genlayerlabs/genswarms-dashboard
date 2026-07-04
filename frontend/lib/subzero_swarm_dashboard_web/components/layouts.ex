@@ -48,7 +48,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
     <div class="flex min-h-screen">
       <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
         <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
-          <img src={~p"/images/logo.svg"} width="30" class="drop-shadow" />
+          <img src={~p"/images/logo.svg"} width="30" class="drop-shadow" alt="" />
           <div class="leading-none min-w-0">
             <div
               class="font-display font-extrabold text-lg tracking-tight truncate max-w-36"
@@ -168,28 +168,9 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   defp feed_label(%{feed_status: :ok} = story), do: "feed #{story[:feed_age_s] || 0}s ago"
   defp feed_label(_story), do: "feed unavailable"
 
-  defp dashboard_title(%{"dashboard_title" => title} = snapshot, swarm) when is_binary(title) do
-    case String.trim(title) do
-      "" -> dashboard_title(Map.delete(snapshot, "dashboard_title"), swarm)
-      title -> title
-    end
-  end
-
-  defp dashboard_title(%{"swarm" => swarm}, _swarm), do: titleize_swarm(swarm)
-  defp dashboard_title(_snapshot, swarm), do: titleize_swarm(swarm)
-
-  defp titleize_swarm(swarm) do
-    swarm
-    |> to_string()
-    |> String.replace(~r/[-_]+/, " ")
-    |> String.split()
-    |> Enum.map(&String.capitalize/1)
-    |> Enum.join(" ")
-    |> case do
-      "" -> "Swarm Console"
-      title -> title
-    end
-  end
+  # one title rule for the sidebar and the <title> assign alike
+  defp dashboard_title(snapshot, swarm),
+    do: SubzeroSwarmDashboardWeb.DashHooks.dashboard_title(snapshot, swarm)
 
   attr :active, :any, default: nil
   attr :key, :any, required: true
@@ -272,6 +253,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
+        aria-label="System theme"
       >
         <.icon name="hero-computer-desktop-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
@@ -280,6 +262,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
+        aria-label="Light theme"
       >
         <.icon name="hero-sun-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
@@ -288,6 +271,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         class="flex p-2 cursor-pointer w-1/3"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
+        aria-label="Dark theme"
       >
         <.icon name="hero-moon-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>

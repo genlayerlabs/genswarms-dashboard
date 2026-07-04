@@ -43,7 +43,9 @@ defmodule SubzeroSwarmDashboard.Story.State do
             # claimed activity DECAYS when an agent stops producing events: thinking
             # quickly (a finished turn), waiting slowly (a lost browse_done)
             think_decay_ms: 60_000,
-            wait_decay_ms: 300_000
+            wait_decay_ms: 300_000,
+            # issues age out of the ring after this window (tick-time filter)
+            issue_window_s: 86_400
 
   def new(opts \\ []), do: struct!(__MODULE__, opts)
 

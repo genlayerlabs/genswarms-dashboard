@@ -103,7 +103,10 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   :for={s <- @sessions}
                   class="row-press"
                   phx-click="inspect"
+                  phx-keydown="inspect"
+                  phx-key="Enter"
                   phx-value-session_id={s["session_id"]}
+                  tabindex="0"
                 >
                   <td>
                     <.identity user={s["user"]} session_id={s["session_id"]} label={s["label"]} />
