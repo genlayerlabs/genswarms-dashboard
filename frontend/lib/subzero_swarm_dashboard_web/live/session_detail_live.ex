@@ -36,22 +36,34 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     id = socket.assigns.session_id
 
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        transcript: SwarmClient.session_history(swarm, id),
        activity: SwarmClient.session_logs(swarm, id),
-       skills: SwarmClient.session_skills(swarm, id),
        requests: load_requests(id)
-     )}
+     )
+     # skills = the agent's system-prompt source, read from its disk — it only
+     # changes on a skills redeploy, so ONE fetch at load, not one per 3s tick
+     |> assign_new_skills(swarm, id)}
   end
 
-  # Live refresh: re-fetch transcript + activity on every snapshot tick (same pulse
-  # as the rest of the page). :load re-assigns without a loading flash.
+  # Live refresh: re-fetch transcript + activity + requests on every snapshot tick
+  # (same pulse as the rest of the page). :load re-assigns without a loading flash.
   def handle_info({:snapshot, _snap}, socket) do
     if connected?(socket), do: send(self(), :load)
     {:noreply, socket}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Fetch skills only while they're still :loading; a retry is free on the next
+  # tick if the first read failed (agent slot not up yet).
+  defp assign_new_skills(socket, swarm, id) do
+    case socket.assigns.skills do
+      {:ok, _} -> socket
+      _ -> assign(socket, skills: SwarmClient.session_skills(swarm, id))
+    end
+  end
 
   @impl true
   def render(assigns) do

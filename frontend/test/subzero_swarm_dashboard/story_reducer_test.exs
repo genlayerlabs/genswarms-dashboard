@@ -464,6 +464,49 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert state.counters.stalled == 2
     end
 
+    test "an episode stalled past the abandon horizon closes as abandoned" do
+      state =
+        fold(
+          [
+            ev("request_open", 1, 100.0, %{"cid" => @cid}),
+            ev("routed", 2, 100.5, %{"cid" => @cid, "slot" => @agent})
+          ],
+          State.new(stall_after_ms: 5_000)
+        )
+
+      # stalls first (abandon horizon = 10 × the stall threshold = 50s)…
+      state = Reducer.tick(state, 110.0)
+      assert state.open[@cid].stalled
+
+      # …then abandons: leaves In-Flight, closes with status "abandoned",
+      # explains itself with a story row — but NOT a second issue (the stall
+      # already told the story)
+      state = Reducer.tick(state, 151.0)
+      assert state.open == %{}
+      assert [%{status: "abandoned", done: true}] = State.episodes(state, @cid)
+      assert Enum.any?(state.story, &(&1.kind == "abandoned"))
+      assert Enum.count(state.issues) == 1
+    end
+
+    test "the agents map is bounded — longest-idle slots are pruned past the cap" do
+      events =
+        Enum.flat_map(1..40, fn i ->
+          [
+            ev("spawn_start", i * 2 - 1, 100.0 + i, %{"slot" => "dyn_agent_#{i}"}),
+            ev("teardown", i * 2, 100.5 + i, %{"slot" => "dyn_agent_#{i}"})
+          ]
+        end)
+
+      state = fold(events)
+      assert map_size(state.agents) == 40
+
+      state = Reducer.tick(state, 200.0)
+      assert map_size(state.agents) == 32
+      # the most recently active slots survive; the oldest idle ones go
+      assert Map.has_key?(state.agents, "dyn_agent_40")
+      refute Map.has_key?(state.agents, "dyn_agent_1")
+    end
+
     test "expires issues older than 24h (counters keep going)" do
       state = fold([ev("inbox_full", 1, 100.0, %{"cid" => @cid, "slot" => @agent})])
 

@@ -7,8 +7,17 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
     {:ok,
      socket
-     |> assign(page_title: "Topology", debug: false)
+     |> assign(page_title: "Topology", debug: false, agent_re: compile_agent_pattern(layout))
      |> push_event("pipeline:init", layout)}
+  end
+
+  # the pool-slot pattern is config — compile it once at mount, not on every
+  # 3s snapshot tick
+  defp compile_agent_pattern(layout) do
+    case layout[:agent_pattern] do
+      nil -> nil
+      pattern -> Regex.compile!(pattern)
+    end
   end
 
   # ?debug=1 shows the hook's trace rig. The hook el is phx-update="ignore", so
@@ -25,7 +34,11 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   # Agent nodes are dynamic. Precedence (spec §5.5): the snapshot wins existence
   # (which slots are in the pool), the event story wins activity state.
   def handle_info({:snapshot, snap}, socket),
-    do: {:noreply, push_event(socket, "pipeline:agents", %{agents: agent_names(snap)})}
+    do:
+      {:noreply,
+       push_event(socket, "pipeline:agents", %{
+         agents: agent_names(snap, socket.assigns.agent_re)
+       })}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -188,13 +201,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   # Pool slots only (config :pipeline_layout agent_pattern) — sample/template
   # agents are swarm members but not part of the user-request pipeline.
-  defp agent_names(snap) do
-    re =
-      case Application.get_env(:subzero_swarm_dashboard, :pipeline_layout, %{})[:agent_pattern] do
-        nil -> nil
-        pattern -> Regex.compile!(pattern)
-      end
-
+  defp agent_names(snap, re) do
     for n <- snap["nodes"] || [],
         n["type"] == "agent",
         re == nil or Regex.match?(re, n["name"]),

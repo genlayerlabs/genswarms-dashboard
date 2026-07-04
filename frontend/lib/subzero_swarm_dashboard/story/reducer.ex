@@ -13,6 +13,15 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   alias SubzeroSwarmDashboard.Story.State
 
   @issue_window_s 86_400
+  # A stalled episode this many stall-thresholds old is ABANDONED: the reply is
+  # never coming (the stall issue row already told the story), so keeping it in
+  # `open` pins a red In-Flight row forever and leaks the map. 10 × the default
+  # 180s threshold = 30 minutes.
+  @abandon_after_multiple 10
+  # The agents map is fed by dynamic slot names and never forgets on its own;
+  # cap it so a churning pool can't grow the strip (and the per-tick sort/render)
+  # without bound. Only long-idle slots are pruned, oldest first.
+  @agents_max 32
 
   @doc "Fold one event (string-keyed, exactly as decoded from JSON). Total."
   def apply(%State{} = state, %{"kind" => kind} = ev), do: fold(kind, state, ev)
@@ -20,13 +29,16 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   @doc """
   Wall-clock pass, run on every poll tick: refreshes the in-flight clock,
-  classifies stalled episodes (exactly once each), expires the 24h issue window.
+  classifies stalled episodes (exactly once each), abandons episodes whose reply
+  is provably never coming, expires the 24h issue window.
   """
   def tick(%State{} = state, now) do
     %{state | now: now}
     |> expire_issues(now)
     |> classify_stalled(now)
+    |> abandon_lost(now)
     |> decay_agents(now)
+    |> prune_agents()
   end
 
   @doc """
@@ -344,6 +356,33 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     end)
   end
 
+  # A stalled episode that outlives @abandon_after_multiple stall-thresholds is
+  # closed as "abandoned": the stall was already surfaced as an issue when it
+  # was classified, so this is a story row only — it explains why the row left
+  # In-Flight without claiming a reply ever happened.
+  defp abandon_lost(state, now) do
+    horizon = state.stall_after_ms / 1000 * @abandon_after_multiple
+
+    {lost, kept} = Enum.split_with(state.open, fn {_cid, ep} -> now - ep.opened_at > horizon end)
+
+    Enum.reduce(lost, %{state | open: Map.new(kept)}, fn {cid, ep}, acc ->
+      dur = now - ep.opened_at
+      closed = %{ep | done: true, done_at: now, status: "abandoned", duration: dur}
+
+      acc
+      |> push_closed(closed)
+      |> push_row(%{
+        seq: nil,
+        ts: now,
+        kind: "abandoned",
+        cid: cid,
+        agent: ep.agent,
+        text: "✖ @#{ep.user} abandoned — no reply after #{fmt(dur)}s",
+        issue: false
+      })
+    end)
+  end
+
   # Turn-end is invisible to the feed (the engine emits no turn-complete — that's
   # Proposal C, upstream), so an agent that acted after its reply (a post-send ask)
   # would stay "thinking" forever. Honesty rule: stop claiming activity we can't
@@ -366,6 +405,23 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
           acc
       end
     end)
+  end
+
+  # Bound the agents map: beyond @agents_max, drop the longest-idle slots that
+  # owe nothing (idle, empty queue). A static pool never crosses the cap, so the
+  # strip keeps showing its idle slots; only dynamic-name churn is forgotten.
+  defp prune_agents(%{agents: agents} = state) when map_size(agents) <= @agents_max, do: state
+
+  defp prune_agents(state) do
+    prunable =
+      state.agents
+      |> Map.values()
+      |> Enum.filter(&(&1.state == :idle and &1.queue == 0))
+      |> Enum.sort_by(&(&1.last_act || 0.0))
+      |> Enum.take(map_size(state.agents) - @agents_max)
+      |> MapSet.new(& &1.name)
+
+    %{state | agents: Map.reject(state.agents, fn {name, _ag} -> name in prunable end)}
   end
 
   # ── episode lifecycle ─────────────────────────────────────────────────────────

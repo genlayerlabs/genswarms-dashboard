@@ -77,11 +77,14 @@ defmodule SubzeroSwarmDashboard.Story.State do
 
   @doc "Nearest-rank percentile (q in 0..1); nil on an empty sample set."
   def percentile([], _q), do: nil
+  def percentile(samples, q) when is_list(samples), do: sorted_percentile(Enum.sort(samples), q)
 
-  def percentile(samples, q) when is_list(samples) do
-    sorted = Enum.sort(samples)
-    Enum.at(sorted, max(ceil(q * length(sorted)) - 1, 0))
-  end
+  # kpis/1 runs on every 700ms broadcast — sort each sample list once, not once
+  # per quantile pulled from it
+  defp sorted_percentile([], _q), do: nil
+
+  defp sorted_percentile(sorted, q),
+    do: Enum.at(sorted, max(ceil(q * length(sorted)) - 1, 0))
 
   defp in_flight(state, now) do
     state.open
@@ -119,11 +122,12 @@ defmodule SubzeroSwarmDashboard.Story.State do
 
   defp kpis(state) do
     c = state.counters
+    reply_sorted = Enum.sort(c.reply_durations)
 
     %{
       replies: c.replies,
-      reply_p50: percentile(c.reply_durations, 0.5),
-      reply_p95: percentile(c.reply_durations, 0.95),
+      reply_p50: sorted_percentile(reply_sorted, 0.5),
+      reply_p95: sorted_percentile(reply_sorted, 0.95),
       first_feedback_p50: percentile(c.first_feedback_durations, 0.5),
       browse_ok: c.browse_ok,
       browse_total: c.browse_total,

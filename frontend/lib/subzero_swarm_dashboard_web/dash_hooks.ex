@@ -90,6 +90,25 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
     end
   end
 
+  # Per-snapshot inspector refresh: the ephemeral slot activity is THE live panel,
+  # so it re-fetches every tick; the durable transcript only changes when the
+  # session actually moved, so it re-fetches only when the roster row did.
+  defp handle_inspect_info({:refresh_inspect, sid, row_changed?}, socket) do
+    if socket.assigns[:inspect] && socket.assigns.inspect["session_id"] == sid do
+      swarm = socket.assigns.swarm
+      socket = assign(socket, inspect_activity: SwarmClient.session_logs(swarm, sid))
+
+      socket =
+        if row_changed?,
+          do: assign(socket, inspect_transcript: SwarmClient.session_history(swarm, sid)),
+          else: socket
+
+      {:halt, socket}
+    else
+      {:halt, socket}
+    end
+  end
+
   defp handle_inspect_info(_msg, socket), do: {:cont, socket}
 
   defp find_session(%{"sessions" => sessions}, sid) when is_list(sessions),
@@ -107,10 +126,17 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
         dashboard_title: dashboard_title(snap, socket.assigns[:swarm])
       )
 
-    # Keep the open inspector live: re-fetch its transcript + activity on every
-    # snapshot tick (reuses the lazy loader, which assigns without a loading flash).
-    if connected?(socket) and socket.assigns[:inspect],
-      do: send(self(), {:load_inspect_detail, socket.assigns.inspect["session_id"]})
+    # Keep the open inspector live: its header follows the fresh roster row, and
+    # {:refresh_inspect} re-fetches the detail (activity always, transcript only
+    # on a row change) without a loading flash.
+    socket =
+      with %{"session_id" => sid} = prev <- socket.assigns[:inspect],
+           %{} = fresh <- find_session(snap, sid) do
+        if connected?(socket), do: send(self(), {:refresh_inspect, sid, fresh != prev})
+        assign(socket, inspect: fresh)
+      else
+        _ -> socket
+      end
 
     {:cont, socket}
   end

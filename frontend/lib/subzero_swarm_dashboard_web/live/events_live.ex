@@ -16,7 +16,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   @kinds ~w(request_open routed spawn_start teardown inbox_full ask browse_dispatch
             browse_done browser_dispatch browser_done progress_sent reply_sent reply_failed
             reply_suppressed llm_error llm_proxy_block llm_proxy_degraded job_run
-            compaction inbox_dropped stalled feed_gap feed_restart)
+            compaction inbox_dropped stalled abandoned feed_gap feed_restart)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -42,7 +42,8 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
       )
       |> stream_configure(:story_rows, dom_id: &row_dom_id/1)
 
-    if connected?(socket), do: send(self(), :load)
+    # the engine-raw fetch/refresh loop starts from handle_params — only when
+    # the raw view is actually showing
     {:ok, socket}
   end
 
@@ -60,6 +61,17 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
         issues: params["issues"] in ["1", "true"]
       )
       |> reset_story()
+
+    # Run the raw-view poll loop ONLY while the raw view is showing: polling
+    # (and discarding) 200 engine rows every 5s behind the story view was pure
+    # waste. Switching back to story cancels the pending timer.
+    socket =
+      if socket.assigns.view == "raw" and connected?(socket) do
+        if socket.assigns[:timer] == nil, do: send(self(), :load)
+        socket
+      else
+        cancel_raw_timer(socket)
+      end
 
     {:noreply, socket}
   end
@@ -114,7 +126,10 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   end
 
   @impl true
-  def handle_info(:load, socket), do: {:noreply, reload(socket)}
+  # a :load can arrive after the user already patched back to the story view
+  # (in-flight timer) — don't refetch or reschedule for a hidden table
+  def handle_info(:load, %{assigns: %{view: "raw"}} = socket), do: {:noreply, reload(socket)}
+  def handle_info(:load, socket), do: {:noreply, cancel_raw_timer(socket)}
 
   # Live story ticks (PubSub "events", relayed through DashHooks): diff the
   # summary's newest-first tail against what we've already seen, then prepend —
@@ -238,6 +253,11 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     |> put_if(:category, a.category)
     |> put_if(:agent, a.agent)
     |> put_minutes(a.minutes)
+  end
+
+  defp cancel_raw_timer(socket) do
+    if ref = socket.assigns[:timer], do: Process.cancel_timer(ref)
+    assign(socket, timer: nil)
   end
 
   defp put_if(opts, _k, ""), do: opts
