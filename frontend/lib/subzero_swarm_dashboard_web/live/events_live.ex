@@ -12,11 +12,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   # needs to cover that tail to diff fresh rows out of the next tick
   @summary_tail 50
 
-  # event registry v1 + the synthetic/derived kinds the fold can emit (spec §2/§5.3)
-  @kinds ~w(request_open routed spawn_start teardown inbox_full ask browse_dispatch
-            browse_done browser_dispatch browser_done progress_sent reply_sent reply_failed
-            reply_suppressed llm_error llm_proxy_block llm_proxy_degraded job_run
-            compaction inbox_dropped stalled abandoned feed_gap feed_restart)
+  # DERIVED from the machine-readable registry (Story.Kinds) — the filter can
+  # no longer drift from what the reducer actually rows (spec §2/§5.3)
+  @kinds SubzeroSwarmDashboard.Story.Kinds.filter_kinds()
 
   @impl true
   def mount(_params, _session, socket) do

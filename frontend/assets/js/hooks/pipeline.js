@@ -414,6 +414,37 @@ export const Pipeline = {
       case "reply_failed":
         return [{flash: "sender"}]
 
+      case "reply_suppressed": {
+        // the spam-window guard chose silence — a 🤫 float, not a flash:
+        // suppression is the guard working, not a failure
+        const owner = ev.cid && this.CID[ev.cid]
+        return [{badge: owner || "sender", glyph: "🤫"}]
+      }
+
+      case "llm_error": {
+        // the agent's LLM turn failed — error flash where the turn was running
+        const owner = agent || (ev.cid && this.CID[ev.cid])
+        if (!owner || !this.AG[owner]) return []
+        return [{flash: owner}, {badge: owner, glyph: "⚠"}]
+      }
+
+      case "llm_proxy_block": {
+        // spending wall — ⛔ on the owning agent (there is no llm node in the
+        // layout; the block lands where its effect is felt). llm_proxy_degraded
+        // stays canvas-silent for the same no-geometry reason (registry: canvas
+        // false) — it's an Issues-panel fact, not a pipeline one.
+        const owner = agent || (ev.cid && this.CID[ev.cid])
+        if (!owner || !this.AG[owner]) return []
+        return [{flash: owner}, {badge: owner, glyph: "⛔"}]
+      }
+
+      case "job_run":
+        // cron animates its own work at last: a quiet ✓ float per ok run,
+        // an error flash + ⚠ when a job fails
+        return ev.status === "ok"
+          ? [{badge: "cron", glyph: "✓"}]
+          : [{flash: "cron"}, {badge: "cron", glyph: "⚠"}]
+
       case "chatter": {
         // background bookkeeping traffic (rally↔policy sync, metrics bumps) —
         // the host emits these precisely so the chatter toggle has data; forced

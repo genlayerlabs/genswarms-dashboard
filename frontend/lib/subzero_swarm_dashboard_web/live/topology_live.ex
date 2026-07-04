@@ -105,7 +105,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
           <span><span class="text-warning font-mono">⁺¹</span> queued turns</span>
           <span><span class="text-success">⤸</span> reply arc</span>
           <span><span class="text-error">◉</span> failure flash</span>
-          <span>☕ compacting</span>
+          <span>☕ compacting · 🤫 suppressed · ⛔ budget wall · ✓ cron ok</span>
         </div>
 
         <section id="pipeline-inflight" class="rounded-box border border-base-300 bg-base-100 p-4">
