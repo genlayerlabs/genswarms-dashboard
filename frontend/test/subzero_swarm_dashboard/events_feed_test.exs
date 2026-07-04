@@ -9,7 +9,19 @@ defmodule SubzeroSwarmDashboard.EventsFeedTest do
   setup do
     Application.put_env(:subzero_swarm_dashboard, :events_poll_ms, 10)
     on_exit(fn -> Application.delete_env(:subzero_swarm_dashboard, :events_poll_ms) end)
+    # a leftover snapshot from a previous test would restore its cursor and
+    # derail the scripted `since` expectations — every test starts fresh
+    File.rm(EventsFeed.snapshot_path())
+    on_exit(fn -> File.rm(EventsFeed.snapshot_path()) end)
     :ok
+  end
+
+  defp drain do
+    receive do
+      _ -> drain()
+    after
+      0 -> :ok
+    end
   end
 
   defp evt(seq, kind, fields),
@@ -197,6 +209,36 @@ defmodule SubzeroSwarmDashboard.EventsFeedTest do
 
     assert [%{done: true, agent: "wingston_agent_0"}] = EventsFeed.episodes(cid)
     assert EventsFeed.episodes("tg:nobody:9") == []
+  end
+
+  test "a restart restores the fold and CONTINUES from the saved cursor" do
+    cid = "tg:1:0"
+    # realistic epoch ts: after the restart the feed-anchored clock falls back
+    # to the wall clock, and a toy opened_at would read as a decades-old stall
+    now = System.os_time(:millisecond) / 1000
+
+    script(%{
+      0 => feed([], 10),
+      10 => feed([evt(11, "request_open", %{"cid" => cid, "ts" => now})], 11),
+      11 => feed([], 11)
+    })
+
+    EventsFeed.subscribe()
+    pid = start_supervised!(EventsFeed)
+    assert_receive {:story, %{in_flight: [%{cid: ^cid}]}}
+
+    # supervisor shutdown → terminate/2 → snapshot written
+    :ok = stop_supervised(EventsFeed)
+    refute Process.alive?(pid)
+    assert File.exists?(EventsFeed.snapshot_path())
+    drain()
+
+    # second life: first poll asks from the RESTORED cursor (11), never 0 —
+    # no re-baseline, and the open episode survived the restart
+    start_supervised!(EventsFeed)
+    assert_receive {:polled, 11, 500}
+    assert_receive {:story, %{in_flight: [%{cid: ^cid}], feed_status: :ok}}
+    refute_received {:polled, 0, 500}
   end
 
   test "story_ring/0 and episodes/1 degrade to [] when the feed isn't running" do

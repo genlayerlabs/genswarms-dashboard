@@ -35,6 +35,17 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   @limit 500
   # liveness chip turns amber when the last successful poll is older than this
   @stale_after_s 5
+  # ── restart persistence ──────────────────────────────────────────────────────
+  # The fold lives in this process's memory; without a snapshot every dashboard
+  # deploy wiped issues/KPIs/"observed since". State is saved every
+  # @persist_every_ms (and on terminate) and restored at init — cursor included,
+  # so the next poll CONTINUES (catching up ≤ ring size) instead of
+  # re-baselining. Guards: version + swarm must match, snapshot must be younger
+  # than @persist_max_age_s; anything off → fresh start. A feed that restarted
+  # meanwhile is caught by the normal cursor-regression re-baseline.
+  @persist_vsn 1
+  @persist_every_ms 30_000
+  @persist_max_age_s 86_400
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -77,25 +88,28 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
 
   @impl true
   def init(_opts) do
+    Process.flag(:trap_exit, true)
     interval = Application.get_env(:subzero_swarm_dashboard, :events_poll_ms, 700)
     swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
     PubSub.subscribe(@pubsub, @snapshot_topic)
     send(self(), :poll)
+    Process.send_after(self(), :persist, @persist_every_ms)
 
-    {:ok,
-     %{
-       interval: interval,
-       swarm: swarm,
-       cursor: nil,
-       story: new_story(),
-       feed_status: :unavailable,
-       baseline_at: nil,
-       # feed-anchored clock: {ts of the newest folded event, monotonic ms at arrival}
-       anchor: nil,
-       last_ok_mono: nil,
-       # consecutive failed polls — drives the outage log (once) and backoff
-       fails: 0
-     }}
+    state = %{
+      interval: interval,
+      swarm: swarm,
+      cursor: nil,
+      story: new_story(),
+      feed_status: :unavailable,
+      baseline_at: nil,
+      # feed-anchored clock: {ts of the newest folded event, monotonic ms at arrival}
+      anchor: nil,
+      last_ok_mono: nil,
+      # consecutive failed polls — drives the outage log (once) and backoff
+      fails: 0
+    }
+
+    {:ok, restore(state)}
   end
 
   @impl true
@@ -115,6 +129,12 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
 
     state = tick_and_broadcast(state)
     Process.send_after(self(), :poll, poll_delay(state))
+    {:noreply, state}
+  end
+
+  def handle_info(:persist, state) do
+    persist(state)
+    Process.send_after(self(), :persist, @persist_every_ms)
     {:noreply, state}
   end
 
@@ -270,6 +290,69 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   end
 
   defp now_mono, do: System.monotonic_time(:millisecond)
+
+  @impl true
+  def terminate(_reason, state), do: persist(state)
+
+  # ── snapshot persistence ─────────────────────────────────────────────────────
+
+  @doc "Snapshot file path (config :story_snapshot_path; default: system tmp)."
+  def snapshot_path do
+    Application.get_env(
+      :subzero_swarm_dashboard,
+      :story_snapshot_path,
+      Path.join(System.tmp_dir!(), "subzero_dashboard_story.snapshot")
+    )
+  end
+
+  defp persist(state) do
+    # nothing worth saving before the first baseline
+    if state.cursor != nil do
+      payload = %{
+        vsn: @persist_vsn,
+        swarm: state.swarm,
+        cursor: state.cursor,
+        story: state.story,
+        baseline_at: state.baseline_at,
+        saved_at: System.os_time(:second)
+      }
+
+      path = snapshot_path()
+      tmp = path <> ".tmp"
+      File.write!(tmp, :erlang.term_to_binary(payload))
+      File.rename!(tmp, path)
+    end
+  rescue
+    # persistence is best-effort — a read-only disk must not take the feed down
+    e -> Logger.warning("story snapshot save failed: #{Exception.message(e)}")
+  end
+
+  defp restore(state) do
+    with {:ok, bin} <- File.read(snapshot_path()),
+         %{vsn: @persist_vsn, swarm: swarm} = snap <- :erlang.binary_to_term(bin, [:safe]),
+         true <- swarm == state.swarm or {:error, :other_swarm},
+         true <-
+           System.os_time(:second) - snap.saved_at <= @persist_max_age_s or
+             {:error, :too_old},
+         # a State struct saved by older code deserializes fine but blows up on
+         # first access of a field it doesn't have — compare shapes, not luck
+         true <-
+           Map.keys(snap.story) == Map.keys(State.new()) or {:error, :state_shape_changed} do
+      Logger.info("story restored from snapshot (cursor #{snap.cursor})")
+
+      %{state | cursor: snap.cursor, story: snap.story, baseline_at: snap.baseline_at}
+    else
+      {:error, :enoent} -> state
+      other ->
+        Logger.warning("story snapshot ignored: #{inspect(other, limit: 3)}")
+        state
+    end
+  rescue
+    # corrupt/incompatible file (e.g. State struct changed shape) → fresh fold
+    e ->
+      Logger.warning("story snapshot unreadable, starting fresh: #{Exception.message(e)}")
+      state
+  end
 
   # Build cid → @handle from a /dashboard snapshot's sessions, keeping only rows
   # that actually carry a handle (a not-yet-rostered live session has user: nil →
