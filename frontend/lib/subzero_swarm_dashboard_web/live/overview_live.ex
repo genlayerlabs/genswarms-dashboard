@@ -94,7 +94,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
         </div>
 
         <.panel
-          :if={@snapshot && @snapshot["warnings"] != []}
+          :if={@snapshot && (@snapshot["warnings"] || []) != []}
           title="Warnings"
           class="border-warning/50 bg-warning/5"
         >

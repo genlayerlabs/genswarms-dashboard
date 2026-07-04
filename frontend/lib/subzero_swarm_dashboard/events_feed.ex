@@ -45,8 +45,17 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   @doc "Threshold (s) past which the header chip treats the feed as stale."
   def stale_after_s, do: @stale_after_s
 
-  @doc "Full story ring, newest first — pulled on demand by the Events page."
-  def story_ring, do: GenServer.call(__MODULE__, :story_ring)
+  @doc """
+  Full story ring, newest first — pulled on demand by the Events page.
+  Bounded + nil-safe like `current_story/0`: the feed's poll can block it for
+  seconds when the swarm is slow, and a timed-out call must degrade the page,
+  not crash the LiveView.
+  """
+  def story_ring do
+    GenServer.call(__MODULE__, :story_ring, 1_000)
+  catch
+    :exit, _ -> []
+  end
 
   @doc """
   Current folded story summary — same shape as the `{:story, summary}` broadcast.
@@ -60,7 +69,11 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   end
 
   @doc "Episodes for one cid, newest first — the Session detail REQUESTS section."
-  def episodes(cid), do: GenServer.call(__MODULE__, {:episodes, cid})
+  def episodes(cid) do
+    GenServer.call(__MODULE__, {:episodes, cid}, 1_000)
+  catch
+    :exit, _ -> []
+  end
 
   @impl true
   def init(_opts) do
@@ -219,7 +232,11 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
     State.new(
       stall_after_ms: Application.get_env(:subzero_swarm_dashboard, :stall_after_ms, 180_000),
       story_max: Application.get_env(:subzero_swarm_dashboard, :story_ring_max, 500),
-      issues_max: Application.get_env(:subzero_swarm_dashboard, :issues_ring_max, 200)
+      issues_max: Application.get_env(:subzero_swarm_dashboard, :issues_ring_max, 200),
+      # Seed the clock so an event missing "ts" folded before the first tick
+      # can never fall through Reducer.ts/2 to 0.0 (opened_at 0.0 → the next
+      # tick computes a ~56-year elapsed and instantly classifies a stall).
+      now: System.os_time(:millisecond) / 1000
     )
   end
 

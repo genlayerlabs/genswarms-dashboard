@@ -198,4 +198,12 @@ defmodule SubzeroSwarmDashboard.EventsFeedTest do
     assert [%{done: true, agent: "wingston_agent_0"}] = EventsFeed.episodes(cid)
     assert EventsFeed.episodes("tg:nobody:9") == []
   end
+
+  test "story_ring/0 and episodes/1 degrade to [] when the feed isn't running" do
+    # same contract as current_story/0: a dead or blocked feed process must
+    # never crash the calling LiveView
+    refute Process.whereis(EventsFeed)
+    assert EventsFeed.story_ring() == []
+    assert EventsFeed.episodes("tg:1:0") == []
+  end
 end

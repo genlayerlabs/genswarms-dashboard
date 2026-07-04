@@ -30,17 +30,24 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
   end
 
   @impl true
-  def events_feed(swarm, since, limit),
-    do: get("/api/swarms/#{swarm}/events/feed", %{since: since, limit: limit})
+  def events_feed(swarm, since, limit) do
+    # This poll runs on a ~700ms cadence INSIDE the EventsFeed GenServer, which
+    # also answers story_ring/episodes/current_story calls — an 8s hang here
+    # starves every caller. A missed tick just retries, so time out fast.
+    get("/api/swarms/#{swarm}/events/feed", %{since: since, limit: limit},
+      receive_timeout: 2_000
+    )
+  end
 
-  defp get(path, params \\ %{}) do
+  defp get(path, params \\ %{}, extra_opts \\ []) do
     base = Application.fetch_env!(:subzero_swarm_dashboard, :swarm_api_url)
     token = Application.get_env(:subzero_swarm_dashboard, :swarm_api_token)
     headers = if token, do: [{"authorization", "Bearer #{token}"}], else: []
 
     opts =
-      [params: params, headers: headers, receive_timeout: 8_000] ++
-        Application.get_env(:subzero_swarm_dashboard, :req_options, [])
+      [params: params, headers: headers, receive_timeout: 8_000]
+      |> Keyword.merge(extra_opts)
+      |> Kernel.++(Application.get_env(:subzero_swarm_dashboard, :req_options, []))
 
     case Req.get(base <> path, opts) do
       {:ok, %{status: 200, body: body}} -> {:ok, body}

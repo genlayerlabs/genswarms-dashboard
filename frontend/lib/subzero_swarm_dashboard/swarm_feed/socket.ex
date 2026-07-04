@@ -34,9 +34,17 @@ defmodule SubzeroSwarmDashboard.SwarmFeed.Socket do
   end
 
   @impl Slipstream
-  def handle_disconnect(_reason, socket) do
+  def handle_disconnect(reason, socket) do
+    # Slipstream's backoff list repeats its last entry forever, so reconnect/1
+    # only errors on :connected (a stale disconnect signal — keep the live
+    # socket) or :no_config (impossible after init's connect!). Never {:stop}:
+    # under the one_for_one supervisor a stop here turns a down swarm into a
+    # crash-loop that can trip max_restarts and take the dashboard with it.
+    Logger.warning("swarm WS disconnected (#{inspect(reason)}) — retrying with backoff")
+
     case reconnect(socket) do
       {:ok, socket} -> {:ok, socket}
+      {:error, :connected} -> {:ok, socket}
       {:error, reason} -> {:stop, reason, socket}
     end
   end
