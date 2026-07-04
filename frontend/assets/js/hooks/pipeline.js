@@ -147,6 +147,12 @@ export const Pipeline = {
   // One code path: stepOne plays exactly one op. Manual stepping (paused) and the
   // causal scheduler both drive it, so ordering is always the feed's seq order.
   intake(ev) {
+    // browse→browser package rename: the wire now says browser_*, but every
+    // animation below (and the "browse" service node) speaks the original
+    // vocabulary — normalize at ingress, exactly like the Elixir reducer's
+    // fold("browser_*") delegation. Drop when the browse_* heads are dropped.
+    if (ev.kind === "browser_dispatch") ev = {...ev, kind: "browse_dispatch"}
+    if (ev.kind === "browser_done") ev = {...ev, kind: "browse_done"}
     if (typeof ev.ts === "number") this.skew = Date.now() / 1000 - ev.ts
     if (this.paused || this.causal) {
       this.PENDING.push(ev)
