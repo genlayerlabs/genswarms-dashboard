@@ -132,6 +132,22 @@ defmodule GenswarmsDashboard.ConfigView do
     _ -> nil
   end
 
+  # ref-map handlers (engine loader :require/:verify): the schema comes
+  # straight from the swarm-object.json at the ref's path — the same
+  # notarized bytes the loader digest-verified when it bound the module.
+  def schema_for(%{} = ref_spec) do
+    with path when is_binary(path) and path != "" <-
+           Map.get(ref_spec, :path) || Map.get(ref_spec, "path"),
+         {:ok, raw} <- File.read(Path.join(path, "swarm-object.json")),
+         {:ok, %{"config_schema" => schema}} when is_map(schema) <- Jason.decode(raw) do
+      schema
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
   def schema_for(_), do: nil
 
   defp find_schema(_dir, _handler, 0), do: nil
@@ -158,5 +174,10 @@ defmodule GenswarmsDashboard.ConfigView do
 
   defp handler_name(nil), do: nil
   defp handler_name(mod) when is_atom(mod), do: mod |> inspect()
+
+  # ref-map handlers display as their notarized ref
+  defp handler_name(%{} = spec),
+    do: Map.get(spec, :ref) || Map.get(spec, "ref") || inspect(spec)
+
   defp handler_name(other), do: inspect(other)
 end
