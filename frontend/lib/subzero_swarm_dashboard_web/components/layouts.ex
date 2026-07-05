@@ -124,7 +124,15 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             label="Logs"
           />
         </ul>
-        <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
+        <div class="mt-auto pt-6 px-2 space-y-2.5">
+          <div
+            class="font-mono text-[0.65rem] opacity-40 px-1 truncate"
+            title="deployed release (RELEASE_TAG, baked at image build)"
+          >
+            {release_tag()}
+          </div>
+          <.theme_toggle />
+        </div>
       </aside>
 
       <main class="flex-1 p-6 lg:p-8 overflow-x-auto">
@@ -173,6 +181,10 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   # one title rule for the sidebar and the <title> assign alike
   defp dashboard_title(snapshot, swarm),
     do: SubzeroSwarmDashboardWeb.DashHooks.dashboard_title(snapshot, swarm)
+
+  # RELEASE_TAG is baked into the image by CI (build-arg GIT_SHA=v-<sha7>);
+  # absent in local/dev runs.
+  defp release_tag, do: System.get_env("RELEASE_TAG") || "dev"
 
   attr :active, :any, default: nil
   attr :key, :any, required: true

@@ -87,6 +87,10 @@ RUN chown nobody /app
 
 # set runner ENV
 ENV MIX_ENV="prod"
+# Release identity baked at build time (CI passes GIT_SHA=v-<sha7>); the layout
+# footer shows it so "which version is deployed?" is answerable at a glance.
+ARG GIT_SHA=dev
+ENV RELEASE_TAG=${GIT_SHA}
 # Dashboard HTTP port (runtime.exs reads $PORT; kept off the swarm's :4000).
 ENV PORT="4100"
 EXPOSE 4100

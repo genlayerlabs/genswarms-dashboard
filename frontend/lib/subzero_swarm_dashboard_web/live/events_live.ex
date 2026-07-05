@@ -513,7 +513,18 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
           <td><span class={["badge badge-xs", level_class(e["level"])]}>{e["level"]}</span></td>
           <td class="text-xs">{e["category"]}</td>
           <td class="font-mono text-xs">{e["agent"]}</td>
-          <td class="text-xs">{e["message"]}</td>
+          <td class="text-xs">
+            {e["message"]}
+            <%!-- the engine attaches diagnostics here (agent_stopped carries
+                 exit_status + buffer_tail — the dying process's last output);
+                 without this expando those fields were stored but invisible --%>
+            <details :if={is_map(e["metadata"]) and map_size(e["metadata"]) > 0} class="mt-0.5">
+              <summary class="cursor-pointer opacity-50 text-[0.65rem] select-none">
+                meta
+              </summary>
+              <pre class="whitespace-pre-wrap break-all text-[0.65rem] opacity-70 max-w-2xl">{Jason.encode!(e["metadata"], pretty: true)}</pre>
+            </details>
+          </td>
         </tr>
         <tr :if={@events == []}>
           <td colspan="5" class="opacity-60">No events match.</td>
