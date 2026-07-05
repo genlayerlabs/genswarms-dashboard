@@ -13,7 +13,7 @@ defmodule GenswarmsDashboard.Plug do
   """
   use Plug.Router
 
-  alias GenswarmsDashboard.{Aggregate, Config}
+  alias GenswarmsDashboard.{Aggregate, Config, ConfigView}
 
   plug(:put_security_headers)
   plug(:put_cors)
@@ -27,6 +27,24 @@ defmodule GenswarmsDashboard.Plug do
       {:ok, data} -> json(conn, 200, data)
       {:error, :not_found} -> json(conn, 404, %{error: "swarm_not_found"})
       {:error, :unavailable} -> json(conn, 503, %{error: "swarm_status_unavailable"})
+    end
+  end
+
+  # GET /api/swarms/:name/config  → effective object config (seed ⊕ overlay), redacted
+  # against each package's config_schema (gsp design §14.2.1). Fail-closed: keys absent
+  # from a schema (or objects without one) render name-only; x-secret values are elided
+  # (except *_env fields, whose VALUE is an env var name by contract).
+  get "/api/swarms/:name/config" do
+    case full_config(name) do
+      {:ok, config} ->
+        view = ConfigView.build(config, &ConfigView.schema_for/1)
+        json(conn, 200, %{swarm: name, objects: view.objects, source: "engine"})
+
+      {:error, :not_found} ->
+        json(conn, 404, %{error: "swarm_not_found"})
+
+      {:error, _} ->
+        json(conn, 503, %{error: "swarm_config_unavailable"})
     end
   end
 
@@ -248,6 +266,14 @@ defmodule GenswarmsDashboard.Plug do
       end
 
     pool_agent || swarm_status_agent(swarm)
+  end
+
+  # get_full_config is a GenServer.call like status — same exit guard so a slow
+  # engine degrades to 503 instead of crashing the read API.
+  defp full_config(swarm) do
+    Genswarms.SwarmManager.get_full_config(swarm)
+  catch
+    :exit, _ -> {:error, :unavailable}
   end
 
   # SwarmManager.status is a GenServer.call (5s) that can time out under docker

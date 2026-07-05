@@ -33,6 +33,7 @@ defmodule SubzeroSwarmDashboardWeb.Router do
       live "/usage", UsageLive
       live "/extensions/:id", ExtensionPageLive
       live "/logs", LogsLive
+      live "/config", ConfigLive
     end
   end
 

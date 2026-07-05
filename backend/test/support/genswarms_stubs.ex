@@ -14,6 +14,15 @@ defmodule Genswarms.SwarmManager do
       %{} -> {:error, :not_found}
     end
   end
+
+  # effective config (seed ⊕ overlay) — steered by :stub_full_config
+  def get_full_config(name) do
+    case Application.get_env(:genswarms_dashboard, :stub_full_config) do
+      nil -> {:error, :not_found}
+      fun when is_function(fun, 1) -> fun.(name)
+      %{} = config -> {:ok, config}
+    end
+  end
 end
 
 defmodule Genswarms.Routing.Router do
