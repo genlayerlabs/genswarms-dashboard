@@ -8,6 +8,7 @@
     "lib/genswarms_dashboard/aggregate.ex",
     "lib/genswarms_dashboard/extensions.ex",
     "lib/genswarms_dashboard/error_json.ex",
+    "lib/genswarms_dashboard/config_view.ex",
     "lib/genswarms_dashboard/plug.ex",
     "lib/genswarms_dashboard/socket.ex",
     "lib/genswarms_dashboard/channel.ex",
