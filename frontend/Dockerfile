@@ -87,10 +87,6 @@ RUN chown nobody /app
 
 # set runner ENV
 ENV MIX_ENV="prod"
-# Release identity baked at build time (CI passes GIT_SHA=v-<sha7>); the layout
-# footer shows it so "which version is deployed?" is answerable at a glance.
-ARG GIT_SHA=dev
-ENV RELEASE_TAG=${GIT_SHA}
 # Dashboard HTTP port (runtime.exs reads $PORT; kept off the swarm's :4000).
 ENV PORT="4100"
 EXPOSE 4100
@@ -103,6 +99,12 @@ HEALTHCHECK --interval=30s --timeout=4s --start-period=15s --retries=3 \
 COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/subzero_swarm_dashboard ./
 
 USER nobody
+
+# Release identity baked at build time (CI passes GIT_SHA=v-<sha7>); the sidebar
+# stamp shows it. LAST layer on purpose — GIT_SHA changes every build and an
+# earlier ENV would bust the cache for the layers below it.
+ARG GIT_SHA=dev
+ENV RELEASE_TAG=${GIT_SHA}
 
 # If using an environment that doesn't automatically reap zombie processes, it is
 # advised to add an init process such as tini via `apt-get install`

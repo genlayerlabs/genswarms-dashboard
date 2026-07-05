@@ -269,16 +269,32 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   # Plain-text engine log for the clipboard: release header + one line per event,
   # metadata JSON inline (that's where agent_stopped's exit_status/buffer_tail live).
+  #
+  # TWO releases on purpose: RELEASE_TAG here is the DASHBOARD image's version —
+  # the swarm pod rolls independently (it's the heavy image) and its version is
+  # the "<name> release v-…" system line it logs at boot. Showing only the
+  # dashboard's already misled a debugging session once (2026-07-05).
   defp copy_log_text(swarm) do
-    header = "release #{release_tag()} — engine log, last 10 min (times UTC)"
-
     case SwarmClient.events(swarm, %{minutes: 10, limit: 500}) do
       {:ok, events} ->
+        swarm_rel = swarm_release(events)
+        header = "dashboard #{release_tag()} · swarm #{swarm_rel} — engine log, last 10 min (times UTC)"
         [header | Enum.map(events, &copy_log_line/1)] |> Enum.join("\n")
 
       {:error, reason} ->
-        header <> "\n(events fetch failed: #{inspect(reason)})"
+        "dashboard #{release_tag()} — engine log fetch failed: #{inspect(reason)}"
     end
+  end
+
+  # The swarm's own boot stamp ("wingston release v-…", category system). A boot
+  # older than the fetch window won't be in `events` — say so instead of guessing.
+  defp swarm_release(events) do
+    Enum.find_value(events, "(boot older than window — see the '<swarm> release' line at its boot)", fn e ->
+      case Regex.run(~r/^\S+ release (\S+)$/, e["message"] || "") do
+        [_, rel] -> rel
+        _ -> nil
+      end
+    end)
   end
 
   defp copy_log_line(e) do
