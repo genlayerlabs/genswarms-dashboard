@@ -131,6 +131,13 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             icon="hero-document-text"
             label="Logs"
           />
+          <.nav_item
+            active={@active}
+            key={:config}
+            href={~p"/config"}
+            icon="hero-adjustments-horizontal"
+            label="Config"
+          />
         </ul>
         <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
       </aside>

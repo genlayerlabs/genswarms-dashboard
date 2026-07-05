@@ -30,6 +30,9 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
   end
 
   @impl true
+  def config(swarm), do: get("/api/swarms/#{swarm}/config")
+
+  @impl true
   def events_feed(swarm, since, limit) do
     # This poll runs on a ~700ms cadence INSIDE the EventsFeed GenServer, which
     # also answers story_ring/episodes/current_story calls — an 8s hang here
