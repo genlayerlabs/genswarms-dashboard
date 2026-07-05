@@ -27,13 +27,14 @@ import {Pipeline} from "./hooks/pipeline"
 import {LocalTime} from "./hooks/local_time"
 import {ScrollBottom} from "./hooks/scroll_bottom"
 import {TranscriptGate} from "./hooks/transcript_gate"
+import {ClipboardCopy} from "./hooks/clipboard_copy"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, Pipeline, LocalTime, ScrollBottom, TranscriptGate},
+  hooks: {...colocatedHooks, Pipeline, LocalTime, ScrollBottom, TranscriptGate, ClipboardCopy},
 })
 
 // Show progress bar on live navigation and form submits

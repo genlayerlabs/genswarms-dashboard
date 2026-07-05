@@ -107,6 +107,12 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     {:noreply, socket}
   end
 
+  # Fresh 10-minute fetch (not the filtered table state): the copy is a debugging
+  # handoff and should carry everything, independent of the current view filters.
+  def handle_event("copy_log", _params, socket) do
+    {:noreply, push_event(socket, "clipboard-copy", %{text: copy_log_text(socket.assigns.swarm)})}
+  end
+
   def handle_event("filter", params, socket) do
     socket =
       socket
@@ -260,6 +266,38 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   defp put_if(opts, _k, ""), do: opts
   defp put_if(opts, k, v), do: Map.put(opts, k, v)
+
+  # Plain-text engine log for the clipboard: release header + one line per event,
+  # metadata JSON inline (that's where agent_stopped's exit_status/buffer_tail live).
+  defp copy_log_text(swarm) do
+    header = "release #{release_tag()} — engine log, last 10 min (times UTC)"
+
+    case SwarmClient.events(swarm, %{minutes: 10, limit: 500}) do
+      {:ok, events} ->
+        [header | Enum.map(events, &copy_log_line/1)] |> Enum.join("\n")
+
+      {:error, reason} ->
+        header <> "\n(events fetch failed: #{inspect(reason)})"
+    end
+  end
+
+  defp copy_log_line(e) do
+    base =
+      [ts_hms(e["timestamp"]), e["level"], e["category"], e["agent"] || "-", e["message"]]
+      |> Enum.map(&to_string/1)
+      |> Enum.join("  ")
+
+    case e["metadata"] do
+      m when is_map(m) and map_size(m) > 0 -> base <> "  | meta " <> Jason.encode!(m)
+      _ -> base
+    end
+  end
+
+  defp ts_hms(iso) when is_binary(iso), do: String.slice(iso, 11, 8)
+  defp ts_hms(_), do: "--:--:--"
+
+  # Same source as the sidebar stamp (Layouts.release_tag/0 is private there).
+  defp release_tag, do: System.get_env("RELEASE_TAG") || "dev"
 
   defp put_minutes(opts, ""), do: opts
 
@@ -472,6 +510,17 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
               placeholder="contains text"
               class="input input-bordered input-sm w-40"
             />
+            <%!-- one-click debugging handoff: release + last 10 min, metadata inline --%>
+            <button
+              type="button"
+              id="copy-log"
+              phx-hook="ClipboardCopy"
+              phx-click="copy_log"
+              class="btn btn-sm btn-ghost gap-1.5 ml-auto"
+              title="copy the deployed release + the last 10 minutes of engine log (with metadata) to the clipboard"
+            >
+              <.icon name="hero-clipboard-document" class="size-4" /> copy 10m
+            </button>
           </form>
 
           <.panel title="Engine log" body_class="px-4 py-2">

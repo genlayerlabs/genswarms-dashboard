@@ -245,7 +245,15 @@ defmodule GenswarmsDashboard.Aggregate do
       key = to_string(key)
 
       if safe_metadata_key?(key) do
-        case safe_public_value(value) do
+        # buffer_tail is crash output — it legitimately contains paths ("/dev/fuse"),
+        # which the generic string filter rejects wholesale. Redact the secret-shaped
+        # substrings instead of dropping the whole diagnostic.
+        safe_value =
+          if key == "buffer_tail",
+            do: safe_tail_value(value),
+            else: safe_public_value(value)
+
+        case safe_value do
           nil -> acc
           value -> Map.put(acc, key, value)
         end
@@ -266,8 +274,12 @@ defmodule GenswarmsDashboard.Aggregate do
 
   defp get_any(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
 
+  # exit_status + buffer_tail are the agent_stopped crash forensics (the port's
+  # exit code and the dying process's last output) — without them the operator
+  # sees a bare "agent stopped" and has to reach for kubectl. buffer_tail still
+  # passes through unsafe_public_string? like every other string value.
   defp safe_metadata_key?(key),
-    do: key in ~w(action agent from kind reason source slot state status to type)
+    do: key in ~w(action agent from kind reason source slot state status to type exit_status buffer_tail)
 
   defp safe_public_value(value) when is_atom(value) and value not in [nil, true, false],
     do: to_string(value)
@@ -285,6 +297,18 @@ defmodule GenswarmsDashboard.Aggregate do
     String.contains?(value, ["/", "://", "sk-", "Bearer ", "tg:"]) or
       Regex.match?(~r/0x[0-9a-fA-F]{40}/, value)
   end
+
+  # buffer_tail keeps its paths (they ARE the diagnostic) but never ships
+  # secret- or identity-shaped substrings.
+  defp safe_tail_value(value) when is_binary(value) do
+    value
+    |> String.replace(~r/sk-[A-Za-z0-9_-]{8,}/, "sk-…")
+    |> String.replace(~r/Bearer\s+\S+/, "Bearer …")
+    |> String.replace(~r/tg:[0-9:]+/, "tg:…")
+    |> String.replace(~r/0x[0-9a-fA-F]{40}/, "0x…")
+  end
+
+  defp safe_tail_value(_value), do: nil
 
   defp stringify_public_keys(%{} = map) do
     Map.new(map, fn {key, value} -> {to_string(key), stringify_public_keys(value)} end)
