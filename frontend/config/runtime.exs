@@ -36,7 +36,13 @@ config :subzero_swarm_dashboard,
   events_poll_ms: String.to_integer(System.get_env("DASHBOARD_EVENTS_POLL_MS", "700")),
   stall_after_ms: String.to_integer(System.get_env("DASHBOARD_STALL_AFTER_MS", "180000")),
   # sensitive gate: user transcripts hidden until revealed unless "shown"
-  reveal_transcripts_default: System.get_env("DASHBOARD_TRANSCRIPTS_DEFAULT") == "shown"
+  reveal_transcripts_default: System.get_env("DASHBOARD_TRANSCRIPTS_DEFAULT") == "shown",
+  # ── configurator (WRITE surface) — fail-closed: both unset ⇒ Config page is
+  # read-only and no engine mutation is possible from this app. Points at the
+  # genswarms ENGINE REST API (not the dashboard backend, which stays
+  # read-only); the engine's own GENSWARMS_API_TOKEN auth is the server gate.
+  configurator_engine_url: System.get_env("CONFIGURATOR_ENGINE_URL"),
+  configurator_engine_token: System.get_env("CONFIGURATOR_ENGINE_TOKEN")
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
