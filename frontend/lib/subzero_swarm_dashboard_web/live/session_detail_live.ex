@@ -211,7 +211,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
     ~H"""
     <div class="flex items-center justify-between mb-2">
-      <span class="text-xs opacity-60">source: {@source}</span>
+      <span class="text-xs opacity-60">
+        {if @source == "store", do: "saved to the database · survives restarts", else: "source: #{@source}"}
+      </span>
       <button type="button" phx-click="transcripts_hide" class="btn btn-ghost btn-xs gap-1 opacity-60">
         <.icon name="hero-eye-slash" class="size-3.5" /> hide
       </button>

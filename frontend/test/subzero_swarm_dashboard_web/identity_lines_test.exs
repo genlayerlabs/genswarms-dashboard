@@ -19,4 +19,24 @@ defmodule SubzeroSwarmDashboardWeb.IdentityLinesTest do
     assert lines.primary == "Pouya"
     assert lines.secondary == "@pouya24300"
   end
+
+  # Prod 2026-07-07: a forum group produced two rows both labeled the raw chat
+  # id ("-1003762806404") — indistinguishable from each other and not a person.
+  test "a group label that IS the raw chat id yields the Group chat treatment" do
+    lines = identity_lines(nil, "tg:-1003762806404:1278", "-1003762806404")
+    assert lines.primary == "Group chat"
+    assert lines.monogram == "⌗"
+  end
+
+  test "two topics of the same forum group get distinct secondary lines" do
+    general = identity_lines(nil, "tg:-1003762806404:0", "-1003762806404")
+    topic = identity_lines(nil, "tg:-1003762806404:1278", "-1003762806404")
+    assert general.secondary != topic.secondary
+    assert topic.secondary =~ "1278"
+  end
+
+  test "a real group title label is kept as the primary line" do
+    lines = identity_lines(nil, "tg:-1003762806404:0", "GenLayer Community")
+    assert lines.primary == "GenLayer Community"
+  end
 end

@@ -137,7 +137,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   tabindex="0"
                 >
                   <td>
-                    <.identity user={s["user"]} session_id={s["session_id"]} label={s["label"]} />
+                    <div class="flex items-center gap-2 min-w-0">
+                      <.identity user={s["user"]} session_id={s["session_id"]} label={s["label"]} />
+                      <span :if={topic_of(s)} class="badge badge-outline badge-xs font-mono shrink-0">
+                        topic {topic_of(s)}
+                      </span>
+                    </div>
                   </td>
                   <td><.live_dot state={s["state"]} label /></td>
                   <td><.reply_badge status={@statuses[s["session_id"]]} /></td>
@@ -205,6 +210,15 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     </Layouts.app>
     """
   end
+
+  # A forum group's sub-thread, straight from the adapter's transport_ref DATA
+  # (never parsed out of the cid). Only meaningful for group chats; the
+  # transport's "default thread" sentinels (nil/""/"0") render nothing.
+  defp topic_of(%{"metadata" => %{"chat_type" => "group"}, "transport_ref" => %{"thread_id" => t}})
+       when t not in [nil, "", "0"],
+       do: t
+
+  defp topic_of(_session), do: nil
 
   defp filter(nil, _q), do: []
 

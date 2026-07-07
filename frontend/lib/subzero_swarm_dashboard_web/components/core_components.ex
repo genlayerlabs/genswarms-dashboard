@@ -626,29 +626,29 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
             </span>
           </div>
 
-          <%!-- ONE timeline. The live slot log already IS the interleaved record
-                (real turns + tool machinery in true order), so when it exists it is
-                the timeline and the durable transcript collapses to a backbone;
-                when the slot is gone, the durable conversation IS the timeline. --%>
-          <.panel title="Timeline" body_class="p-4">
+          <%!-- Conversation FIRST. The user↔assistant exchange (durable store,
+                survives restarts) is what an operator opens the inspector for;
+                the slot's raw working log (model calls, tool runs) is machinery
+                and lives collapsed below — expanded only when there is no saved
+                conversation to show instead. --%>
+          <.panel title="Conversation" body_class="p-4">
             <:meta>
-              <span class="font-mono">{timeline_source(@activity, @transcript)}</span>
+              <span :if={transcript_turns(@transcript) != []} class="text-xs">
+                saved to the database · survives restarts
+              </span>
             </:meta>
-            <%= if activity_present?(@activity) do %>
-              <details :if={transcript_turns(@transcript) != []} class="mb-3">
-                <summary class="cursor-pointer text-xs opacity-60">
-                  durable history · {length(transcript_turns(@transcript))} turns (survives restarts)
-                </summary>
-                <div class="mt-2"><.inspector_transcript transcript={@transcript} /></div>
-              </details>
-              <.activity_timeline activity={@activity} />
-            <% else %>
-              <.inspector_transcript transcript={@transcript} />
-              <p :if={match?({:ok, _}, @activity)} class="text-xs opacity-45 mt-3">
-                raw slot activity unavailable (slot recycled or never ran) — showing the
-                durable conversation
-              </p>
-            <% end %>
+            <.inspector_transcript transcript={@transcript} />
+            <details
+              :if={activity_present?(@activity)}
+              class="mt-3 pt-3 border-t border-base-300/60"
+              open={transcript_turns(@transcript) == []}
+            >
+              <summary class="cursor-pointer text-xs opacity-60">
+                agent activity · the slot's raw working log (model calls, tool runs — wiped
+                when the slot recycles)
+              </summary>
+              <div class="mt-2"><.activity_timeline activity={@activity} /></div>
+            </details>
           </.panel>
         </div>
       </aside>
@@ -681,12 +681,11 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   # Full durable transcript — every turn, untruncated, as chat bubbles (mirrors the
   # dedicated session page so the inspector is a complete view, not a peek).
-  defp inspector_transcript(%{transcript: {:ok, %{"turns" => [_ | _] = turns} = body}} = assigns) do
-    assigns = assign(assigns, turns: turns, source: body["source"])
+  defp inspector_transcript(%{transcript: {:ok, %{"turns" => [_ | _] = turns}}} = assigns) do
+    assigns = assign(assigns, turns: turns)
 
     ~H"""
-    <div class="flex items-center justify-between mb-2">
-      <span :if={@source} class="text-xs opacity-50">source: {@source}</span>
+    <div class="flex items-center justify-end mb-2">
       <button type="button" phx-click="transcripts_hide" class="btn btn-ghost btn-xs gap-1 opacity-60">
         <.icon name="hero-eye-slash" class="size-3.5" /> hide
       </button>
@@ -700,11 +699,15 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     """
   end
 
-  defp inspector_transcript(%{transcript: {:ok, %{"source" => source}}} = assigns) do
-    assigns = assign(assigns, :source, source)
-
+  defp inspector_transcript(%{transcript: {:ok, %{"source" => "unavailable"}}} = assigns) do
     ~H"""
-    <div class="text-sm opacity-50">No transcript ({@source}).</div>
+    <div class="text-sm opacity-50">No saved conversation (persistence is off for this swarm).</div>
+    """
+  end
+
+  defp inspector_transcript(%{transcript: {:ok, _}} = assigns) do
+    ~H"""
+    <div class="text-sm opacity-50">No saved conversation turns yet.</div>
     """
   end
 
@@ -745,7 +748,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
       assign(assigns, rows: Enum.map(entries, &classify_activity/1), source: body["source"])
 
     ~H"""
-    <div :if={@source} class="text-xs opacity-50 mb-2">source: {@source}</div>
+    <div :if={@source} class="text-xs opacity-50 mb-2">{activity_source_label(@source)}</div>
     <ol class="relative border-l border-base-300 ml-2 space-y-3">
       <li :for={r <- @rows} class="ml-4">
         <span class={["absolute -left-1.5 top-1 w-3 h-3 rounded-full", activity_dot(r.kind)]}></span>
@@ -754,6 +757,10 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     </ol>
     """
   end
+
+  # "slot" is backend jargon (the leased agent's live log) — say what it means.
+  defp activity_source_label("slot"), do: "read live from the leased agent's session log"
+  defp activity_source_label(source), do: "source: #{source}"
 
   def activity_timeline(%{activity: {:ok, _}} = assigns),
     do: ~H"""
@@ -964,6 +971,11 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     at = handle && "@#{handle}"
     cid = short_cid(session_id)
 
+    # A label that IS the raw chat id adds nothing over the cid fallback — and
+    # for group chats it actively hides the "Group chat" treatment below (prod:
+    # two forum-topic rows both labeled "-1003762806404", indistinguishable).
+    label = if label == cid or label == session_id, do: nil, else: label
+
     cond do
       label ->
         # An adapter label that IS the @handle would render the same text twice
@@ -984,9 +996,11 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
       handle ->
         %{monogram: initial(handle), primary: at, secondary: cid, primary_mono: false}
 
-      # group/topic chat with no known speaker — the negative chat id isn't a person.
+      # group/topic chat with no known speaker — the negative chat id isn't a
+      # person. Secondary keeps the FULL session id: a forum group's topics
+      # share the chat id and only the trailing segment tells them apart.
       group_cid?(cid) ->
-        %{monogram: "⌗", primary: "Group chat", secondary: cid, primary_mono: false}
+        %{monogram: "⌗", primary: "Group chat", secondary: session_id, primary_mono: false}
 
       true ->
         %{monogram: "#", primary: cid || "unknown", secondary: nil, primary_mono: true}
@@ -1028,21 +1042,12 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp chat_type(%{"metadata" => %{"chat_type" => t}}) when is_binary(t), do: t
   defp chat_type(_), do: nil
 
-  # ── inspector timeline source selection ──────────────────────────────────────
+  # ── inspector content selection ──────────────────────────────────────────────
   defp activity_present?({:ok, %{"logs" => [_ | _]}}), do: true
   defp activity_present?(_activity), do: false
 
   defp transcript_turns({:ok, %{"turns" => turns}}) when is_list(turns), do: turns
   defp transcript_turns(_transcript), do: []
-
-  defp timeline_source(activity, transcript) do
-    cond do
-      activity_present?(activity) -> "live slot log"
-      transcript_turns(transcript) != [] -> "durable store"
-      activity == :loading or transcript == :loading -> "loading…"
-      true -> "no data"
-    end
-  end
 
   defp present(nil), do: nil
   defp present(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)

@@ -192,12 +192,13 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     push_snap(view)
 
     html = view |> element("tr[phx-value-session_id='tg:1:0']") |> render_click()
-    # The inspector shows ONE timeline (live slot log when available, durable
-    # conversation otherwise) — no duplicated Conversation/Activity sections.
-    assert html =~ "Timeline"
+    # Conversation FIRST: the saved user↔assistant exchange is the inspector's
+    # main content; the slot's raw working log sits collapsed behind an
+    # "agent activity" disclosure (rendered once the async load lands).
+    assert html =~ "Conversation"
     assert html =~ "tg:1:0"
 
-    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Timeline"
+    refute view |> element("button[aria-label='Close']") |> render_click() =~ "Conversation"
   end
 
   test "session detail loads a transcript", %{conn: conn} do
