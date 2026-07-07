@@ -173,32 +173,35 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     row(state, ev, %{agent: from, text: "⇄ #{from} asked policy"})
   end
 
-  # Renamed kinds (browse→browser). Delegate to the legacy folds so counters/story
-  # stay identical during the cutover; drop the browse_* heads a release later.
-  defp fold("browser_dispatch", state, ev), do: fold("browse_dispatch", state, ev)
-  defp fold("browser_done", state, ev), do: fold("browse_done", state, ev)
+  # browser_* are the wire names since the browse→browser package rename; the
+  # legacy browse_* heads delegate INTO them (an old host still emitting the
+  # original vocabulary keeps folding). Counter keys (:browse_ok/:browse_total)
+  # deliberately keep their names — they feed the metrics_today translation and
+  # the KPI tiles, which speak the envelope's key, not the event kind.
+  defp fold("browse_dispatch", state, ev), do: fold("browser_dispatch", state, ev)
+  defp fold("browse_done", state, ev), do: fold("browser_done", state, ev)
 
-  defp fold("browse_dispatch", state, %{"agent" => name} = ev) when is_binary(name) do
+  defp fold("browser_dispatch", state, %{"agent" => name} = ev) when is_binary(name) do
     now = ts(ev, state)
 
     state =
       put_agent(state, %{
         get_agent(state, name)
         | state: :waiting,
-          wait_on: "browse",
+          wait_on: "browser",
           since: now,
           last_act: now
       })
 
-    row(state, ev, %{agent: name, text: "⏸ #{name} waiting on browse"})
+    row(state, ev, %{agent: name, text: "⏸ #{name} waiting on browser"})
   end
 
-  defp fold("browse_done", state, %{"agent" => name} = ev) when is_binary(name) do
+  defp fold("browser_done", state, %{"agent" => name} = ev) when is_binary(name) do
     now = ts(ev, state)
     verdict = ev["verdict"] || "?"
     ok? = browse_ok?(verdict)
     ag = get_agent(state, name)
-    waiting? = ag.state == :waiting and ag.wait_on == "browse"
+    waiting? = ag.state == :waiting and ag.wait_on == "browser"
 
     state = bump(state, :browse_total)
     state = if ok?, do: bump(state, :browse_ok), else: state
@@ -210,8 +213,8 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     text =
       if waiting?,
-        do: "▶ resumed — browse #{verdict} in #{fmt(now - ag.since)}s",
-        else: "▶ browse #{verdict}"
+        do: "▶ resumed — browser #{verdict} in #{fmt(now - ag.since)}s",
+        else: "▶ browser #{verdict}"
 
     if ok?,
       do: row(state, ev, %{agent: name, text: text}),

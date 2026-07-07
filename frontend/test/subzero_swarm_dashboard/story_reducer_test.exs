@@ -172,14 +172,14 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
         ])
 
       assert state.agents[@agent].state == :waiting
-      assert state.agents[@agent].wait_on == "browse"
+      assert state.agents[@agent].wait_on == "browser"
 
       state = fold([ev("browse_done", 4, 105.9, %{"agent" => @agent, "verdict" => "ok"})], state)
 
       assert state.agents[@agent].state == :thinking
       assert state.counters.browse_ok == 1
       assert state.counters.browse_total == 1
-      assert hd(state.story).text =~ "browse ok in 3.9s"
+      assert hd(state.story).text =~ "browser ok in 3.9s"
       assert state.issues == []
     end
 
@@ -198,8 +198,8 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     end
   end
 
-  describe "browser (renamed kind)" do
-    test "browser_dispatch/browser_done park+resume and count identically to legacy" do
+  describe "browse_* (legacy kind, pre-rename hosts)" do
+    test "browse_dispatch/browse_done delegate into the browser folds identically" do
       state =
         fold([
           ev("browser_dispatch", 1, 100.0, %{"agent" => @agent, "url" => "https://x"}),
@@ -208,7 +208,7 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
 
       assert state.counters.browse_total == 1
       assert state.counters.browse_ok == 1
-      assert hd(state.story).text =~ "browse ok"
+      assert hd(state.story).text =~ "browser ok"
     end
   end
 
@@ -358,7 +358,7 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
         ])
 
       assert state.agents[@agent].state == :waiting
-      assert state.agents[@agent].wait_on == "browse"
+      assert state.agents[@agent].wait_on == "browser"
       assert state.counters.compactions == 1
       assert hd(state.story).text =~ "compacting"
       assert state.issues == []

@@ -267,7 +267,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           value={today_val(@today, "compactions") || @k[:compactions] || 0}
           badge={today_val(@today, "compactions") && "today"}
         />
-        <.metric label="browse" value={browse_rate(@k)} />
+        <.metric label="browser" value={browse_rate(@k)} />
       </div>
     </.panel>
     """

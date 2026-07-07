@@ -132,7 +132,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewEventsLiveTest do
               opened_at: 100.0,
               elapsed_s: 12.4,
               stalled: false,
-              activity: "waiting on browse"
+              activity: "waiting on browser"
             }
           ],
           agents: [
@@ -149,7 +149,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewEventsLiveTest do
 
       assert has_element?(view, "#in-flight-panel")
       assert has_element?(view, "#in-flight-tg-1-0")
-      assert html =~ "waiting on browse"
+      assert html =~ "waiting on browser"
       assert html =~ "12.4s"
       # the snapshot join upgrades the cid's chat part to the real @handle
       assert html =~ "@albert"

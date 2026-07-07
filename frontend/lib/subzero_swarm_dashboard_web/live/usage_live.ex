@@ -115,7 +115,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           [
             %{label: "Replies", value: num(counter(today, "replies", kpis[:replies])), sub: nil},
             %{
-              label: "Browse ok",
+              label: "Browser ok",
               value: ok_rate(browse_ok, browse_total),
               sub: "#{num(browse_ok)}/#{num(browse_total)}"
             },

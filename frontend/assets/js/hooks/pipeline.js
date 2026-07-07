@@ -151,12 +151,12 @@ export const Pipeline = {
   // One code path: stepOne plays exactly one op. Manual stepping (paused) and the
   // causal scheduler both drive it, so ordering is always the feed's seq order.
   intake(ev) {
-    // browse→browser package rename: the wire now says browser_*, but every
-    // animation below (and the "browse" service node) speaks the original
-    // vocabulary — normalize at ingress, exactly like the Elixir reducer's
-    // fold("browser_*") delegation. Drop when the browse_* heads are dropped.
-    if (ev.kind === "browser_dispatch") ev = {...ev, kind: "browse_dispatch"}
-    if (ev.kind === "browser_done") ev = {...ev, kind: "browse_done"}
+    // browser_* are the wire names since the browse→browser package rename;
+    // normalize LEGACY browse_* at ingress (an old host still emitting the
+    // original vocabulary keeps animating) — mirror of the Elixir reducer's
+    // fold("browse_*") delegation.
+    if (ev.kind === "browse_dispatch") ev = {...ev, kind: "browser_dispatch"}
+    if (ev.kind === "browse_done") ev = {...ev, kind: "browser_done"}
     if (typeof ev.ts === "number") this.skew = Date.now() / 1000 - ev.ts
     if (this.paused || this.causal) {
       this.PENDING.push(ev)
@@ -224,10 +224,10 @@ export const Pipeline = {
         return "ingress"
       case "ask":
         return ev.from || null
-      case "browse_dispatch":
+      case "browser_dispatch":
         return ev.agent || null
-      case "browse_done":
-        return (this.AG[ev.agent] || {}).waitOn === "browse" ? "web" : "browse"
+      case "browser_done":
+        return (this.AG[ev.agent] || {}).waitOn === "browser" ? "web" : "browser"
       case "progress_sent":
       case "reply_sent":
         return (ev.cid && this.CID[ev.cid]) || "sender"
@@ -338,32 +338,32 @@ export const Pipeline = {
         ]
       }
 
-      case "browse_dispatch": {
+      case "browser_dispatch": {
         if (!agent) return []
         this.ensureNode(agent)
         return [
-          {a: agent, b: "browse", kind: "msg", st: () => this.setWaiting(agent, "browse", ts)},
-          {a: "browse", b: "web", kind: "browse", v: "dispatched"},
+          {a: agent, b: "browser", kind: "msg", st: () => this.setWaiting(agent, "browser", ts)},
+          {a: "browser", b: "web", kind: "browse", v: "dispatched"},
         ]
       }
 
-      case "browse_done": {
+      case "browser_done": {
         if (!agent) return []
         this.ensureNode(agent)
         const v = ev.verdict || ""
         const resume = () => {
           const ag = this.AG[agent]
-          if (ag && ag.state === "waiting" && ag.waitOn === "browse") this.setState(agent, "thinking", ts)
+          if (ag && ag.state === "waiting" && ag.waitOn === "browser") this.setState(agent, "thinking", ts)
         }
         const ag = this.AG[agent]
-        if (ag && ag.state === "waiting" && ag.waitOn === "browse") {
+        if (ag && ag.state === "waiting" && ag.waitOn === "browser") {
           // the reply travels web → browse → agent; the resume applies on arrival
           return [
-            {a: "web", b: "browse", kind: "reply", v},
-            {a: "browse", b: agent, kind: "reply", v, st: resume},
+            {a: "web", b: "browser", kind: "reply", v},
+            {a: "browser", b: agent, kind: "reply", v, st: resume},
           ]
         }
-        return [{a: "browse", b: agent, kind: "reply", v, st: resume}]
+        return [{a: "browser", b: agent, kind: "reply", v, st: resume}]
       }
 
       case "progress_sent": {

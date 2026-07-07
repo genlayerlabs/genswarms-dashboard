@@ -65,7 +65,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
           opened_at: 1.0,
           elapsed_s: 12.4,
           stalled: false,
-          activity: "waiting on browse"
+          activity: "waiting on browser"
         }
       ],
       agents: [],
@@ -78,7 +78,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     html = render(view)
 
     assert html =~ "@568"
-    assert html =~ "waiting on browse"
+    assert html =~ "waiting on browser"
     assert html =~ "12.4s"
     refute html =~ "feed unavailable"
   end

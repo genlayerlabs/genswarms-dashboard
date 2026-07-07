@@ -70,7 +70,7 @@ config :subzero_swarm_dashboard, :pipeline_layout, %{
     %{name: "sender", x: 0.76, y: 0.50, kind: "obj", r: 18},
     %{name: "rally", x: 0.21, y: 0.13, kind: "obj", r: 18},
     %{name: "policy", x: 0.38, y: 0.13, kind: "obj", r: 18},
-    %{name: "browse", x: 0.57, y: 0.13, kind: "obj", r: 18},
+    %{name: "browser", x: 0.57, y: 0.13, kind: "obj", r: 18},
     %{name: "web", x: 0.74, y: 0.13, kind: "ext", r: 14},
     %{name: "roster", x: 0.26, y: 0.87, kind: "obj", r: 18},
     %{name: "commands", x: 0.40, y: 0.87, kind: "obj", r: 18},
