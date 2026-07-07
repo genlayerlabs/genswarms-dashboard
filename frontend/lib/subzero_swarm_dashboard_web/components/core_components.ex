@@ -966,7 +966,14 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
     cond do
       label ->
-        %{monogram: initial(label), primary: label, secondary: at || cid, primary_mono: false}
+        # An adapter label that IS the @handle would render the same text twice
+        # ("@pouya24300" over "@pouya24300") — fall back to the cid instead.
+        %{
+          monogram: initial(label),
+          primary: label,
+          secondary: (at != label && at) || cid,
+          primary_mono: false
+        }
 
       name && handle ->
         %{monogram: initial(name), primary: name, secondary: at, primary_mono: false}

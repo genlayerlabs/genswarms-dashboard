@@ -8,10 +8,15 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   @reply_skew_s 5
 
   @impl true
-  def mount(_params, _session, socket), do: {:ok, assign(socket, page_title: "Sessions", q: "")}
+  def mount(_params, _session, socket),
+    do: {:ok, assign(socket, page_title: "Sessions", q: "", show_idle: false)}
 
   @impl true
   def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, q: q)}
+
+  @impl true
+  def handle_event("toggle_idle", _params, socket),
+    do: {:noreply, assign(socket, show_idle: !socket.assigns.show_idle)}
 
   @impl true
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -21,14 +26,30 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     sessions = filter(assigns[:snapshot], assigns.q)
     now = System.os_time(:second)
     deliveries = deliveries(assigns[:snapshot])
+    suppressed = suppressed_by_cid(assigns.story)
+
+    statuses =
+      Map.new(sessions, &{&1["session_id"], reply_status(&1, deliveries, suppressed, now)})
+
+    sessions = sort_by_attention(sessions, statuses)
+
+    # Search overrides the idle collapse: a query must show every match.
+    {shown, idle_hidden} =
+      if assigns.q == "" and not assigns.show_idle do
+        Enum.split_with(sessions, &(statuses[&1["session_id"]] != :idle))
+      else
+        {sessions, []}
+      end
 
     assigns =
       assign(assigns,
         sessions: sessions,
+        shown: shown,
+        idle_hidden_count: length(idle_hidden),
+        statuses: statuses,
         live_count: Enum.count(sessions, &(&1["state"] == "active")),
-        deliveries: deliveries,
-        now: now,
-        unanswered: Enum.count(sessions, &(reply_status(&1, deliveries, now) == :unanswered)),
+        unanswered: Enum.count(statuses, fn {_, st} -> st == :unanswered end),
+        suppressed_count: Enum.count(statuses, fn {_, st} -> st == :suppressed end),
         issues_by_cid: story_issues(assigns.story),
         audience: audience(assigns[:snapshot])
       )
@@ -69,6 +90,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
           >
             ⚠ {@unanswered} unanswered
           </span>
+          <span
+            :if={@snapshot && @suppressed_count > 0}
+            class={["badge badge-ghost badge-sm gap-1", @unanswered == 0 && "ml-auto"]}
+            title="replies withheld by the sender's spam window — policy, not a failure"
+          >
+            🤫 {@suppressed_count} suppressed
+          </span>
         </div>
 
         <.panel
@@ -100,7 +128,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
               </thead>
               <tbody>
                 <tr
-                  :for={s <- @sessions}
+                  :for={s <- @shown}
                   class="row-press"
                   phx-click="inspect"
                   phx-keydown="inspect"
@@ -112,7 +140,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                     <.identity user={s["user"]} session_id={s["session_id"]} label={s["label"]} />
                   </td>
                   <td><.live_dot state={s["state"]} label /></td>
-                  <td><.reply_badge status={reply_status(s, @deliveries, @now)} /></td>
+                  <td><.reply_badge status={@statuses[s["session_id"]]} /></td>
                   <td>
                     <.issue_badge
                       sid={s["session_id"]}
@@ -132,6 +160,28 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                     >
                       <.icon name="hero-arrow-up-right" class="size-4 opacity-60" />
                     </.link>
+                  </td>
+                </tr>
+                <tr :if={@idle_hidden_count > 0}>
+                  <td colspan="7" class="p-0">
+                    <button
+                      type="button"
+                      phx-click="toggle_idle"
+                      class="w-full py-2 text-xs opacity-60 hover:opacity-100 text-center"
+                    >
+                      — {@idle_hidden_count} idle sessions — show
+                    </button>
+                  </td>
+                </tr>
+                <tr :if={@show_idle and @q == "" and Enum.any?(@statuses, fn {_, st} -> st == :idle end)}>
+                  <td colspan="7" class="p-0">
+                    <button
+                      type="button"
+                      phx-click="toggle_idle"
+                      class="w-full py-2 text-xs opacity-60 hover:opacity-100 text-center"
+                    >
+                      — hide idle sessions —
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -234,19 +284,52 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   Did we answer the last inbound? Compares ingress's `last_activity` (inbound)
   with the sender's last delivery (outbound) for this conversation. ALL times are
   unix SECONDS: `now` and the delivery `at` are `System.os_time(:second)`-scale,
-  and `last_activity` is an ISO8601 string parsed with `to_unix/1`. Keeping every
-  side in seconds is the contract this guards. Public for unit tests.
+  `last_activity` is an ISO8601 string parsed with `to_unix/1`, and a suppression
+  ts is the feed event's float epoch seconds. Keeping every side in seconds is
+  the contract this guards. Public for unit tests.
+
+  The 4-arity adds `suppressed`: cid => latest `reply_suppressed` story-row ts.
+  A suppression at/after the inbound classifies as `:suppressed` — the bot CHOSE
+  silence (spam window), which must not render as the `:unanswered` alarm (a
+  stall). A real delivery still wins: answered is checked first.
   """
-  def reply_status(session, deliveries, now) do
+  def reply_status(session, deliveries, now), do: reply_status(session, deliveries, %{}, now)
+
+  def reply_status(session, deliveries, suppressed, now) do
     last_in = to_unix(session["last_activity"])
     last_send = (deliveries[session["session_id"]] || %{})["at"]
+    last_supp = suppressed[session["session_id"]]
 
     cond do
       is_nil(last_in) -> :idle
       is_integer(last_send) and last_send >= last_in - @reply_skew_s -> :answered
+      is_number(last_supp) and last_supp >= last_in - @reply_skew_s -> :suppressed
       now - last_in <= @reply_grace_s -> :pending
       true -> :unanswered
     end
+  end
+
+  # cid => latest reply_suppressed ts, from the story tail (the reducer already
+  # folds the feed's reply_suppressed events — nothing new crosses the wire).
+  defp suppressed_by_cid(nil), do: %{}
+
+  defp suppressed_by_cid(story) do
+    (story[:story] || [])
+    |> Enum.filter(&(&1.kind == "reply_suppressed" and is_binary(&1.cid)))
+    |> Enum.reduce(%{}, fn r, acc -> Map.update(acc, r.cid, r.ts, &max(&1, r.ts)) end)
+  end
+
+  # Attention-first: the row that hurts most goes on top. Unanswered sort oldest
+  # first (longest-waiting user at the very top); every other bucket sorts most
+  # recent first. Public for unit tests.
+  @attention_rank %{unanswered: 0, pending: 1, suppressed: 2, answered: 3, idle: 4}
+
+  def sort_by_attention(sessions, statuses) do
+    Enum.sort_by(sessions, fn s ->
+      st = statuses[s["session_id"]] || :idle
+      la = to_unix(s["last_activity"]) || 0
+      {@attention_rank[st], if(st == :unanswered, do: la, else: -la)}
+    end)
   end
 
   defp to_unix(iso) when is_binary(iso) do
@@ -282,6 +365,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
       title="received a message but never replied"
     >
       ⚠ no reply
+    </span>
+    <span
+      :if={@status == :suppressed}
+      class="badge badge-ghost badge-xs"
+      title="reply withheld by the sender's spam window — policy, not a failure"
+    >
+      🤫 suppressed
     </span>
     <span :if={@status == :idle} class="opacity-40 text-xs">—</span>
     """
