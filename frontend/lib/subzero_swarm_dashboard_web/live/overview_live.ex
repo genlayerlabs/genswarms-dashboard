@@ -76,7 +76,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           <.in_flight_panel story={@story} snapshot={@snapshot} />
           <div class="grid lg:grid-cols-2 gap-5">
             <.agents_panel story={@story} snapshot={@snapshot} />
-            <.issues_panel story={@story} />
+            <.issues_panel story={@story} snapshot={@snapshot} />
           </div>
           <.kpi_panel story={@story} snapshot={@snapshot} />
         <% end %>
@@ -274,9 +274,14 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   end
 
   attr :story, :map, required: true
+  attr :snapshot, :map, default: nil
 
   defp issues_panel(assigns) do
-    assigns = assign(assigns, :issues, assigns.story[:issues] || [])
+    assigns =
+      assign(assigns,
+        issues: dedupe_issues(assigns.story[:issues] || []),
+        who: session_who(assigns.snapshot)
+      )
 
     ~H"""
     <.panel id="issues-panel" title="Issues">
@@ -297,8 +302,12 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           <span class="opacity-50 whitespace-nowrap">
             <.local_time id={"issue-#{i}-t"} ts={issue.ts} />
           </span>
-          <span class="w-28 truncate opacity-70">{issue.cid || issue.agent}</span>
-          <span class="flex-1 truncate text-warning">{issue.text}</span>
+          <span class="w-28 truncate opacity-70" title={issue.cid}>
+            {@who[issue.cid] || issue.cid || issue.agent}
+          </span>
+          <span class="flex-1 truncate text-warning">
+            {issue.text}<span :if={issue.count > 1} class="opacity-60"> ×{issue.count}</span>
+          </span>
           <.link navigate={issue_href(issue)} class="link link-hover opacity-70 whitespace-nowrap">
             events →
           </.link>
@@ -306,6 +315,31 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       </div>
     </.panel>
     """
+  end
+
+  # Same defect repeating ("browse blocked" every retry) collapses to ONE row
+  # carrying the LATEST ts and a ×N count — the operator reads "still happening,
+  # N times", not a wall of identical lines. Keyed by (who, text); newest first.
+  defp dedupe_issues(issues) do
+    issues
+    |> Enum.group_by(&{&1.cid || &1.agent, &1.text})
+    |> Enum.map(fn {_k, group} ->
+      latest = Enum.max_by(group, & &1.ts)
+      Map.put(latest, :count, length(group))
+    end)
+    |> Enum.sort_by(& &1.ts, :desc)
+  end
+
+  # cid => "@handle" from the snapshot's sessions — issues name PEOPLE, not
+  # transport ids, whenever the join is available (raw cid stays as tooltip).
+  defp session_who(nil), do: %{}
+
+  defp session_who(snap) do
+    for s <- snap["sessions"] || [],
+        handle = get_in(s, ["user", "handle"]),
+        is_binary(handle) and handle != "",
+        into: %{},
+        do: {s["session_id"], "@" <> handle}
   end
 
   # ── components ───────────────────────────────────────────────────────────────

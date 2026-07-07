@@ -51,6 +51,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
         unanswered: Enum.count(statuses, fn {_, st} -> st == :unanswered end),
         suppressed_count: Enum.count(statuses, fn {_, st} -> st == :suppressed end),
         issues_by_cid: story_issues(assigns.story),
+        modes_by_cid: modes_by_cid(assigns[:snapshot]),
         audience: audience(assigns[:snapshot])
       )
 
@@ -120,6 +121,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   <th>User</th>
                   <th>State</th>
                   <th>Reply</th>
+                  <th>Mode</th>
                   <th>Issues</th>
                   <th>Agent</th>
                   <th>Last seen</th>
@@ -141,6 +143,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   </td>
                   <td><.live_dot state={s["state"]} label /></td>
                   <td><.reply_badge status={@statuses[s["session_id"]]} /></td>
+                  <td><.mode_badge mode={@modes_by_cid[s["session_id"]]} /></td>
                   <td>
                     <.issue_badge
                       sid={s["session_id"]}
@@ -163,7 +166,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   </td>
                 </tr>
                 <tr :if={@idle_hidden_count > 0}>
-                  <td colspan="7" class="p-0">
+                  <td colspan="8" class="p-0">
                     <button
                       type="button"
                       phx-click="toggle_idle"
@@ -174,7 +177,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   </td>
                 </tr>
                 <tr :if={@show_idle and @q == "" and Enum.any?(@statuses, fn {_, st} -> st == :idle end)}>
-                  <td colspan="7" class="p-0">
+                  <td colspan="8" class="p-0">
                     <button
                       type="button"
                       phx-click="toggle_idle"
@@ -187,21 +190,6 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
               </tbody>
             </table>
           <% end %>
-        </.panel>
-
-        <.panel :if={consumers(@snapshot)} title="Consumers">
-          <:meta>
-            <span class="font-mono tnum">{consumers(@snapshot)["count"]}</span>
-          </:meta>
-          <table class="table table-xs">
-            <tbody>
-              <tr :for={c <- consumers(@snapshot)["items"] || []}>
-                <td class="font-mono text-xs">{c["session_id"]}</td>
-                <td>{c["mode"]}</td>
-                <td class="opacity-60">{if c["opt_out"], do: "opted out"}</td>
-              </tr>
-            </tbody>
-          </table>
         </.panel>
 
         <.panel :if={@audience} id="audience-footer" title="Audience">
@@ -247,8 +235,33 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     Enum.any?(haystack, &String.contains?(&1, q))
   end
 
-  defp consumers(nil), do: nil
-  defp consumers(snap), do: get_in(snap, ["extensions", "consumers"])
+  # The old Consumers panel was 139 raw cids duplicating this table — its one
+  # useful fact (the push-mode tier + opt-out) now lives on each session row.
+  defp modes_by_cid(nil), do: %{}
+
+  defp modes_by_cid(snap) do
+    for c <- get_in(snap, ["extensions", "consumers", "items"]) || [],
+        is_binary(c["session_id"]),
+        into: %{},
+        do: {c["session_id"], %{mode: c["mode"], opt_out: c["opt_out"] == true}}
+  end
+
+  attr :mode, :any, default: nil
+
+  defp mode_badge(%{mode: nil} = assigns) do
+    ~H"""
+    <span class="opacity-40 text-xs">—</span>
+    """
+  end
+
+  defp mode_badge(assigns) do
+    ~H"""
+    <span class="text-xs opacity-70">{@mode.mode}</span>
+    <span :if={@mode.opt_out} class="badge badge-ghost badge-xs" title="opted out of proactive pushes">
+      opted out
+    </span>
+    """
+  end
 
   # ── per-row issue badges (spec §5.6 Sessions) ───────────────────────────────
   # The @story issues tail is already 24h-windowed by the reducer's tick — just

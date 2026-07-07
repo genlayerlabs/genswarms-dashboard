@@ -44,6 +44,15 @@ config :subzero_swarm_dashboard,
   configurator_engine_url: System.get_env("CONFIGURATOR_ENGINE_URL"),
   configurator_engine_token: System.get_env("CONFIGURATOR_ENGINE_TOKEN")
 
+# Story/issues restart persistence (EventsFeed): default is the OS tmp dir,
+# which survives a process restart on a long-lived host — but NOT a k8s pod
+# replacement, where /tmp dies with the pod and every deploy wipes the 24h
+# Issues window. Point this at a mounted volume there. Set only when present:
+# `config ... key: nil` would SHADOW the compiled default.
+if path = System.get_env("STORY_SNAPSHOT_PATH") do
+  config :subzero_swarm_dashboard, story_snapshot_path: path
+end
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

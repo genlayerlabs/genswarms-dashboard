@@ -50,11 +50,19 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
      |> assign_new_skills(swarm, id)}
   end
 
-  # Live refresh: re-fetch transcript + activity + requests on every snapshot tick
-  # (same pulse as the rest of the page). :load re-assigns without a loading flash.
-  def handle_info({:snapshot, _snap}, socket) do
-    if connected?(socket), do: send(self(), :load)
-    {:noreply, socket}
+  # Live refresh: re-fetch transcript + activity + requests when THIS session
+  # moved — not on every 3s snapshot tick. Each :load is 3 HTTP round-trips to
+  # the backend (over a VPN for a remote swarm), so an idle conversation left
+  # open in a tab must not poll forever; `last_activity` is the change signal.
+  def handle_info({:snapshot, snap}, socket) do
+    last = session_last_activity(snap, socket.assigns.session_id)
+
+    if connected?(socket) and last != socket.assigns[:last_activity_seen] do
+      send(self(), :load)
+      {:noreply, assign(socket, last_activity_seen: last)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -245,6 +253,16 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
   defp find_session(nil, _id), do: nil
   defp find_session(snap, id), do: Enum.find(snap["sessions"] || [], &(&1["session_id"] == id))
+
+  # The change signal for the refetch gate. A session missing from the snapshot
+  # (evicted/idle-trimmed) yields nil — which still differs from a previous
+  # value exactly once, so the page does one final refresh and then rests.
+  defp session_last_activity(snap, id) do
+    case find_session(snap, id) do
+      %{"last_activity" => la} -> la
+      _ -> nil
+    end
+  end
 
   # ── REQUESTS: the event-derived lifecycle for this cid (spec §5.6) ──────────
   # Episodes come from the EventsFeed fold, newest first, refreshed on the same
