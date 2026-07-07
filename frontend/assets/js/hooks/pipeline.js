@@ -92,8 +92,12 @@ export const Pipeline = {
       this.layout()
     })
     // snapshot wins existence: slots appear before their first event (additive —
-    // a torn-down slot stays drawn idle rather than flickering between snapshots)
-    this.handleEvent("pipeline:agents", ({agents}) => {
+    // a torn-down slot stays drawn idle rather than flickering between snapshots).
+    // `handles` maps a leased slot to WHO it serves — labels prefer "@handle"
+    // over "agent_15"; the map is replaced wholesale so a released slot falls
+    // back to its slot name on the next snapshot.
+    this.handleEvent("pipeline:agents", ({agents, handles}) => {
+      this.HANDLES = handles || {}
       let changed = false
       for (const name of agents || []) {
         if (!this.FIXED.has(name) && !this.AGENTS.has(name)) {
@@ -586,13 +590,35 @@ export const Pipeline = {
       this.POS[n.name] = {x: n.x * W, y: n.y * H, r: n.r || 18, kind: n.kind || "obj"}
     let extra = 0
     for (const n of this.EXTRAS) this.POS[n] = {x: 0.9 * W, y: (0.74 - extra++ * 0.14) * H, r: 18, kind: "obj"}
-    const ags = [...this.AGENTS].sort()
+    // Agents fill a CENTERED GRID, not one endless column: a single column is
+    // clean at 16 slots and unreadable at 60. Rows are capped by a minimum
+    // pixel pitch (dot + label air); overflow wraps into extra columns spread
+    // around the column axis, column-major so numeric order reads top-down.
+    const ags = [...this.AGENTS].sort((a, b) => this.agentOrder(a, b))
     const colX = this.LAYOUT.agent_column_x || 0.47
-    const gap = Math.min(0.1, 0.66 / Math.max(ags.length - 1, 1))
+    const spanY = 0.66
+    const minPitch = 44
+    const maxRows = Math.max(1, Math.floor((spanY * H) / minPitch))
+    const cols = Math.max(1, Math.ceil(ags.length / maxRows))
+    const rows = Math.ceil(ags.length / cols)
+    const gapY = rows > 1 ? Math.min(0.1 * H, (spanY * H) / (rows - 1)) : 0
+    const colPitch = Math.min(120, (0.32 * W) / cols)
+    const r = cols > 2 ? 11 : 13
     ags.forEach((n, i) => {
-      const y = 0.5 + (i - (ags.length - 1) / 2) * gap
-      this.POS[n] = {x: colX * W, y: y * H, r: 13, kind: "agent"}
+      const c = Math.floor(i / rows)
+      const inCol = Math.min(rows, ags.length - c * rows)
+      const y = 0.5 * H + ((i % rows) - (inCol - 1) / 2) * gapY
+      const x = colX * W + (c - (cols - 1) / 2) * colPitch
+      this.POS[n] = {x, y, r, kind: "agent"}
     })
+  },
+
+  // agent_2 before agent_10: compare trailing numbers when both have one
+  agentOrder(a, b) {
+    const na = parseInt((String(a).match(/(\d+)$/) || [])[1], 10)
+    const nb = parseInt((String(b).match(/(\d+)$/) || [])[1], 10)
+    if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb
+    return a < b ? -1 : a > b ? 1 : 0
   },
 
   // reply legs curve back under the pipeline instead of cutting through it
@@ -782,7 +808,9 @@ export const Pipeline = {
       const ag = P.kind === "agent" ? this.AG[n] : null
       const st = ag ? ag.state : null
       const objBusy = P.kind !== "agent" && busyObjs[n]
-      const label = this.short(n)
+      // a leased slot wears its USER's name; free slots keep the short slot id
+      const label =
+        P.kind === "agent" && (this.HANDLES || {})[n] ? this.trunc(this.HANDLES[n]) : this.short(n)
       // chatter nodes recede so the user-request lane owns the eye
       const dim = P.kind !== "agent" && this.BG.has(n) && !objBusy ? 0.5 : 1
 
@@ -998,5 +1026,11 @@ export const Pipeline = {
 
   short(n) {
     return String(n).replace("wingston_agent_", "agent_").replace("conversation_sample", "convo")
+  },
+
+  // canvas labels share tight columns — long handles get an ellipsis
+  trunc(s) {
+    s = String(s)
+    return s.length > 14 ? s.slice(0, 13) + "…" : s
   },
 }

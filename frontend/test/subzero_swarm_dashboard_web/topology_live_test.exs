@@ -82,4 +82,40 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert html =~ "12.4s"
     refute html =~ "feed unavailable"
   end
+  describe "agent_handles/1 (canvas labels: slot => who it serves)" do
+    alias SubzeroSwarmDashboardWeb.TopologyLive
+
+    test "joins sessions to slots, @handle first, label/name fallbacks" do
+      snap = %{
+        "sessions" => [
+          %{"agent" => "wingston_agent_1", "state" => "active", "user" => %{"handle" => "kongtouquan"}},
+          %{"agent" => "wingston_agent_2", "state" => "active", "user" => %{}, "label" => "@CUPZ_0x"},
+          %{"agent" => "wingston_agent_3", "state" => "active", "user" => %{"name" => "Crypto Li"}},
+          %{"agent" => "wingston_agent_4", "state" => "active", "user" => %{}}
+        ]
+      }
+
+      assert TopologyLive.agent_handles(snap) == %{
+               "wingston_agent_1" => "@kongtouquan",
+               "wingston_agent_2" => "@CUPZ_0x",
+               "wingston_agent_3" => "Crypto Li"
+             }
+    end
+
+    test "an ACTIVE session beats an idle leftover on a recycled slot" do
+      snap = %{
+        "sessions" => [
+          %{"agent" => "wingston_agent_1", "state" => "active", "user" => %{"handle" => "now"}},
+          %{"agent" => "wingston_agent_1", "state" => "idle", "user" => %{"handle" => "before"}}
+        ]
+      }
+
+      assert TopologyLive.agent_handles(snap) == %{"wingston_agent_1" => "@now"}
+    end
+
+    test "no sessions / no agents → empty map (canvas falls back to slot ids)" do
+      assert TopologyLive.agent_handles(%{}) == %{}
+      assert TopologyLive.agent_handles(%{"sessions" => [%{"user" => %{"handle" => "x"}}]}) == %{}
+    end
+  end
 end

@@ -33,11 +33,14 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   # Agent nodes are dynamic. Precedence (spec §5.5): the snapshot wins existence
   # (which slots are in the pool), the event story wins activity state.
+  # `handles` labels a leased slot with WHO it serves — the canvas shows
+  # "@handle", not "agent_15".
   def handle_info({:snapshot, snap}, socket),
     do:
       {:noreply,
        push_event(socket, "pipeline:agents", %{
-         agents: agent_names(snap, socket.assigns.agent_re)
+         agents: agent_names(snap, socket.assigns.agent_re),
+         handles: agent_handles(snap)
        })}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -222,6 +225,37 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
         n["type"] == "agent",
         re == nil or Regex.match?(re, n["name"]),
         do: n["name"]
+  end
+
+  @doc """
+  agent slot => user display ("@handle" / adapter label / name) from the
+  snapshot's sessions, for the canvas labels. Active sessions win over idle
+  leftovers, so a recycled slot never wears the previous user's name. Public
+  for unit tests.
+  """
+  def agent_handles(snap) do
+    (snap["sessions"] || [])
+    |> Enum.filter(&is_binary(&1["agent"]))
+    # actives sort LAST so they win the Map.new overwrite
+    |> Enum.sort_by(&(&1["state"] == "active"))
+    |> Enum.reduce(%{}, fn s, acc ->
+      case session_display(s) do
+        nil -> acc
+        display -> Map.put(acc, s["agent"], display)
+      end
+    end)
+  end
+
+  defp session_display(s) do
+    handle = get_in(s, ["user", "handle"])
+    name = get_in(s, ["user", "name"])
+
+    cond do
+      is_binary(handle) and handle != "" -> "@" <> handle
+      is_binary(s["label"]) and s["label"] != "" -> s["label"]
+      is_binary(name) and name != "" -> name
+      true -> nil
+    end
   end
 
   # ── in-flight strip (TRUE state from @story — not the paced animation) ────────
