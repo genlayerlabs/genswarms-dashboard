@@ -205,6 +205,9 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     state = bump(state, :browse_total)
     state = if ok?, do: bump(state, :browse_ok), else: state
+    # policy denials counted apart from real failures: "blocked" means the
+    # allowlist/denylist said no (fix the policy), not that rendering broke
+    state = if browse_blocked?(verdict), do: bump(state, :browse_blocked), else: state
 
     state =
       if waiting?,
@@ -594,6 +597,8 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   end
 
   defp browse_ok?(verdict), do: is_binary(verdict) and String.starts_with?(verdict, "ok")
+
+  defp browse_blocked?(verdict), do: verdict in ["blocked", "not_allowed"]
 
   defp fmt(dur), do: :erlang.float_to_binary(dur / 1, decimals: 1)
 end

@@ -10,6 +10,20 @@ defmodule SubzeroSwarmDashboardWeb.StoryHelpers do
   @doc "Session deep link — cids may carry colons (e.g. a transport's <scheme>:<id>:<sub>), so url-base64."
   def session_href(cid), do: ~p"/sessions/#{Base.url_encode64(cid, padding: false)}"
 
+  @doc """
+  Turns queued behind an in-flight request, as ONE number. Two trackers see the
+  same backlog from different angles — the episode's open count (extra
+  request_opens on the cid) and the owning agent's mailbox queue — and showing
+  both (`·+1` next to the handle AND `(1 queued)` next to the activity) read as
+  two different facts. Take the max; they can only disagree transiently.
+  """
+  def queued_turns(story, ep) do
+    agent_q =
+      Enum.find_value((story && story[:agents]) || [], 0, &(&1.name == ep.agent and &1.queue))
+
+    max((ep.count || 1) - 1, (is_integer(agent_q) && agent_q) || 0)
+  end
+
   @doc "HH:MM from a DateTime or unix ts — the story honesty-label format."
   def hhmm(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M")
 

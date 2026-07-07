@@ -3,6 +3,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   alias SubzeroSwarmDashboard.RouterClient
   alias SubzeroSwarmDashboard.RouterUsageCache
+  alias SubzeroSwarmDashboardWeb.ReplyHealth
 
   # The router-usage card refreshes on its own slow pulse — every other card on
   # this page auto-updates, so a mount-once fetch froze visibly.
@@ -154,14 +155,15 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           class="flex items-center gap-3 font-mono text-sm py-2 first:pt-0 last:pb-0"
         >
           <span class="w-36 truncate font-semibold">
-            @{handle_for(@snapshot, ep.cid, ep.user)}<span
-              :if={ep.count > 1}
-              class="opacity-60 font-normal"
-            > ·+{ep.count - 1}</span>
+            @{handle_for(@snapshot, ep.cid, ep.user)}
           </span>
           <span class="w-36 truncate opacity-60">{ep.agent || "routing"}</span>
           <span class={["flex-1 truncate", (ep.stalled && "text-error") || "text-primary"]}>
-            {ep.activity}{queue_note(@story, ep.agent)}
+            {ep.activity}<span
+              :if={queued_turns(@story, ep) > 0}
+              class="opacity-60"
+              title="messages from this user waiting for the current turn to finish"
+            > · +{queued_turns(@story, ep)} queued</span>
           </span>
           <span class="tnum whitespace-nowrap">{duration(ep.elapsed_s)}</span>
           <progress
@@ -226,51 +228,111 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       assigns
       |> assign(:k, assigns.story[:kpis] || %{})
       |> assign(:today, metrics_today(assigns.snapshot))
+      |> assign(
+        :attention,
+        ReplyHealth.counts(assigns.snapshot, assigns.story, System.os_time(:second))
+      )
 
     ~H"""
     <.panel id="kpi-panel" title="Window">
       <%!-- honest window label: counters restart at the dashboard's baseline (spec §9);
-            a counter present in extensions["metrics_today"] is durable → "today" badge --%>
+            a counter present in extensions["metrics_today"] is durable → "today" badge,
+            anything else carries "window" — it dies with the dashboard process --%>
       <:meta>
         <span id="kpi-window-label" class="font-mono">
           since <.local_time id="kpi-since" ts={@story[:baseline_at]} />
         </span>
       </:meta>
       <div class="grid grid-cols-3 md:grid-cols-5 xl:grid-cols-9 gap-x-4 gap-y-3">
+        <.link navigate={~p"/sessions"} class="contents">
+          <.metric
+            label="unanswered"
+            value={@attention.unanswered}
+            tone={alarm_tone(@attention.unanswered, "warn")}
+            title="live conversations whose last user message got NO reply — a stall, not policy. Click for the attention-sorted list."
+          />
+        </.link>
+        <.link navigate={~p"/sessions"} class="contents">
+          <.metric
+            label="suppressed"
+            value={@attention.suppressed}
+            title="replies withheld by the sender's spam window — the bot CHOSE silence (policy working, not an outage). Click for the list."
+          />
+        </.link>
         <.metric
           label="replies"
           value={today_val(@today, "replies") || @k[:replies] || 0}
-          badge={today_val(@today, "replies") && "today"}
+          badge={(today_val(@today, "replies") && "today") || "window"}
+          title="replies delivered. 'today' = the swarm's durable daily counter; 'window' = counted by this dashboard since the baseline above (resets when it restarts)."
         />
-        <.metric label="p50 reply" value={duration(@k[:reply_p50])} />
-        <.metric label="p95 reply" value={duration(@k[:reply_p95])} />
-        <.metric label="first feedback" value={duration(@k[:first_feedback_p50])} />
+        <.metric
+          label="p50 reply"
+          value={duration(@k[:reply_p50])}
+          title="median time from a user's message to the reply landing, over this window"
+        />
+        <.metric
+          label="p95 reply"
+          value={duration(@k[:reply_p95])}
+          title="95th-percentile reply time — the slow tail users actually feel"
+        />
+        <.metric
+          label="first feedback"
+          value={duration(@k[:first_feedback_p50])}
+          title="median time until the user SAW anything (typing, progress, reply) after writing"
+        />
         <.metric
           label="failures"
           value={today_val(@today, "failures") || @k[:failures] || 0}
-          badge={today_val(@today, "failures") && "today"}
+          badge={(today_val(@today, "failures") && "today") || "window"}
           tone={alarm_tone(today_val(@today, "failures") || @k[:failures], "error")}
+          title="failed deliveries + dropped replies + LLM errors. 'today' = durable daily counter; 'window' = since the baseline above."
         />
         <.metric
           label="inbox full"
           value={today_val(@today, "inbox_full") || @k[:inbox_full] || 0}
-          badge={today_val(@today, "inbox_full") && "today"}
+          badge={(today_val(@today, "inbox_full") && "today") || "window"}
           tone={alarm_tone(today_val(@today, "inbox_full") || @k[:inbox_full], "warn")}
+          title="messages bounced because an agent's mailbox was full — users hitting a busy bot"
         />
         <.metric
           label="stalled"
           value={@k[:stalled] || 0}
           tone={alarm_tone(@k[:stalled], "warn")}
+          title="requests currently past the stall threshold with no reply — live count, not cumulative"
         />
         <.metric
           label="compactions"
           value={today_val(@today, "compactions") || @k[:compactions] || 0}
-          badge={today_val(@today, "compactions") && "today"}
+          badge={(today_val(@today, "compactions") && "today") || "window"}
+          title="agent context compactions — normal at low volume; a spike means conversations are running long"
         />
-        <.metric label="browser" value={browse_rate(@k)} />
+        <.link navigate={~p"/events?#{[issues: 1]}"} class="contents">
+          <.metric
+            label="browser"
+            value={browse_rate(@k)}
+            sub={browse_sub(@k)}
+            tone={(@k[:browse_blocked] || 0) > 0 && "warn"}
+            title="browser fetches this window. 'blocked' = the allowlist said no (policy — fix the list), other failures = rendering broke. Click for the issue events."
+          />
+        </.link>
       </div>
     </.panel>
     """
+  end
+
+  # "2 blocked · 1 failed" under the browser rate — blocked (policy) and broken
+  # (render) are different problems with different owners; nil hides the line.
+  defp browse_sub(k) do
+    total = k[:browse_total] || 0
+    ok = k[:browse_ok] || 0
+    blocked = k[:browse_blocked] || 0
+    failed = max(total - ok - blocked, 0)
+
+    parts =
+      [(blocked > 0 && "#{blocked} blocked") || nil, (failed > 0 && "#{failed} failed") || nil]
+      |> Enum.reject(&is_nil/1)
+
+    if parts == [], do: nil, else: Enum.join(parts, " · ")
   end
 
   attr :story, :map, required: true
@@ -417,11 +479,6 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   # the idle one-liner reads the freshest successful close out of the story tail
   defp last_close(story),
     do: Enum.find(story[:story] || [], &(&1.kind == "reply_sent" and not &1.issue))
-
-  defp queue_note(story, agent) do
-    q = Enum.find_value(story[:agents] || [], 0, &(&1.name == agent and &1.queue))
-    if is_integer(q) and q > 0, do: " (#{q} queued)", else: ""
-  end
 
   defp today_val(nil, _key), do: nil
 

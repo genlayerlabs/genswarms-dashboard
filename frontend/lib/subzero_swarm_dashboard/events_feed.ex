@@ -335,9 +335,14 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
            System.os_time(:second) - snap.saved_at <= @persist_max_age_s or
              {:error, :too_old},
          # a State struct saved by older code deserializes fine but blows up on
-         # first access of a field it doesn't have — compare shapes, not luck
+         # first access of a field it doesn't have — compare shapes, not luck.
+         # counters too: bump/2 is Map.update! — a NESTED key added since the
+         # snapshot (e.g. :browse_blocked) would raise on its first event
          true <-
-           Map.keys(snap.story) == Map.keys(State.new()) or {:error, :state_shape_changed} do
+           Map.keys(snap.story) == Map.keys(State.new()) or {:error, :state_shape_changed},
+         true <-
+           Map.keys(snap.story.counters) == Map.keys(State.new().counters) or
+             {:error, :counters_shape_changed} do
       Logger.info("story restored from snapshot (cursor #{snap.cursor})")
 
       %{state | cursor: snap.cursor, story: snap.story, baseline_at: snap.baseline_at}

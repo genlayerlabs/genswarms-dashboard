@@ -183,6 +183,20 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert state.issues == []
     end
 
+    test "a policy denial bumps browse_blocked apart from real failures" do
+      state =
+        fold([
+          ev("browser_dispatch", 1, 100.0, %{"agent" => @agent}),
+          ev("browser_done", 2, 101.0, %{"agent" => @agent, "verdict" => "not_allowed"}),
+          ev("browser_dispatch", 3, 102.0, %{"agent" => @agent}),
+          ev("browser_done", 4, 103.0, %{"agent" => @agent, "verdict" => "render_failed"})
+        ])
+
+      assert state.counters.browse_blocked == 1
+      assert state.counters.browse_total == 2
+      assert state.counters.browse_ok == 0
+    end
+
     test "a failure verdict is an issue (and counts against the ok-rate)" do
       state =
         fold([

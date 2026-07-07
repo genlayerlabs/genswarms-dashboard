@@ -1086,11 +1086,15 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   attr :badge, :string, default: nil
   attr :sub, :string, default: nil
   attr :tone, :string, default: nil, values: [nil, "warn", "error", "primary"]
+  attr :title, :string, default: nil
 
   def metric(assigns) do
     ~H"""
-    <div class="min-w-0">
-      <div class="font-mono text-[0.62rem] uppercase tracking-[0.14em] opacity-50 truncate">
+    <div class="min-w-0" title={@title}>
+      <div class={[
+        "font-mono text-[0.62rem] uppercase tracking-[0.14em] opacity-50 truncate",
+        @title && "underline decoration-dotted decoration-base-content/25 underline-offset-2"
+      ]}>
         {@label}
       </div>
       <div class={[

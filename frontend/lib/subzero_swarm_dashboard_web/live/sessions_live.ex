@@ -1,11 +1,9 @@
 defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
-  # Reply-health thresholds: a conversation whose last inbound has gone this long
-  # with no outbound delivery is flagged "no reply"; the skew absorbs clock drift
-  # between ingress (inbound) and the sender (outbound).
-  @reply_grace_s 120
-  @reply_skew_s 5
+  # Classifier + thresholds live in ReplyHealth — shared with Overview's
+  # attention tile so the two pages can never disagree about "unanswered".
+  alias SubzeroSwarmDashboardWeb.ReplyHealth
 
   @impl true
   def mount(_params, _session, socket),
@@ -25,11 +23,11 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   def render(assigns) do
     sessions = filter(assigns[:snapshot], assigns.q)
     now = System.os_time(:second)
-    deliveries = deliveries(assigns[:snapshot])
-    suppressed = suppressed_by_cid(assigns.story)
+    deliveries = ReplyHealth.deliveries(assigns[:snapshot])
+    suppressed = ReplyHealth.suppressed_by_cid(assigns.story)
 
     statuses =
-      Map.new(sessions, &{&1["session_id"], reply_status(&1, deliveries, suppressed, now)})
+      Map.new(sessions, &{&1["session_id"], ReplyHealth.status(&1, deliveries, suppressed, now)})
 
     sessions = sort_by_attention(sessions, statuses)
 
@@ -284,53 +282,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   defp audience_value(v) when is_number(v) or is_binary(v), do: v
   defp audience_value(v), do: inspect(v)
 
-  # ── reply-delivery health ───────────────────────────────────────────────────
-  # cid => latest delivery (%{"at", "status"}), from the sender's dashboard extension.
-  defp deliveries(nil), do: %{}
+  @doc "Delegates to ReplyHealth (the shared classifier). Public for unit tests."
+  def reply_status(session, deliveries, now),
+    do: ReplyHealth.status(session, deliveries, %{}, now)
 
-  defp deliveries(snap) do
-    (get_in(snap, ["extensions", "deliveries", "items"]) || [])
-    |> Map.new(fn d -> {d["session_id"], d} end)
-  end
-
-  @doc """
-  Did we answer the last inbound? Compares ingress's `last_activity` (inbound)
-  with the sender's last delivery (outbound) for this conversation. ALL times are
-  unix SECONDS: `now` and the delivery `at` are `System.os_time(:second)`-scale,
-  `last_activity` is an ISO8601 string parsed with `to_unix/1`, and a suppression
-  ts is the feed event's float epoch seconds. Keeping every side in seconds is
-  the contract this guards. Public for unit tests.
-
-  The 4-arity adds `suppressed`: cid => latest `reply_suppressed` story-row ts.
-  A suppression at/after the inbound classifies as `:suppressed` — the bot CHOSE
-  silence (spam window), which must not render as the `:unanswered` alarm (a
-  stall). A real delivery still wins: answered is checked first.
-  """
-  def reply_status(session, deliveries, now), do: reply_status(session, deliveries, %{}, now)
-
-  def reply_status(session, deliveries, suppressed, now) do
-    last_in = to_unix(session["last_activity"])
-    last_send = (deliveries[session["session_id"]] || %{})["at"]
-    last_supp = suppressed[session["session_id"]]
-
-    cond do
-      is_nil(last_in) -> :idle
-      is_integer(last_send) and last_send >= last_in - @reply_skew_s -> :answered
-      is_number(last_supp) and last_supp >= last_in - @reply_skew_s -> :suppressed
-      now - last_in <= @reply_grace_s -> :pending
-      true -> :unanswered
-    end
-  end
-
-  # cid => latest reply_suppressed ts, from the story tail (the reducer already
-  # folds the feed's reply_suppressed events — nothing new crosses the wire).
-  defp suppressed_by_cid(nil), do: %{}
-
-  defp suppressed_by_cid(story) do
-    (story[:story] || [])
-    |> Enum.filter(&(&1.kind == "reply_suppressed" and is_binary(&1.cid)))
-    |> Enum.reduce(%{}, fn r, acc -> Map.update(acc, r.cid, r.ts, &max(&1, r.ts)) end)
-  end
+  def reply_status(session, deliveries, suppressed, now),
+    do: ReplyHealth.status(session, deliveries, suppressed, now)
 
   # Attention-first: the row that hurts most goes on top. Unanswered sort oldest
   # first (longest-waiting user at the very top); every other bucket sorts most

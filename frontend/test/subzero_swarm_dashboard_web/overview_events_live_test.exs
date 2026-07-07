@@ -196,14 +196,17 @@ defmodule SubzeroSwarmDashboardWeb.OverviewEventsLiveTest do
       assert html =~ "9.2s"
       # 21/25 browse ok
       assert html =~ "84% ok"
-      refute html =~ "today"
+      # tile explainer tooltips mention the word "today" — the assertion targets
+      # the BADGE markup, which only metrics_today may light
+      refute html =~ ">today</span>"
+      assert html =~ ">window</span>"
 
       # the durable overlay upgrades exactly the counters the host published
       snap = put_in(@snap, ["extensions", "metrics_today"], %{"replies" => 120})
       push_snap(view, snap)
       html = render(view)
       assert html =~ "120"
-      assert html =~ "today"
+      assert html =~ ">today</span>"
     end
 
     test "issue rows deep-link to the filtered events page", %{conn: conn} do

@@ -124,13 +124,14 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
               <div class="space-y-1 font-mono text-sm">
                 <div :for={ep <- @in_flight} class="flex items-baseline gap-3">
                   <span class="min-w-32 truncate">
-                    @{handle_for(@snapshot, ep.cid, ep.user)}<span
-                      :if={ep.count > 1}
-                      class="opacity-50"
-                    > ·+{ep.count - 1}</span>
+                    @{handle_for(@snapshot, ep.cid, ep.user)}
                   </span>
                   <span class="opacity-80">{short(ep.agent) || "routing…"}</span>
-                  <span class={activity_tone(ep.activity)}>{ep.activity}</span>
+                  <span class={activity_tone(ep.activity)}>{ep.activity}<span
+                      :if={queued_turns(@story, ep) > 0}
+                      class="opacity-60"
+                      title="messages from this user waiting for the current turn to finish"
+                    > · +{queued_turns(@story, ep)} queued</span></span>
                   <span :if={ep.stalled} class="badge badge-error badge-xs">stalled</span>
                   <span class="tnum ml-auto opacity-60">{duration(ep.elapsed_s)}</span>
                   <.link
