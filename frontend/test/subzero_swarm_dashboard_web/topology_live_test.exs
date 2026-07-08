@@ -118,4 +118,31 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       assert TopologyLive.agent_handles(%{"sessions" => [%{"user" => %{"handle" => "x"}}]}) == %{}
     end
   end
+
+  describe "agent_sessions/1 (canvas click: slot => session id)" do
+    alias SubzeroSwarmDashboardWeb.TopologyLive
+
+    test "maps every slot to its session id — no display-label filter" do
+      snap = %{
+        "sessions" => [
+          # label-less session: agent_handles drops it, agent_sessions MUST keep it
+          %{"agent" => "wingston_agent_1", "session_id" => "tg:1:0", "state" => "idle", "user" => %{}},
+          # recycled slot: active session wins the overwrite
+          %{"agent" => "wingston_agent_2", "session_id" => "tg:2:0", "state" => "idle", "user" => %{}},
+          %{"agent" => "wingston_agent_2", "session_id" => "tg:3:0", "state" => "active", "user" => %{}},
+          # no slot → not in the map
+          %{"agent" => nil, "session_id" => "tg:4:0", "state" => "idle", "user" => %{}}
+        ]
+      }
+
+      assert TopologyLive.agent_sessions(snap) == %{
+               "wingston_agent_1" => "tg:1:0",
+               "wingston_agent_2" => "tg:3:0"
+             }
+    end
+
+    test "empty snapshot → empty map" do
+      assert TopologyLive.agent_sessions(%{}) == %{}
+    end
+  end
 end

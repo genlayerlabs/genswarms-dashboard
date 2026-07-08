@@ -40,7 +40,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       {:noreply,
        push_event(socket, "pipeline:agents", %{
          agents: agent_names(snap, socket.assigns.agent_re),
-         handles: agent_handles(snap)
+         handles: agent_handles(snap),
+         sessions: agent_sessions(snap)
        })}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -245,6 +246,20 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
         display -> Map.put(acc, s["agent"], display)
       end
     end)
+  end
+
+  @doc """
+  agent slot => session id, for canvas click→inspect. Same active-wins
+  precedence as `agent_handles/1` but NO display-label filter: a session
+  without handle/label/name must still be clickable (`session_display/1`
+  would drop it). Public for unit tests.
+  """
+  def agent_sessions(snap) do
+    (snap["sessions"] || [])
+    |> Enum.filter(&(is_binary(&1["agent"]) and is_binary(&1["session_id"])))
+    # actives sort LAST so they win the Map.new overwrite
+    |> Enum.sort_by(&(&1["state"] == "active"))
+    |> Map.new(&{&1["agent"], &1["session_id"]})
   end
 
   defp session_display(s) do
