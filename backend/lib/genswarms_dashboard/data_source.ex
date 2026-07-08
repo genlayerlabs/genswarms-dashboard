@@ -16,7 +16,13 @@ defmodule GenswarmsDashboard.DataSource do
               %{sessions: [map()],
                 extensions: %{optional(String.t()) => map()}}
 
-  @doc "Durable transcript for a session id."
+  @doc """
+  Durable transcript for a session id. Turn maps carry `role` + `content`, and
+  MAY carry additive optional fields the frontend renders when present:
+  `at` (unix seconds), `kind` ("message" | "note" — service rows), `auto`
+  (true = bot-initiated send). Hosts that return only role/content keep the
+  plain rendering.
+  """
   @callback session_history(cid :: String.t(), max_turns :: pos_integer()) ::
               {:ok, [map()]} | :unavailable
 
