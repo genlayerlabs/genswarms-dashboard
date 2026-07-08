@@ -166,9 +166,14 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     # signal that the row itself is shown (the consumers panel omits the agent).
     assert render(view) =~ "wingston_agent_0"
 
-    assert view |> element("form") |> render_change(%{"q" => "999999"}) =~ "No sessions match"
-    refute view |> element("form") |> render_change(%{"q" => "999999"}) =~ "wingston_agent_0"
-    assert view |> element("form") |> render_change(%{"q" => "1"}) =~ "wingston_agent_0"
+    assert view |> element("form[phx-change='search']") |> render_change(%{"q" => "999999"}) =~
+             "No sessions match"
+
+    refute view |> element("form[phx-change='search']") |> render_change(%{"q" => "999999"}) =~
+             "wingston_agent_0"
+
+    assert view |> element("form[phx-change='search']") |> render_change(%{"q" => "1"}) =~
+             "wingston_agent_0"
   end
 
   test "sessions lead with the user handle + name when known", %{conn: conn} do
@@ -617,7 +622,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
     {:ok, view, _} = live(conn, "/logs")
     push_snap(view)
-    view |> element("form") |> render_change(%{"session_id" => "tg:1:0"})
+    view |> element("form[phx-change='select']") |> render_change(%{"session_id" => "tg:1:0"})
     html = render(view)
     assert html =~ "hello there"
     assert html =~ "slot"

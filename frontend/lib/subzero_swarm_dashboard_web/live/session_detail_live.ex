@@ -87,6 +87,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
       swarm={@swarm}
       snapshot={@snapshot}
       story={@story}
+      privacy={@privacy}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}
       inspect_activity={@inspect_activity}

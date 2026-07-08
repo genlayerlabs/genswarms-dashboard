@@ -16,8 +16,11 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   alias SubzeroSwarmDashboard.SwarmFeed
   alias SubzeroSwarmDashboard.SwarmClient
 
-  def on_mount(:default, _params, _session, socket) do
+  @privacy_session_key :privacy
+
+  def on_mount(:default, _params, session, socket) do
     swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
+    privacy? = privacy_enabled?(session)
 
     if connected?(socket) do
       SwarmFeed.subscribe()
@@ -42,6 +45,7 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
       |> assign_new(:inspect, fn -> nil end)
       |> assign_new(:inspect_transcript, fn -> nil end)
       |> assign_new(:inspect_activity, fn -> nil end)
+      |> assign_new(:privacy, fn -> privacy? end)
       # Sensitive-content gate: user conversations are NOT fetched (not merely
       # hidden) until revealed. Default comes from config; the TranscriptGate
       # JS hook replays a per-browser localStorage preference on every mount.
@@ -55,6 +59,16 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
     {:cont, socket}
   end
+
+  defp privacy_enabled?(session) when is_map(session) do
+    session
+    |> Map.get("privacy", Map.get(session, @privacy_session_key))
+    |> privacy_enabled?()
+  end
+
+  defp privacy_enabled?(true), do: true
+  defp privacy_enabled?("true"), do: true
+  defp privacy_enabled?(_), do: false
 
   # ── shared inspector: open on any page, close on Esc / click-away ────────────
   defp handle_inspect_event("inspect", %{"session_id" => sid}, socket)
