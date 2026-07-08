@@ -33,8 +33,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   # Agent nodes are dynamic. Precedence (spec §5.5): the snapshot wins existence
   # (which slots are in the pool), the event story wins activity state.
-  # `handles` labels a leased slot with WHO it serves — the canvas shows
-  # "@handle", not "agent_15".
+  # `handles` carries a per-slot overlay for a leased slot: the session id it
+  # serves (the canvas labels the node "agent_15" + that session id) and an
+  # avatar seed (the telegram handle) — the identity lives in the drawn avatar,
+  # not in a "@handle" text label.
   def handle_info({:snapshot, snap}, socket),
     do:
       {:noreply,
@@ -230,9 +232,12 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   end
 
   @doc """
-  agent slot => user display ("@handle" / adapter label / name) from the
-  snapshot's sessions, for the canvas labels. Active sessions win over idle
-  leftovers, so a recycled slot never wears the previous user's name. Public
+  agent slot => avatar seed for the canvas. The seed is the telegram handle,
+  falling back to adapter label / name / session id, so every leased slot gets a
+  stable generated avatar even without a handle — the identity lives in the drawn
+  avatar, not a "@handle" text label. Active sessions win over idle leftovers, so
+  a recycled slot never wears the previous conversation's avatar. The session id
+  the slot serves (drawn under the slot id) comes from `agent_sessions/1`. Public
   for unit tests.
   """
   def agent_handles(snap) do
@@ -241,18 +246,18 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     # actives sort LAST so they win the Map.new overwrite
     |> Enum.sort_by(&(&1["state"] == "active"))
     |> Enum.reduce(%{}, fn s, acc ->
-      case session_display(s) do
+      case avatar_seed(s) do
         nil -> acc
-        display -> Map.put(acc, s["agent"], display)
+        seed -> Map.put(acc, s["agent"], seed)
       end
     end)
   end
 
   @doc """
-  agent slot => session id, for canvas click→inspect. Same active-wins
-  precedence as `agent_handles/1` but NO display-label filter: a session
-  without handle/label/name must still be clickable (`session_display/1`
-  would drop it). Public for unit tests.
+  agent slot => session id, for canvas click→inspect and the label sub-line.
+  Same active-wins precedence as `agent_handles/1` but NO display filter: a
+  session without handle/label/name must still be clickable and labelled.
+  Public for unit tests.
   """
   def agent_sessions(snap) do
     (snap["sessions"] || [])
@@ -262,17 +267,17 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     |> Map.new(&{&1["agent"], &1["session_id"]})
   end
 
-  defp session_display(s) do
-    handle = get_in(s, ["user", "handle"])
-    name = get_in(s, ["user", "name"])
-
-    cond do
-      is_binary(handle) and handle != "" -> "@" <> handle
-      is_binary(s["label"]) and s["label"] != "" -> s["label"]
-      is_binary(name) and name != "" -> name
-      true -> nil
-    end
+  # telegram handle first, then adapter label / name, and the session id as a
+  # last resort so a handle-less leased slot still gets a distinct avatar
+  defp avatar_seed(s) do
+    presence(get_in(s, ["user", "handle"])) ||
+      presence(s["label"]) ||
+      presence(get_in(s, ["user", "name"])) ||
+      presence(s["session_id"])
   end
+
+  defp presence(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)
+  defp presence(_), do: nil
 
   # ── in-flight strip (TRUE state from @story — not the paced animation) ────────
   defp short(nil), do: nil
