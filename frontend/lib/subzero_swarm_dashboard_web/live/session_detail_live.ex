@@ -1,6 +1,7 @@
 defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.EventsFeed
   alias SubzeroSwarmDashboard.SwarmClient
 
@@ -11,7 +12,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
     {:ok,
      assign(socket,
-       page_title: "Session #{cid}",
+       page_title: "Session #{display_session_id(cid, socket.assigns[:privacy] == true)}",
        session_id: cid,
        transcript: :loading,
        activity: :loading,
@@ -78,7 +79,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :session, find_session(assigns[:snapshot], assigns.session_id))
+    privacy? = assigns[:privacy] == true
+
+    assigns =
+      assigns
+      |> assign(:session, find_session(assigns[:snapshot], assigns.session_id))
+      |> assign(:display_session_id, display_session_id(assigns.session_id, privacy?))
 
     ~H"""
     <Layouts.app
@@ -100,16 +106,26 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         </div>
 
         <div class="flex items-center justify-between gap-4 flex-wrap">
-          <.identity user={@session && @session["user"]} session_id={@session_id} label={@session && @session["label"]} size={:lg} />
+          <%= if @privacy do %>
+            <.identity_avatar user={@session && @session["user"]} session_id={@session_id} size={:lg} />
+          <% else %>
+            <.identity
+              user={@session && @session["user"]}
+              session_id={@session_id}
+              label={@session && @session["label"]}
+              size={:lg}
+            />
+          <% end %>
           <.live_dot :if={@session} state={@session["state"]} label />
         </div>
 
         <div :if={@session} class="flex flex-wrap gap-2 text-sm">
-          <span class="badge badge-ghost font-mono text-xs">{@session_id}</span>
+          <span :if={!@privacy} class="badge badge-ghost font-mono text-xs">{@session_id}</span>
           <span class="badge badge-ghost">{@session["transport"]}</span>
           <span class="badge badge-ghost">agent {@session["agent"]}</span>
           <span
             :for={{k, v} <- @session["transport_ref"] || %{}}
+            :if={!@privacy}
             class="badge badge-outline font-mono text-xs"
           >
             {k}={v}
@@ -134,7 +150,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
           <p class="text-xs opacity-50 mb-3">
             The clean user ↔ Wingston back-and-forth, saved to the database — it <strong>survives agent restarts</strong>. (Empty if persistence is off.)
           </p>
-          <.transcript transcript={@transcript} />
+          <.transcript transcript={@transcript} privacy={@privacy} />
         </.panel>
 
         <.panel title="Agent activity">
@@ -147,7 +163,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
             The agent's raw working log for this slot right now — messages in, tool
             calls, results, sends. <strong>Ephemeral</strong>: wiped when the slot is recycled.
           </p>
-          <.activity_timeline activity={@activity} />
+          <.activity_timeline activity={@activity} privacy={@privacy} />
         </.panel>
       </div>
     </Layouts.app>
@@ -205,6 +221,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   end
 
   attr :transcript, :any, required: true
+  attr :privacy, :boolean, default: false
 
   defp transcript(%{transcript: {:ok, %{"turns" => turns, "source" => source}}} = assigns)
        when turns != [] do
@@ -213,13 +230,15 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     ~H"""
     <div class="flex items-center justify-between mb-2">
       <span class="text-xs opacity-60">
-        {if @source == "store", do: "saved to the database · survives restarts", else: "source: #{@source}"}
+        {if @source == "store",
+          do: "saved to the database · survives restarts",
+          else: "source: #{@source}"}
       </span>
       <button type="button" phx-click="transcripts_hide" class="btn btn-ghost btn-xs gap-1 opacity-60">
         <.icon name="hero-eye-slash" class="size-3.5" /> hide
       </button>
     </div>
-    <.conversation id="session-conversation" turns={@turns} />
+    <.conversation id="session-conversation" turns={@turns} privacy={@privacy} />
     """
   end
 
@@ -259,6 +278,16 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     case find_session(snap, id) do
       %{"last_activity" => la} -> la
       _ -> nil
+    end
+  end
+
+  defp display_session_id(nil, _privacy?), do: nil
+  defp display_session_id(sid, false), do: sid
+
+  defp display_session_id(sid, true) when is_binary(sid) do
+    case PrivacyRedactor.mask_cid(sid) do
+      ^sid -> "•••"
+      masked -> masked
     end
   end
 

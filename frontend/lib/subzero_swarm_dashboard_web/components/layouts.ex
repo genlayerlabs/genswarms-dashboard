@@ -149,7 +149,12 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       </main>
     </div>
 
-    <.inspector inspect={@inspect} transcript={@inspect_transcript} activity={@inspect_activity} />
+    <.inspector
+      inspect={@inspect}
+      transcript={@inspect_transcript}
+      activity={@inspect_activity}
+      privacy={@privacy}
+    />
     <.flash_group flash={@flash} />
     """
   end

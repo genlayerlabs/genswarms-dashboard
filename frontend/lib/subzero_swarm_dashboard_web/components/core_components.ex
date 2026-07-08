@@ -28,6 +28,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   """
   use Phoenix.Component
 
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias Phoenix.LiveView.JS
 
   @doc """
@@ -554,6 +555,32 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Stable identity avatar with no identity text. Used by privacy mode where the
+  visual anchor may remain, but handles, names, initials and ids must not render.
+  """
+  attr :user, :any, default: nil
+  attr :session_id, :string, default: nil
+  attr :size, :atom, default: :md, values: [:sm, :md, :lg]
+  attr :class, :any, default: nil
+
+  def identity_avatar(assigns) do
+    ~H"""
+    <span
+      class={[
+        "monogram shrink-0",
+        @size == :sm && "!w-7 !h-7 !text-xs",
+        @size == :lg && "!w-10 !h-10 !text-base",
+        @class
+      ]}
+      style={monogram_style(@user, @session_id)}
+      aria-label="user avatar"
+    >
+      •
+    </span>
+    """
+  end
+
   @doc "A pulsing signal dot for `active`, a quiet hollow dot otherwise."
   attr :state, :any, required: true
   attr :label, :boolean, default: false
@@ -585,6 +612,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   attr :inspect, :any, default: nil
   attr :transcript, :any, default: nil
   attr :activity, :any, default: nil
+  attr :privacy, :boolean, default: false
 
   def inspector(assigns) do
     ~H"""
@@ -599,7 +627,15 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
       <aside id="inspector-panel" phx-hook="ScrollBottom" class="inspector-panel scroll-thin">
         <div class="p-5 space-y-4">
           <div class="flex items-start justify-between gap-3">
-            <.identity user={@inspect["user"]} session_id={@inspect["session_id"]} size={:lg} />
+            <%= if @privacy do %>
+              <.identity_avatar
+                user={@inspect["user"]}
+                session_id={@inspect["session_id"]}
+                size={:lg}
+              />
+            <% else %>
+              <.identity user={@inspect["user"]} session_id={@inspect["session_id"]} size={:lg} />
+            <% end %>
             <button
               class="btn btn-ghost btn-sm btn-circle -mr-1"
               phx-click="inspect_close"
@@ -617,7 +653,9 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
             <span :if={chat_type(@inspect)} class="badge badge-outline badge-sm">
               {chat_type(@inspect)}
             </span>
-            <span class="badge badge-ghost badge-sm font-mono">{@inspect["session_id"]}</span>
+            <span :if={!@privacy} class="badge badge-ghost badge-sm font-mono">
+              {@inspect["session_id"]}
+            </span>
             <span :if={@inspect["agent"]} class="badge badge-ghost badge-sm font-mono">
               slot {@inspect["agent"]}
             </span>
@@ -637,7 +675,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
                 saved to the database · survives restarts
               </span>
             </:meta>
-            <.inspector_transcript transcript={@transcript} />
+            <.inspector_transcript transcript={@transcript} privacy={@privacy} />
             <details
               :if={activity_present?(@activity)}
               class="mt-3 pt-3 border-t border-base-300/60"
@@ -647,7 +685,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
                 agent activity · the slot's raw working log (model calls, tool runs — wiped
                 when the slot recycles)
               </summary>
-              <div class="mt-2"><.activity_timeline activity={@activity} /></div>
+              <div class="mt-2"><.activity_timeline activity={@activity} privacy={@privacy} /></div>
             </details>
           </.panel>
         </div>
@@ -687,9 +725,10 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   """
   attr :id, :string, required: true
   attr :turns, :list, required: true
+  attr :privacy, :boolean, default: false
 
   def conversation(assigns) do
-    assigns = assign(assigns, :rows, conversation_rows(assigns.turns))
+    assigns = assign(assigns, :rows, conversation_rows(assigns.turns, assigns.privacy))
 
     ~H"""
     <div id={@id} phx-hook="ConversationDays" class="msg-list">
@@ -703,7 +742,9 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
           data-ts={t["at"]}
         >
           <div class="msg-bubble">
-            <span class="msg-content">{SubzeroSwarmDashboardWeb.ChatMarkdown.render(t["content"])}</span>
+            <span class="msg-content">
+              {SubzeroSwarmDashboardWeb.ChatMarkdown.render(t["content"])}
+            </span>
             <span :if={t["at"] || t["auto"]} class="msg-meta">
               <span :if={t["auto"]} class="msg-auto">auto</span>
               <span
@@ -724,7 +765,9 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   end
 
   # tail = last MESSAGE row of a consecutive same-role run (notes break runs)
-  defp conversation_rows(turns) do
+  defp conversation_rows(turns, privacy?) do
+    turns = if privacy?, do: Enum.map(turns, &redact_turn/1), else: turns
+
     turns
     |> Enum.with_index()
     |> Enum.map(fn {t, i} ->
@@ -741,6 +784,11 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     end)
   end
 
+  defp redact_turn(%{} = turn),
+    do: Map.update(turn, "content", nil, &PrivacyRedactor.mask_text/1)
+
+  defp redact_turn(turn), do: turn
+
   # server-rendered UTC fallback; LocalTime overwrites it client-side
   defp utc_hm(at) when is_integer(at) do
     at |> DateTime.from_unix!() |> Calendar.strftime("%H:%M")
@@ -749,6 +797,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp utc_hm(_at), do: ""
 
   attr :transcript, :any, default: nil
+  attr :privacy, :boolean, default: false
 
   # Full durable transcript — every turn, untruncated (mirrors the dedicated
   # session page so the inspector is a complete view, not a peek).
@@ -761,7 +810,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
         <.icon name="hero-eye-slash" class="size-3.5" /> hide
       </button>
     </div>
-    <.conversation id="inspector-conversation" turns={@turns} />
+    <.conversation id="inspector-conversation" turns={@turns} privacy={@privacy} />
     """
   end
 
@@ -808,10 +857,14 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   read API returns, so the session page, the inspector, and the Logs page all share it.
   """
   attr :activity, :any, required: true
+  attr :privacy, :boolean, default: false
 
   def activity_timeline(%{activity: {:ok, %{"logs" => [_ | _] = entries} = body}} = assigns) do
     assigns =
-      assign(assigns, rows: Enum.map(entries, &classify_activity/1), source: body["source"])
+      assign(assigns,
+        rows: entries |> Enum.map(&classify_activity/1) |> redact_activity_rows(assigns.privacy),
+        source: body["source"]
+      )
 
     ~H"""
     <div :if={@source} class="text-xs opacity-50 mb-2">{activity_source_label(@source)}</div>
@@ -823,10 +876,6 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     </ol>
     """
   end
-
-  # "slot" is backend jargon (the leased agent's live log) — say what it means.
-  defp activity_source_label("slot"), do: "read live from the leased agent's session log"
-  defp activity_source_label(source), do: "source: #{source}"
 
   def activity_timeline(%{activity: {:ok, _}} = assigns),
     do: ~H"""
@@ -847,6 +896,10 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     do: ~H"""
     <div class="text-sm opacity-50">Activity unavailable.</div>
     """
+
+  # "slot" is backend jargon (the leased agent's live log) — say what it means.
+  defp activity_source_label("slot"), do: "read live from the leased agent's session log"
+  defp activity_source_label(source), do: "source: #{source}"
 
   # A real conversation turn — colored chat line on the timeline.
   defp activity_row(%{row: %{kind: kind}} = assigns) when kind in [:user, :assistant] do
@@ -1018,6 +1071,24 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
   defp one_line(content),
     do: content |> String.replace(~r/\s+/, " ") |> String.trim() |> String.slice(0, 90)
+
+  defp redact_activity_rows(rows, false), do: rows
+
+  defp redact_activity_rows(rows, true) do
+    Enum.map(rows, fn row ->
+      row
+      |> redact_activity_key(:text)
+      |> redact_activity_key(:preview)
+      |> redact_activity_key(:content)
+    end)
+  end
+
+  defp redact_activity_key(row, key) do
+    case Map.fetch(row, key) do
+      {:ok, value} -> Map.put(row, key, PrivacyRedactor.mask_text(value))
+      :error -> row
+    end
+  end
 
   defp activity_dot(:user), do: "bg-primary"
   defp activity_dot(:assistant), do: "bg-secondary"

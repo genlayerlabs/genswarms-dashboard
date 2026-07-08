@@ -4,6 +4,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   # Classifier + thresholds live in ReplyHealth — shared with Overview's
   # attention tile so the two pages can never disagree about "unanswered".
   alias SubzeroSwarmDashboardWeb.ReplyHealth
+  alias SubzeroSwarmDashboardWeb.DashHooks
 
   @impl true
   def mount(_params, _session, socket),
@@ -21,6 +22,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   @impl true
   def render(assigns) do
+    privacy? = assigns[:privacy] == true
+    inspect_lookup = assigns[:inspect_lookup] || DashHooks.inspect_lookup(assigns[:snapshot])
     sessions = filter(assigns[:snapshot], assigns.q)
     now = System.os_time(:second)
     deliveries = ReplyHealth.deliveries(assigns[:snapshot])
@@ -41,8 +44,10 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
     assigns =
       assign(assigns,
+        inspect_lookup: inspect_lookup,
         sessions: sessions,
         shown: shown,
+        shown_rows: session_rows(shown, privacy?, inspect_lookup),
         idle_hidden_count: length(idle_hidden),
         statuses: statuses,
         live_count: Enum.count(sessions, &(&1["state"] == "active")),
@@ -129,44 +134,70 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
               </thead>
               <tbody>
                 <tr
-                  :for={s <- @shown}
+                  :for={row <- @shown_rows}
                   class="row-press"
                   phx-click="inspect"
                   phx-keydown="inspect"
                   phx-key="Enter"
-                  phx-value-session_id={s["session_id"]}
+                  phx-value-session_id={row.inspect_value}
                   tabindex="0"
                 >
                   <td>
                     <div class="flex items-center gap-2 min-w-0">
-                      <.identity user={s["user"]} session_id={s["session_id"]} label={s["label"]} />
-                      <span :if={topic_of(s)} class="badge badge-outline badge-xs font-mono shrink-0">
-                        topic {topic_of(s)}
-                      </span>
+                      <%= if @privacy do %>
+                        <.identity_avatar user={row.session["user"]} session_id={row.sid} />
+                        <span class="font-mono text-sm">•••</span>
+                      <% else %>
+                        <.identity
+                          user={row.session["user"]}
+                          session_id={row.sid}
+                          label={row.session["label"]}
+                        />
+                        <span
+                          :if={topic_of(row.session)}
+                          class="badge badge-outline badge-xs font-mono shrink-0"
+                        >
+                          topic {topic_of(row.session)}
+                        </span>
+                      <% end %>
                     </div>
                   </td>
-                  <td><.live_dot state={s["state"]} label /></td>
-                  <td><.reply_badge status={@statuses[s["session_id"]]} /></td>
-                  <td><.mode_badge mode={@modes_by_cid[s["session_id"]]} /></td>
+                  <td><.live_dot state={row.session["state"]} label /></td>
+                  <td><.reply_badge status={@statuses[row.sid]} /></td>
+                  <td><.mode_badge mode={@modes_by_cid[row.sid]} /></td>
                   <td>
                     <.issue_badge
-                      sid={s["session_id"]}
-                      issues={@issues_by_cid[s["session_id"]] || []}
+                      sid={row.sid}
+                      issues={@issues_by_cid[row.sid] || []}
+                      privacy={@privacy}
                     />
                   </td>
-                  <td class="font-mono text-xs opacity-70">{s["agent"]}</td>
+                  <td class="font-mono text-xs opacity-70">{row.session["agent"]}</td>
                   <td class="text-sm opacity-70 tnum whitespace-nowrap">
-                    {relative_time(s["last_activity"])}
+                    {relative_time(row.session["last_activity"])}
                   </td>
                   <td class="text-right">
-                    <.link
-                      navigate={~p"/sessions/#{Base.url_encode64(s["session_id"], padding: false)}"}
-                      class="btn btn-ghost btn-xs btn-circle"
-                      onclick="event.stopPropagation()"
-                      title="Open full session"
-                    >
-                      <.icon name="hero-arrow-up-right" class="size-4 opacity-60" />
-                    </.link>
+                    <%= if @privacy do %>
+                      <button
+                        type="button"
+                        phx-click="inspect"
+                        phx-value-session_id={row.inspect_value}
+                        class="btn btn-ghost btn-xs btn-circle"
+                        onclick="event.stopPropagation()"
+                        title="Inspect session"
+                      >
+                        <.icon name="hero-arrow-up-right" class="size-4 opacity-60" />
+                      </button>
+                    <% else %>
+                      <.link
+                        navigate={~p"/sessions/#{Base.url_encode64(row.sid, padding: false)}"}
+                        class="btn btn-ghost btn-xs btn-circle"
+                        onclick="event.stopPropagation()"
+                        title="Open full session"
+                      >
+                        <.icon name="hero-arrow-up-right" class="size-4 opacity-60" />
+                      </.link>
+                    <% end %>
                   </td>
                 </tr>
                 <tr :if={@idle_hidden_count > 0}>
@@ -180,7 +211,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                     </button>
                   </td>
                 </tr>
-                <tr :if={@show_idle and @q == "" and Enum.any?(@statuses, fn {_, st} -> st == :idle end)}>
+                <tr :if={
+                  @show_idle and @q == "" and Enum.any?(@statuses, fn {_, st} -> st == :idle end)
+                }>
                   <td colspan="8" class="p-0">
                     <button
                       type="button"
@@ -215,7 +248,10 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   # A forum group's sub-thread, straight from the adapter's transport_ref DATA
   # (never parsed out of the cid). Only meaningful for group chats; the
   # transport's "default thread" sentinels (nil/""/"0") render nothing.
-  defp topic_of(%{"metadata" => %{"chat_type" => "group"}, "transport_ref" => %{"thread_id" => t}})
+  defp topic_of(%{
+         "metadata" => %{"chat_type" => "group"},
+         "transport_ref" => %{"thread_id" => t}
+       })
        when t not in [nil, "", "0"],
        do: t
 
@@ -246,6 +282,18 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
       |> Enum.map(&String.downcase(to_string(&1)))
 
     Enum.any?(haystack, &String.contains?(&1, q))
+  end
+
+  defp session_rows(sessions, privacy?, inspect_lookup) do
+    Enum.map(sessions, fn s ->
+      sid = s["session_id"]
+
+      %{
+        session: s,
+        sid: sid,
+        inspect_value: DashHooks.inspect_value(inspect_lookup, privacy? == true, sid)
+      }
+    end)
   end
 
   # The old Consumers panel was 139 raw cids duplicating this table — its one
@@ -364,11 +412,20 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   attr :sid, :string, required: true
   attr :issues, :list, default: []
+  attr :privacy, :boolean, default: false
 
   # Event-derived trouble for this conversation (delivery failures, inbox_full,
   # stalled, …) within the issues window. The id is url-safe-base64 of the cid —
   # same encoding the row's deep-link uses — because cids contain colons. Deep-links
   # to the cid-filtered issues-only Events story view (spec §5.6), like Overview.
+  defp issue_badge(%{issues: [_ | _], privacy: true} = assigns) do
+    ~H"""
+    <span class="badge badge-error badge-xs gap-1 whitespace-nowrap">
+      ⚠ {length(@issues)}
+    </span>
+    """
+  end
+
   defp issue_badge(%{issues: [_ | _]} = assigns) do
     ~H"""
     <.link
