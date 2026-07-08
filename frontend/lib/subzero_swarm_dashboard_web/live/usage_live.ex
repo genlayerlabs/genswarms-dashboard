@@ -1,6 +1,7 @@
 defmodule SubzeroSwarmDashboardWeb.UsageLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.RouterClient
   alias SubzeroSwarmDashboard.RouterUsageCache
 
@@ -54,12 +55,15 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   @impl true
   def render(assigns) do
+    privacy? = assigns[:privacy] == true
+    assigns = assign(assigns, :layout_snapshot, layout_snapshot(assigns[:snapshot], privacy?))
+
     ~H"""
     <Layouts.app
       flash={@flash}
       active={:usage}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
       privacy={@privacy}
       inspect={@inspect}
@@ -85,8 +89,8 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             </button>
           </div>
         </div>
-        <.wingston story={@story} snapshot={@snapshot} />
-        <.usage usage={@usage} />
+        <.wingston story={@story} snapshot={@snapshot} privacy={@privacy} />
+        <.usage usage={@usage} privacy={@privacy} />
       </div>
     </Layouts.app>
     """
@@ -95,6 +99,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   # ── wingston (bot) counters ─────────────────────────────────────────────────
   attr :story, :any, default: nil
   attr :snapshot, :any, default: nil
+  attr :privacy, :boolean, default: false
 
   # The bot's own activity (spec §5.6 Usage): since-baseline story KPIs, upgraded
   # per-counter to the host's durable daily values when the snapshot publishes
@@ -126,7 +131,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
               value: num(counter(today, "compactions", kpis[:compactions])),
               sub: nil
             }
-          ] ++ extension_tiles(assigns.snapshot)
+          ] ++ extension_tiles(assigns.snapshot, assigns.privacy)
       )
 
     ~H"""
@@ -209,11 +214,11 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   # Host-specific projects can append usage-card tiles without dashboard code changes:
   # extensions["usage_tiles"] = [%{"label" => "...", "value" => 12, "sub" => "..."}].
   # Values are display data only; invalid/incomplete entries are ignored.
-  defp extension_tiles(snap) do
+  defp extension_tiles(snap, privacy?) do
     case get_in(snap || %{}, ["extensions", "usage_tiles"]) do
       tiles when is_list(tiles) ->
         tiles
-        |> Enum.map(&normalize_tile/1)
+        |> Enum.map(&normalize_tile(&1, privacy?))
         |> Enum.reject(&is_nil/1)
 
       _ ->
@@ -221,7 +226,15 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     end
   end
 
-  defp normalize_tile(%{"label" => label, "value" => value} = tile) when is_binary(label) do
+  defp normalize_tile(tile, true) do
+    tile
+    |> PrivacyRedactor.mask_identity()
+    |> mask_tile_free_strings()
+    |> normalize_tile(false)
+  end
+
+  defp normalize_tile(%{"label" => label, "value" => value} = tile, false)
+       when is_binary(label) do
     %{
       label: label,
       value: display_value(value),
@@ -229,11 +242,28 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     }
   end
 
-  defp normalize_tile(%{label: label, value: value} = tile) when is_binary(label) do
+  defp normalize_tile(%{label: label, value: value} = tile, false) when is_binary(label) do
     %{label: label, value: display_value(value), sub: display_sub(Map.get(tile, :sub))}
   end
 
-  defp normalize_tile(_), do: nil
+  defp normalize_tile(_, _privacy?), do: nil
+
+  defp mask_tile_free_strings(%{} = tile) do
+    tile
+    |> mask_tile_key("sub")
+    |> mask_tile_key(:sub)
+    |> mask_tile_key("value")
+    |> mask_tile_key(:value)
+  end
+
+  defp mask_tile_free_strings(tile), do: tile
+
+  defp mask_tile_key(tile, key) do
+    case Map.fetch(tile, key) do
+      {:ok, value} when is_binary(value) -> Map.put(tile, key, PrivacyRedactor.mask_text(value))
+      _ -> tile
+    end
+  end
 
   defp display_value(value) when is_number(value), do: num(value)
   defp display_value(value) when is_binary(value), do: value
@@ -250,8 +280,10 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp since_label(_story), do: "since baseline"
 
   attr :usage, :any, required: true
+  attr :privacy, :boolean, default: false
 
   defp usage(%{usage: {:ok, u}} = assigns) do
+    u = usage_payload_for_privacy(u, assigns.privacy)
     totals = u["totals"] || %{}
 
     assigns =
@@ -264,10 +296,10 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
         recent: u["recent"] || [],
         security: u["security"] || %{},
         breakdowns: [
-          {"By served model", "model", breakdown_rows(u["by_served_model"])},
-          {"By provider", "provider", breakdown_rows(u["by_provider"])},
-          {"By route", "route", breakdown_rows(u["by_route"])},
-          {"By model family", "family", breakdown_rows(u["by_model_family"])}
+          {"By served model", "model", breakdown_rows(u["by_served_model"], assigns.privacy)},
+          {"By provider", "provider", breakdown_rows(u["by_provider"], assigns.privacy)},
+          {"By route", "route", breakdown_rows(u["by_route"], assigns.privacy)},
+          {"By model family", "family", breakdown_rows(u["by_model_family"], assigns.privacy)}
         ],
         stale?: u["detail_level"] not in ["full", nil]
       )
@@ -361,7 +393,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       <:meta>
         <span>sanitized — no request/response bodies, no secrets</span>
       </:meta>
-      <.recent rows={@recent} />
+      <.recent rows={@recent} privacy={@privacy} />
     </.panel>
 
     <p class="text-xs opacity-40">
@@ -425,6 +457,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   # ── recent request rows ─────────────────────────────────────────────────────
   attr :rows, :list, required: true
+  attr :privacy, :boolean, default: false
 
   defp recent(%{rows: []} = assigns) do
     ~H"""
@@ -454,7 +487,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           </tr>
         </thead>
         <tbody>
-          <.recent_row :for={r <- @visible} r={r} />
+          <.recent_row :for={r <- @visible} r={r} privacy={@privacy} />
         </tbody>
       </table>
       <details :if={@older != []} class="mt-1">
@@ -463,7 +496,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
         </summary>
         <table class="table table-xs">
           <tbody>
-            <.recent_row :for={r <- @older} r={r} />
+            <.recent_row :for={r <- @older} r={r} privacy={@privacy} />
           </tbody>
         </table>
       </details>
@@ -472,6 +505,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   end
 
   attr :r, :map, required: true
+  attr :privacy, :boolean, default: false
 
   defp recent_row(assigns) do
     ~H"""
@@ -479,27 +513,44 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       <td class="tnum text-xs" title={@r["ts"]}>{rel_unix(@r["ts"])}</td>
       <td><span class={["badge badge-xs", status_badge(@r["status"])]}>{@r["status"]}</span></td>
       <td class="font-mono text-xs">{@r["served_model_id"] || @r["requested_model"] || "—"}</td>
-      <td class="font-mono text-xs opacity-70">{@r["path"] || "—"}</td>
+      <td class="font-mono text-xs opacity-70">{recent_path(@r["path"], @privacy)}</td>
       <td class="text-right tnum text-xs">{ms(@r["latency_ms"])}</td>
       <td class="text-right tnum text-xs">{num(@r["tokens_total"])}</td>
-      <td class="text-xs opacity-70 max-w-xs truncate">{recent_detail(@r)}</td>
+      <td class="text-xs opacity-70 max-w-xs truncate">{recent_detail(@r, @privacy)}</td>
     </tr>
     """
   end
 
   # An error message wins; else a compact decision trace if the router recorded one.
-  defp recent_detail(%{"error_message" => m}) when is_binary(m) and m != "", do: m
-  defp recent_detail(%{"error_type" => t}) when is_binary(t) and t != "", do: t
-  defp recent_detail(%{"decision_trace" => t}) when not is_nil(t), do: inspect(t)
-  defp recent_detail(_), do: ""
+  defp recent_detail(%{"error_message" => m}, true) when is_binary(m) and m != "",
+    do: PrivacyRedactor.mask_text(m)
+
+  defp recent_detail(%{"error_message" => m}, false) when is_binary(m) and m != "", do: m
+
+  defp recent_detail(%{"error_type" => t}, privacy?) when is_binary(t) and t != "",
+    do: redact_string(t, privacy?)
+
+  defp recent_detail(%{"decision_trace" => t}, true) when not is_nil(t),
+    do: t |> PrivacyRedactor.mask_identity() |> inspect() |> PrivacyRedactor.mask_cid()
+
+  defp recent_detail(%{"decision_trace" => t}, false) when not is_nil(t), do: inspect(t)
+  defp recent_detail(_, _privacy?), do: ""
+
+  defp recent_path(nil, _privacy?), do: "—"
+  defp recent_path(path, false), do: path
+  defp recent_path(path, true) when is_binary(path), do: PrivacyRedactor.mask_text(path)
+  defp recent_path(_path, _privacy?), do: "—"
 
   # ── formatting / shaping helpers ────────────────────────────────────────────
 
   # A breakdown map (%{name => stats}) → list sorted by requests desc.
-  defp breakdown_rows(map) when is_map(map),
-    do: Enum.sort_by(map, fn {_k, s} -> -(s["requests"] || 0) end)
+  defp breakdown_rows(map, privacy?) when is_map(map) do
+    map
+    |> Enum.map(fn {k, s} -> {redact_string(k, privacy?), s} end)
+    |> Enum.sort_by(fn {_k, s} -> -(s["requests"] || 0) end)
+  end
 
-  defp breakdown_rows(_), do: []
+  defp breakdown_rows(_, _privacy?), do: []
 
   # status_counts is a %{"200" => n}; render in code order.
   defp status_rows(map) when is_map(map),
@@ -556,4 +607,14 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       _ -> "badge-ghost"
     end
   end
+
+  defp usage_payload_for_privacy(u, false), do: u
+  defp usage_payload_for_privacy(u, true), do: PrivacyRedactor.mask_identity(u)
+
+  defp redact_string(value, false), do: value
+  defp redact_string(value, true) when is_binary(value), do: PrivacyRedactor.mask_cid(value)
+  defp redact_string(value, true), do: value
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

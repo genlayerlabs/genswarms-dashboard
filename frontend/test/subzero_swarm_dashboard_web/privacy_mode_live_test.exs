@@ -4,7 +4,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
   import Phoenix.LiveViewTest
   import Mox
 
-  alias SubzeroSwarmDashboard.{RouterClientMock, SwarmClientMock}
+  alias SubzeroSwarmDashboard.{RouterClientMock, RouterUsageCache, SwarmClientMock}
 
   setup :set_mox_global
 
@@ -59,9 +59,17 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
   setup do
     parent = self()
 
+    try do
+      Agent.update(RouterUsageCache, fn _ -> %{} end)
+    catch
+      :exit, _ -> :ok
+    end
+
     stub(RouterClientMock, :usage, fn _ -> {:unavailable, :not_configured} end)
 
     stub(SwarmClientMock, :dashboard, fn _ -> {:ok, @canary_snap} end)
+    stub(SwarmClientMock, :events, fn _, _ -> {:ok, [canary_event()]} end)
+    stub(SwarmClientMock, :config, fn _ -> {:ok, %{"objects" => []}} end)
 
     stub(SwarmClientMock, :session_history, fn _, @canary_cid ->
       send(parent, {:history_loaded, @canary_cid})
@@ -96,14 +104,22 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     :ok
   end
 
-  defp push_canary_snap(view) do
-    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, @canary_snap})
+  defp push_canary_snap(view, snap \\ @canary_snap) do
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
     render(view)
   end
 
   defp push_canary_story(view) do
-    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "events", {
-      :story,
+    push_story(view, canary_story())
+  end
+
+  defp push_story(view, story) do
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "events", {:story, story})
+    render(view)
+  end
+
+  defp canary_story(overrides \\ %{}) do
+    Map.merge(
       %{
         feed_status: :ok,
         feed_age_s: 0,
@@ -124,10 +140,158 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
         kpis: %{},
         issues: [],
         story: []
-      }
-    })
+      },
+      overrides
+    )
+  end
 
-    render(view)
+  defp canary_story_row(attrs \\ %{}) do
+    Map.merge(
+      %{
+        seq: 987,
+        ts: 1_782_000_000.0,
+        kind: "request_open",
+        cid: @canary_cid,
+        agent: "wingston_agent_0",
+        issue: false,
+        text: "#{@canary_text} from #{@canary_cid}"
+      },
+      attrs
+    )
+  end
+
+  defp canary_event do
+    %{
+      "timestamp" => "2026-07-08T12:00:00Z",
+      "level" => "info",
+      "category" => "agent",
+      "agent" => "wingston_agent_0",
+      "message" => @canary_text,
+      "metadata" => %{
+        "cid" => @canary_cid,
+        "chat_id" => @canary_chat_id,
+        "user" => %{"handle" => @canary_handle, "name" => @canary_name}
+      }
+    }
+  end
+
+  defp canary_usage do
+    %{
+      "schema_version" => 2,
+      "detail_level" => "full",
+      "totals" => %{"requests" => 1, "tokens_total" => 42, "errors" => 0},
+      "by_route" => %{@canary_cid => %{"requests" => 1, "tokens_total" => 42}},
+      "by_provider" => %{"openai" => %{"requests" => 1, "tokens_total" => 42}},
+      "by_served_model" => %{"gpt-test" => %{"requests" => 1, "tokens_total" => 42}},
+      "by_model_family" => %{"test" => %{"requests" => 1, "tokens_total" => 42}},
+      "consumer_settings" => %{
+        "status" => "active",
+        "allowed_routes" => [@canary_cid],
+        "effective_per_min" => 60
+      },
+      "key" => %{"sha256_prefix" => "ab12cd34", "status" => "active"},
+      "health_summary" => %{"state" => "healthy", "success_rate" => 1.0, "status_counts" => %{}},
+      "route_health" => [%{"route" => @canary_cid, "state" => "healthy"}],
+      "recent" => [
+        %{
+          "ts" => System.os_time(:second),
+          "status" => 500,
+          "served_model_id" => "gpt-test",
+          "path" => "/v1/chat/#{@canary_chat_id}",
+          "latency_ms" => 12,
+          "tokens_total" => 42,
+          "error_message" => @canary_text
+        }
+      ],
+      "security" => %{"sanitized" => true}
+    }
+  end
+
+  defp canary_config do
+    %{
+      "objects" => [
+        %{
+          "name" => "sender",
+          "handler" => "Sender",
+          "has_schema" => true,
+          "config" => [
+            %{
+              "key" => "alert_cids",
+              "value" => [@canary_cid],
+              "description" => "where alert cids are delivered",
+              "mutable" => true,
+              "secret" => false
+            },
+            %{
+              "key" => "owner_handle",
+              "value" => @canary_handle,
+              "description" => "operator handle",
+              "mutable" => false,
+              "secret" => false
+            },
+            %{
+              "key" => "display_name",
+              "value" => @canary_name,
+              "description" => "operator name",
+              "mutable" => false,
+              "secret" => false
+            }
+          ]
+        }
+      ]
+    }
+  end
+
+  defp canary_extension_snap do
+    put_in(@canary_snap, ["extensions", "dashboard_pages"], [
+      %{
+        "id" => "canary-report",
+        "label" => @canary_handle,
+        "meta" => @canary_cid,
+        "sections" => [
+          %{
+            "type" => "metrics",
+            "title" => "Summary",
+            "items" => [
+              %{"label" => "owner", "value" => @canary_name, "sub" => @canary_cid},
+              %{"label" => "count", "value" => 7}
+            ]
+          },
+          %{
+            "type" => "table",
+            "title" => "Consumers",
+            "columns" => [
+              %{"key" => "handle", "label" => "handle"},
+              %{"key" => "name", "label" => "name"},
+              %{"key" => "cid", "label" => "cid"},
+              %{"key" => "message", "label" => "message"}
+            ],
+            "rows" => [
+              %{
+                "handle" => @canary_handle,
+                "name" => @canary_name,
+                "cid" => @canary_cid,
+                "message" => @canary_text
+              }
+            ]
+          }
+        ]
+      }
+    ])
+  end
+
+  defp canary_usage_snap do
+    @canary_snap
+    |> put_in(["extensions", "metrics_today"], %{"replies" => 1})
+    |> put_in(["extensions", "usage_tiles"], [
+      %{"label" => @canary_handle, "value" => @canary_name, "sub" => @canary_cid}
+    ])
+  end
+
+  defp canary_warning_snap do
+    Map.put(@canary_snap, "warnings", [
+      %{"code" => "canary", "object" => @canary_cid, "reason" => "alert #{@canary_cid}"}
+    ])
   end
 
   defp refute_canary(html) do
@@ -282,5 +446,198 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     assert_canary_identity(html)
     assert html =~ @canary_text
     assert html =~ @canary_chat_id
+  end
+
+  test "events privacy masks story rows and raw engine event metadata", %{conn: conn} do
+    conn = init_test_session(conn, %{privacy: true})
+    {:ok, view, _html} = live(conn, "/events")
+
+    _html = push_canary_snap(view)
+
+    html =
+      push_story(view, canary_story(%{story: [canary_story_row()]}))
+
+    refute_canary(html)
+    assert html =~ "▪▪▪▪▪"
+
+    {:ok, raw_view, _html} = live(conn, "/events?view=raw")
+    html = render(raw_view)
+
+    refute_canary(html)
+    assert html =~ "info"
+    assert html =~ "agent"
+    assert html =~ "▪▪▪▪▪"
+  end
+
+  test "events privacy off keeps story and raw engine event output", %{conn: conn} do
+    conn = init_test_session(conn, %{privacy: false})
+    {:ok, view, _html} = live(conn, "/events")
+
+    html = push_canary_snap(view)
+    assert html =~ @canary_handle
+    assert html =~ @canary_cid
+
+    html = push_story(view, canary_story(%{story: [canary_story_row()]}))
+    assert html =~ @canary_text
+    assert html =~ @canary_cid_encoded
+
+    {:ok, raw_view, _html} = live(conn, "/events?view=raw")
+    html = render(raw_view)
+    assert html =~ @canary_text
+    assert html =~ @canary_handle
+    assert html =~ @canary_name
+    assert html =~ @canary_chat_id
+  end
+
+  test "logs privacy suppresses raw slot output and masks session selector values", %{conn: conn} do
+    conn = init_test_session(conn, %{privacy: true})
+    {:ok, view, _html} = live(conn, "/logs")
+    html = push_canary_snap(view)
+
+    refute_canary(html)
+    assert html =~ "session 1"
+
+    view |> element("form[phx-change='select']") |> render_change(%{"session_id" => "session:0"})
+    assert_receive {:logs_loaded, @canary_cid}, 500
+    html = render(view)
+
+    refute_canary(html)
+    assert html =~ "Raw slot output hidden in privacy mode."
+    assert html =~ "1 line"
+  end
+
+  test "logs privacy off keeps raw selector ids and slot output", %{conn: conn} do
+    conn = init_test_session(conn, %{privacy: false})
+    {:ok, view, _html} = live(conn, "/logs")
+    html = push_canary_snap(view)
+
+    assert html =~ @canary_cid
+    view |> element("form[phx-change='select']") |> render_change(%{"session_id" => @canary_cid})
+    assert_receive {:logs_loaded, @canary_cid}, 500
+    html = render(view)
+
+    assert html =~ @canary_text
+    assert html =~ @canary_cid
+  end
+
+  test "overview privacy masks in-flight users, warnings, and issue text", %{conn: conn} do
+    conn = init_test_session(conn, %{privacy: true})
+    {:ok, view, _html} = live(conn, "/")
+
+    _html = push_canary_snap(view, canary_warning_snap())
+
+    html =
+      push_story(
+        view,
+        canary_story(%{
+          issues: [canary_story_row(%{issue: true, text: @canary_text})],
+          story: [canary_story_row(%{kind: "reply_sent", text: @canary_text})]
+        })
+      )
+
+    refute_canary(html)
+    assert html =~ "•••"
+    assert html =~ "▪▪▪▪▪"
+    assert html =~ "canary"
+  end
+
+  test "overview privacy off keeps warning ids and story labels", %{conn: conn} do
+    conn = init_test_session(conn, %{privacy: false})
+    {:ok, view, _html} = live(conn, "/")
+
+    _html = push_canary_snap(view, canary_warning_snap())
+
+    html =
+      push_story(
+        view,
+        canary_story(%{
+          issues: [canary_story_row(%{issue: true, text: @canary_text})],
+          story: [canary_story_row(%{kind: "reply_sent", text: @canary_text})]
+        })
+      )
+
+    assert html =~ @canary_handle
+    assert html =~ @canary_cid
+    assert html =~ @canary_text
+  end
+
+  test "usage privacy masks router rows and host usage tiles", %{conn: conn} do
+    RouterUsageCache.put("all", {:ok, canary_usage()})
+    stub(RouterClientMock, :usage, fn _ -> {:ok, canary_usage()} end)
+
+    conn = init_test_session(conn, %{privacy: true})
+    {:ok, view, _html} = live(conn, "/usage")
+
+    html = push_canary_snap(view, canary_usage_snap())
+
+    refute_canary(html)
+    assert html =~ "42"
+    assert html =~ "▪▪▪▪▪"
+  end
+
+  test "usage privacy off keeps router rows and host usage tile strings", %{conn: conn} do
+    RouterUsageCache.put("all", {:ok, canary_usage()})
+    stub(RouterClientMock, :usage, fn _ -> {:ok, canary_usage()} end)
+
+    conn = init_test_session(conn, %{privacy: false})
+    {:ok, view, _html} = live(conn, "/usage")
+
+    html = push_canary_snap(view, canary_usage_snap())
+
+    assert html =~ @canary_handle
+    assert html =~ @canary_name
+    assert html =~ @canary_cid
+    assert html =~ @canary_chat_id
+    assert html =~ @canary_text
+  end
+
+  test "config privacy masks identity-bearing values", %{conn: conn} do
+    stub(SwarmClientMock, :config, fn _ -> {:ok, canary_config()} end)
+
+    conn = init_test_session(conn, %{privacy: true})
+    {:ok, view, _html} = live(conn, "/config")
+    html = render(view)
+
+    refute_canary(html)
+    assert html =~ "sender"
+    assert html =~ "•••"
+    assert html =~ "tg:•••"
+  end
+
+  test "config privacy off keeps identity-bearing values", %{conn: conn} do
+    stub(SwarmClientMock, :config, fn _ -> {:ok, canary_config()} end)
+
+    conn = init_test_session(conn, %{privacy: false})
+    {:ok, view, _html} = live(conn, "/config")
+    html = render(view)
+
+    assert html =~ @canary_handle
+    assert html =~ @canary_name
+    assert html =~ @canary_cid
+  end
+
+  test "extension page privacy masks arbitrary extension payloads", %{conn: conn} do
+    stub(SwarmClientMock, :dashboard, fn _ -> {:ok, canary_extension_snap()} end)
+
+    conn = init_test_session(conn, %{privacy: true})
+    {:ok, view, _html} = live(conn, "/extensions/canary-report")
+    html = push_canary_snap(view, canary_extension_snap())
+
+    refute_canary(html)
+    assert html =~ "7"
+    assert html =~ "•••"
+  end
+
+  test "extension page privacy off keeps arbitrary extension payloads", %{conn: conn} do
+    stub(SwarmClientMock, :dashboard, fn _ -> {:ok, canary_extension_snap()} end)
+
+    conn = init_test_session(conn, %{privacy: false})
+    {:ok, view, _html} = live(conn, "/extensions/canary-report")
+    html = push_canary_snap(view, canary_extension_snap())
+
+    assert html =~ @canary_handle
+    assert html =~ @canary_name
+    assert html =~ @canary_cid
+    assert html =~ @canary_text
   end
 end

@@ -15,7 +15,10 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
   """
   use SubzeroSwarmDashboardWeb, :live_view
 
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.{EngineClient, SwarmClient}
+
+  @identity_key_fragments ~w(chat cid conversation from handle label name session user username)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -73,12 +76,23 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
 
   @impl true
   def render(assigns) do
+    privacy? = assigns[:privacy] == true
+
+    assigns =
+      assign(assigns,
+        display_error: redact_string(assigns[:error], privacy?),
+        display_edit_error: redact_string(assigns[:edit_error], privacy?),
+        display_objects: objects_for_privacy(assigns[:objects], privacy?),
+        display_overlay: overlay_for_privacy(assigns[:overlay], privacy?),
+        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?)
+      )
+
     ~H"""
     <Layouts.app
       flash={@flash}
       active={:config}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
       privacy={@privacy}
       inspect={@inspect}
@@ -91,18 +105,25 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
           <span class="text-xs opacity-50 font-sans align-middle">
             effective object config (seed ⊕ overlay) · redacted per config_schema
           </span>
-          <span :if={@configurator?} class="badge badge-warning badge-sm align-middle ml-2" title="CONFIGURATOR_ENGINE_URL is set — x-mutable fields are editable">
+          <span
+            :if={@configurator?}
+            class="badge badge-warning badge-sm align-middle ml-2"
+            title="CONFIGURATOR_ENGINE_URL is set — x-mutable fields are editable"
+          >
             write enabled
           </span>
         </h1>
 
-        <div :if={@error} class="alert alert-warning text-sm">
-          config unavailable: {@error}
+        <div :if={@display_error} class="alert alert-warning text-sm">
+          config unavailable: {@display_error}
         </div>
 
         <div :if={@objects == :loading} class="opacity-50 text-sm">loading…</div>
 
-        <div :for={obj <- obj_list(@objects)} class="rounded-box border border-base-300 bg-base-200/60">
+        <div
+          :for={obj <- obj_list(@display_objects)}
+          class="rounded-box border border-base-300 bg-base-200/60"
+        >
           <div class="flex items-center gap-2 px-4 py-2.5 border-b border-base-300">
             <span class="font-mono font-semibold">{obj["name"]}</span>
             <span class="text-xs opacity-50 font-mono">{obj["handler"]}</span>
@@ -120,32 +141,46 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
               <tr :for={row <- obj["config"]}>
                 <td class="w-56 align-top">
                   {row["key"]}
-                  <span :if={row["mutable"]} class="badge badge-info badge-xs ml-1" title="hot-editable via update_config">
+                  <span
+                    :if={row["mutable"]}
+                    class="badge badge-info badge-xs ml-1"
+                    title="hot-editable via update_config"
+                  >
                     mutable
                   </span>
-                  <span :if={row["secret"]} class="badge badge-warning badge-xs ml-1" title="x-secret: value is an env var name; secret never leaves the object">
+                  <span
+                    :if={row["secret"]}
+                    class="badge badge-warning badge-xs ml-1"
+                    title="x-secret: value is an env var name; secret never leaves the object"
+                  >
                     secret
                   </span>
                 </td>
                 <td class="align-top whitespace-pre-wrap break-all">
                   <%= if editing?(@editing, obj["name"], row["key"]) do %>
-                    <form phx-submit="save_edit" class="space-y-2">
-                      <textarea
-                        name="draft"
-                        rows="4"
-                        class="textarea textarea-bordered textarea-sm w-full font-mono"
-                      >{@editing.draft}</textarea>
-                      <div :if={@edit_error} class="text-error text-xs">{@edit_error}</div>
-                      <div class="flex gap-2">
-                        <button type="submit" class="btn btn-primary btn-xs">apply</button>
-                        <button type="button" class="btn btn-ghost btn-xs" phx-click="cancel_edit">
-                          cancel
-                        </button>
-                        <span class="text-xs opacity-50 self-center">
-                          JSON value · object restarts on apply · logged in the overlay
-                        </span>
-                      </div>
-                    </form>
+                    <%= if @privacy do %>
+                      <div class="text-xs opacity-60">Editing hidden in privacy mode.</div>
+                    <% else %>
+                      <form phx-submit="save_edit" class="space-y-2">
+                        <textarea
+                          name="draft"
+                          rows="4"
+                          class="textarea textarea-bordered textarea-sm w-full font-mono"
+                        >{@editing.draft}</textarea>
+                        <div :if={@display_edit_error} class="text-error text-xs">
+                          {@display_edit_error}
+                        </div>
+                        <div class="flex gap-2">
+                          <button type="submit" class="btn btn-primary btn-xs">apply</button>
+                          <button type="button" class="btn btn-ghost btn-xs" phx-click="cancel_edit">
+                            cancel
+                          </button>
+                          <span class="text-xs opacity-50 self-center">
+                            JSON value · object restarts on apply · logged in the overlay
+                          </span>
+                        </div>
+                      </form>
+                    <% end %>
                   <% else %>
                     <%= if row["value"] == nil do %>
                       <span class="opacity-40" title={elided_title(row)}>•••</span>
@@ -153,7 +188,7 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
                       {format_value(row["value"])}
                     <% end %>
                     <button
-                      :if={@configurator? and row["mutable"]}
+                      :if={@configurator? and row["mutable"] and !@privacy}
                       class="btn btn-ghost btn-xs ml-2 align-top"
                       phx-click="edit"
                       phx-value-object={obj["name"]}
@@ -172,12 +207,15 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
           </table>
         </div>
 
-        <div :if={@configurator? and @overlay != []} class="rounded-box border border-base-300 bg-base-200/60">
+        <div
+          :if={@configurator? and @display_overlay != []}
+          class="rounded-box border border-base-300 bg-base-200/60"
+        >
           <div class="px-4 py-2.5 border-b border-base-300 text-sm font-semibold">
             Overlay — mutation audit trail
           </div>
           <ul class="p-4 space-y-1 text-xs font-mono">
-            <li :for={ev <- @overlay}>
+            <li :for={ev <- @display_overlay}>
               <span class="badge badge-ghost badge-xs mr-1">{ev["op"]}</span>
               {Jason.encode!(ev["payload"] || %{})}
             </li>
@@ -225,10 +263,88 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
   defp obj_list(objects) when is_list(objects), do: objects
   defp obj_list(_), do: []
 
-  defp elided_title(%{"in_schema" => false}), do: "not in the package's config_schema (fail-closed)"
+  defp elided_title(%{"in_schema" => false}),
+    do: "not in the package's config_schema (fail-closed)"
+
   defp elided_title(%{"secret" => true}), do: "x-secret — never shown"
   defp elided_title(_), do: "elided"
 
   defp format_value(v) when is_binary(v), do: v
   defp format_value(v), do: Jason.encode!(v, pretty: true)
+
+  defp objects_for_privacy(objects, false), do: objects
+  defp objects_for_privacy(:loading, _privacy?), do: :loading
+
+  defp objects_for_privacy(objects, true) when is_list(objects),
+    do: Enum.map(objects, &object_for_privacy/1)
+
+  defp objects_for_privacy(objects, _privacy?), do: objects
+
+  defp object_for_privacy(%{} = obj) do
+    Map.update(obj, "config", [], fn rows ->
+      Enum.map(rows || [], &row_for_privacy/1)
+    end)
+  end
+
+  defp object_for_privacy(obj), do: obj
+
+  defp row_for_privacy(%{} = row) do
+    row
+    |> Map.update("key", nil, &PrivacyRedactor.mask_cid/1)
+    |> Map.update("description", nil, &PrivacyRedactor.mask_cid/1)
+    |> Map.update("value", nil, &redact_config_value(row["key"], &1))
+  end
+
+  defp row_for_privacy(row), do: row
+
+  defp redact_config_value(_key, nil), do: nil
+
+  defp redact_config_value(key, value) do
+    value =
+      %{to_string(key) => value}
+      |> PrivacyRedactor.mask_identity()
+      |> Map.get(to_string(key))
+
+    if identityish_config_key?(key) do
+      redact_identityish_config_value(value)
+    else
+      PrivacyRedactor.mask_identity(value)
+    end
+  end
+
+  defp identityish_config_key?(key) do
+    key = key |> to_string() |> String.downcase()
+    Enum.any?(@identity_key_fragments, &String.contains?(key, &1))
+  end
+
+  defp redact_identityish_config_value(value) when is_binary(value) do
+    case PrivacyRedactor.mask_cid(value) do
+      ^value -> if(String.contains?(value, "•••"), do: value, else: "•••")
+      masked -> masked
+    end
+  end
+
+  defp redact_identityish_config_value(values) when is_list(values),
+    do: Enum.map(values, &redact_identityish_config_value/1)
+
+  defp redact_identityish_config_value(%{} = value), do: PrivacyRedactor.mask_identity(value)
+  defp redact_identityish_config_value(value), do: value
+
+  defp overlay_for_privacy(overlay, false), do: overlay
+
+  defp overlay_for_privacy(overlay, true) when is_list(overlay) do
+    Enum.map(overlay, fn
+      %{} = ev -> Map.update(ev, "payload", %{}, &PrivacyRedactor.mask_identity/1)
+      ev -> ev
+    end)
+  end
+
+  defp overlay_for_privacy(overlay, _privacy?), do: overlay
+
+  defp redact_string(value, false), do: value
+  defp redact_string(value, true) when is_binary(value), do: PrivacyRedactor.mask_cid(value)
+  defp redact_string(value, true), do: value
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end
