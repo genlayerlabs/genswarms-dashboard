@@ -677,10 +677,81 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     """
   end
 
+  @doc """
+  The messenger-style conversation list — the ONE renderer for durable thread
+  turns (`%{"role", "content"}` + optional `"at"`/`"kind"`/`"auto"`). Renders
+  ONLY the message list: sensitive gates, hide/reveal buttons and panel meta
+  stay in the callers. Content is the agents' authoring dialect, rendered by
+  `ChatMarkdown` (escaped — never raw). `id` is required: `ConversationDays`
+  hangs on it for client-side local-day separators.
+  """
+  attr :id, :string, required: true
+  attr :turns, :list, required: true
+
+  def conversation(assigns) do
+    assigns = assign(assigns, :rows, conversation_rows(assigns.turns))
+
+    ~H"""
+    <div id={@id} phx-hook="ConversationDays" class="msg-list">
+      <%= for {t, i, tail?} <- @rows do %>
+        <div :if={t["kind"] == "note"} class="msg-note" data-ts={t["at"]}>
+          {t["content"]}
+        </div>
+        <div
+          :if={t["kind"] != "note"}
+          class={["msg-row", (t["role"] == "user" && "msg-in") || "msg-out", tail? && "msg-tail"]}
+          data-ts={t["at"]}
+        >
+          <div class="msg-bubble">
+            <span class="msg-content">{SubzeroSwarmDashboardWeb.ChatMarkdown.render(t["content"])}</span>
+            <span :if={t["at"] || t["auto"]} class="msg-meta">
+              <span :if={t["auto"]} class="msg-auto">auto</span>
+              <span
+                :if={t["at"]}
+                id={"#{@id}-ts-#{i}"}
+                phx-hook="LocalTime"
+                data-ts={t["at"]}
+                data-fmt="hm"
+              >
+                {utc_hm(t["at"])}
+              </span>
+            </span>
+          </div>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  # tail = last MESSAGE row of a consecutive same-role run (notes break runs)
+  defp conversation_rows(turns) do
+    turns
+    |> Enum.with_index()
+    |> Enum.map(fn {t, i} ->
+      next =
+        turns
+        |> Enum.drop(i + 1)
+        |> Enum.find(&(Map.get(&1, "kind") != "note"))
+
+      tail? =
+        Map.get(t, "kind") != "note" and
+          (next == nil or next["role"] != t["role"])
+
+      {t, i, tail?}
+    end)
+  end
+
+  # server-rendered UTC fallback; LocalTime overwrites it client-side
+  defp utc_hm(at) when is_integer(at) do
+    at |> DateTime.from_unix!() |> Calendar.strftime("%H:%M")
+  end
+
+  defp utc_hm(_at), do: ""
+
   attr :transcript, :any, default: nil
 
-  # Full durable transcript — every turn, untruncated, as chat bubbles (mirrors the
-  # dedicated session page so the inspector is a complete view, not a peek).
+  # Full durable transcript — every turn, untruncated (mirrors the dedicated
+  # session page so the inspector is a complete view, not a peek).
   defp inspector_transcript(%{transcript: {:ok, %{"turns" => [_ | _] = turns}}} = assigns) do
     assigns = assign(assigns, turns: turns)
 
@@ -690,12 +761,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
         <.icon name="hero-eye-slash" class="size-3.5" /> hide
       </button>
     </div>
-    <div class="space-y-2">
-      <div :for={t <- @turns} class={["chat", (t["role"] == "user" && "chat-start") || "chat-end"]}>
-        <div class="chat-header text-xs opacity-60">{t["role"]}</div>
-        <div class="chat-bubble whitespace-pre-wrap break-words">{t["content"]}</div>
-      </div>
-    </div>
+    <.conversation id="inspector-conversation" turns={@turns} />
     """
   end
 

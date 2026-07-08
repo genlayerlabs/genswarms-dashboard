@@ -56,7 +56,7 @@ export const Pipeline = {
     this.FIXED = new Set() // names with a fixed lane position
     this.BG = new Set() //   chatter nodes (mutual traffic = background noise)
     this.AGENTS = new Set() // dynamic agent slots (snapshot pool + events)
-    this.HANDLES = {} //     slot → {session, seed} overlay (leased slots only)
+    this.HANDLES = {} //     slot → avatar seed (leased slots only)
     this.AVATARS = {} //     avatar seed → offscreen canvas (generated once, cached)
     this.EXTRAS = new Set() // unknown non-agent endpoints → right-edge stack
     this.POS = {} //         name → {x, y, r, kind}
@@ -88,6 +88,19 @@ export const Pipeline = {
     this.q("rig").addEventListener("change", (e) => this.setDebug(e.target.checked))
     this.q("copy").addEventListener("click", () => this.copyDbg())
 
+    // canvas click → shared inspector (same phx-click="inspect" contract as
+    // the node table below the canvas). POS is CSS-pixel space (layout() sizes
+    // the canvas from clientWidth/Height), so offsetX/Y need no scaling.
+    this.SESSIONS = {}
+    this.cv.addEventListener("click", (e) => {
+      const hit = this.agentAt(e.offsetX, e.offsetY)
+      if (hit && this.SESSIONS[hit]) this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
+    })
+    this.cv.addEventListener("mousemove", (e) => {
+      const hit = this.agentAt(e.offsetX, e.offsetY)
+      this.cv.style.cursor = hit && this.SESSIONS[hit] ? "pointer" : ""
+    })
+
     this.handleEvent("pipeline:init", (layout) => {
       this.LAYOUT = layout
       this.FIXED = new Set((layout.nodes || []).map((n) => n.name))
@@ -97,12 +110,14 @@ export const Pipeline = {
     })
     // snapshot wins existence: slots appear before their first event (additive —
     // a torn-down slot stays drawn idle rather than flickering between snapshots).
-    // `handles` overlays a leased slot with {session, seed}: the node is labelled
-    // "agent_15" + the session id it serves, and wears an avatar generated from
-    // the seed (the telegram handle). The map is replaced wholesale so a released
-    // slot drops its overlay (bare slot id, no avatar) on the next snapshot.
-    this.handleEvent("pipeline:agents", ({agents, handles}) => {
+    // `handles` maps a leased slot to its avatar seed (the telegram handle) —
+    // the node is labelled "agent_15" + the session id it serves and wears a
+    // generated avatar. `sessions` maps the slot to the session id it serves
+    // (label sub-line + canvas click→inspect target). Both replaced wholesale so
+    // a released slot drops its avatar + session on the next snapshot.
+    this.handleEvent("pipeline:agents", ({agents, handles, sessions}) => {
       this.HANDLES = handles || {}
+      this.SESSIONS = sessions || {}
       let changed = false
       for (const name of agents || []) {
         if (!this.FIXED.has(name) && !this.AGENTS.has(name)) {
@@ -586,6 +601,15 @@ export const Pipeline = {
   },
 
   // ── geometry ─────────────────────────────────────────────────────────────────
+  // nearest agent dot under the pointer (CSS px — same space as POS)
+  agentAt(x, y) {
+    for (const [name, p] of Object.entries(this.POS || {})) {
+      if (p.kind !== "agent") continue
+      if (Math.hypot(x - p.x, y - p.y) <= (p.r || 10) + 6) return name
+    }
+    return null
+  },
+
   layout() {
     if (!this.LAYOUT) return
     const W = (this.cv.width = this.cv.clientWidth || this.el.clientWidth)
@@ -813,10 +837,11 @@ export const Pipeline = {
       const ag = P.kind === "agent" ? this.AG[n] : null
       const st = ag ? ag.state : null
       const objBusy = P.kind !== "agent" && busyObjs[n]
-      // overlay for a leased slot: {session, seed}. The label is ALWAYS the slot
-      // id (agent_15) now; identity comes from the drawn avatar + the session id
-      // sub-line, not a "@handle" text label.
-      const ov = P.kind === "agent" ? (this.HANDLES || {})[n] : null
+      // a leased slot: HANDLES[n] is its avatar seed, SESSIONS[n] the session id
+      // it serves. The label is ALWAYS the slot id (agent_15) now; identity comes
+      // from the drawn avatar + the session sub-line, not a "@handle" text label.
+      const seed = P.kind === "agent" ? (this.HANDLES || {})[n] : null
+      const sess = P.kind === "agent" ? (this.SESSIONS || {})[n] : null
       const label = this.short(n)
       // chatter nodes recede so the user-request lane owns the eye
       const dim = P.kind !== "agent" && this.BG.has(n) && !objBusy ? 0.5 : 1
@@ -860,7 +885,7 @@ export const Pipeline = {
         }
         // leased slot → paint the seed's avatar inside the bubble (clipped round,
         // over the body). Free slots keep the plain dot.
-        const av = ov && this.avatarFor(ov.seed)
+        const av = this.avatarFor(seed)
         if (av) {
           g.save()
           g.beginPath()
@@ -972,13 +997,13 @@ export const Pipeline = {
       g.globalAlpha = 1
 
       // the session id the slot serves — a dim second line under the slot id
-      if (ov && ov.session) {
+      if (sess) {
         g.fillStyle = C.ink
         g.globalAlpha = 0.55
         g.font = `500 9.5px ${MONO}`
         g.textAlign = "center"
         g.textBaseline = "top"
-        g.fillText(this.trunc(ov.session), P.x, P.y + hh + 20)
+        g.fillText(this.trunc(sess), P.x, P.y + hh + 20)
         g.globalAlpha = 1
       }
 
@@ -1000,7 +1025,7 @@ export const Pipeline = {
       }
       if (stxt) {
         // agents with a session sub-line push the status line down another row
-        const agentStatusY = ov && ov.session ? P.y + hh + 33 : P.y + hh + 21
+        const agentStatusY = sess ? P.y + hh + 33 : P.y + hh + 21
         g.fillStyle = scol
         g.font = `600 10.5px ${MONO}`
         g.textAlign = "center"

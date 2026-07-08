@@ -82,10 +82,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert html =~ "12.4s"
     refute html =~ "feed unavailable"
   end
-  describe "agent_handles/1 (canvas overlay: slot => {session, avatar seed})" do
+  describe "agent_handles/1 (canvas avatar seed: slot => seed)" do
     alias SubzeroSwarmDashboardWeb.TopologyLive
 
-    test "session id passes through; avatar seed is handle first, label/name fallbacks" do
+    test "avatar seed is handle first, then label / name, then session id" do
       snap = %{
         "sessions" => [
           %{
@@ -96,30 +96,27 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
           },
           %{"agent" => "wingston_agent_2", "state" => "active", "user" => %{}, "label" => "@CUPZ_0x"},
           %{"agent" => "wingston_agent_3", "state" => "active", "user" => %{"name" => "Crypto Li"}},
+          # no handle/label/name, no session id → nothing to seed → dropped
           %{"agent" => "wingston_agent_4", "state" => "active", "user" => %{}}
         ]
       }
 
       assert TopologyLive.agent_handles(snap) == %{
-               # handle is the avatar seed (raw, no "@"); session id is the label line
-               "wingston_agent_1" => %{"session" => "telegram:111", "seed" => "kongtouquan"},
-               # no session id → nil session; label fallback seeds the avatar
-               "wingston_agent_2" => %{"session" => nil, "seed" => "@CUPZ_0x"},
-               "wingston_agent_3" => %{"session" => nil, "seed" => "Crypto Li"}
-               # agent_4: no session id and no handle/label/name → no overlay
+               # handle wins, raw (no "@" — it is a seed, not a display label)
+               "wingston_agent_1" => "kongtouquan",
+               "wingston_agent_2" => "@CUPZ_0x",
+               "wingston_agent_3" => "Crypto Li"
              }
     end
 
-    test "a session id alone (no handle) still yields an overlay, seeding the avatar off the cid" do
+    test "a session id alone (no handle) still seeds a distinct avatar off the cid" do
       snap = %{
         "sessions" => [
           %{"agent" => "wingston_agent_1", "session_id" => "telegram:222", "state" => "active", "user" => %{}}
         ]
       }
 
-      assert TopologyLive.agent_handles(snap) == %{
-               "wingston_agent_1" => %{"session" => "telegram:222", "seed" => "telegram:222"}
-             }
+      assert TopologyLive.agent_handles(snap) == %{"wingston_agent_1" => "telegram:222"}
     end
 
     test "an ACTIVE session beats an idle leftover on a recycled slot" do
@@ -130,14 +127,39 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
         ]
       }
 
-      assert TopologyLive.agent_handles(snap) == %{
-               "wingston_agent_1" => %{"session" => "telegram:new", "seed" => "now"}
-             }
+      assert TopologyLive.agent_handles(snap) == %{"wingston_agent_1" => "now"}
     end
 
     test "no sessions / no agents → empty map (canvas falls back to slot ids)" do
       assert TopologyLive.agent_handles(%{}) == %{}
       assert TopologyLive.agent_handles(%{"sessions" => [%{"user" => %{"handle" => "x"}}]}) == %{}
+    end
+  end
+
+  describe "agent_sessions/1 (canvas click: slot => session id)" do
+    alias SubzeroSwarmDashboardWeb.TopologyLive
+
+    test "maps every slot to its session id — no display-label filter" do
+      snap = %{
+        "sessions" => [
+          # label-less session: agent_handles drops it, agent_sessions MUST keep it
+          %{"agent" => "wingston_agent_1", "session_id" => "tg:1:0", "state" => "idle", "user" => %{}},
+          # recycled slot: active session wins the overwrite
+          %{"agent" => "wingston_agent_2", "session_id" => "tg:2:0", "state" => "idle", "user" => %{}},
+          %{"agent" => "wingston_agent_2", "session_id" => "tg:3:0", "state" => "active", "user" => %{}},
+          # no slot → not in the map
+          %{"agent" => nil, "session_id" => "tg:4:0", "state" => "idle", "user" => %{}}
+        ]
+      }
+
+      assert TopologyLive.agent_sessions(snap) == %{
+               "wingston_agent_1" => "tg:1:0",
+               "wingston_agent_2" => "tg:3:0"
+             }
+    end
+
+    test "empty snapshot → empty map" do
+      assert TopologyLive.agent_sessions(%{}) == %{}
     end
   end
 end

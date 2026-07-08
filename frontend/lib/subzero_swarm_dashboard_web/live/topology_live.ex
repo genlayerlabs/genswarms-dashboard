@@ -42,7 +42,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       {:noreply,
        push_event(socket, "pipeline:agents", %{
          agents: agent_names(snap, socket.assigns.agent_re),
-         handles: agent_handles(snap)
+         handles: agent_handles(snap),
+         sessions: agent_sessions(snap)
        })}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -231,13 +232,13 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   end
 
   @doc """
-  agent slot => canvas overlay `%{"session" => cid, "seed" => avatar_seed}` from
-  the snapshot's sessions. `session` is the session id the slot currently serves
-  (the canvas draws it under the slot id); `seed` is the avatar seed — the
-  telegram handle, falling back to adapter label / name / session id — so every
-  leased slot gets a stable generated avatar even when it has no handle. Active
-  sessions win over idle leftovers, so a recycled slot never wears the previous
-  conversation's overlay. Public for unit tests.
+  agent slot => avatar seed for the canvas. The seed is the telegram handle,
+  falling back to adapter label / name / session id, so every leased slot gets a
+  stable generated avatar even without a handle — the identity lives in the drawn
+  avatar, not a "@handle" text label. Active sessions win over idle leftovers, so
+  a recycled slot never wears the previous conversation's avatar. The session id
+  the slot serves (drawn under the slot id) comes from `agent_sessions/1`. Public
+  for unit tests.
   """
   def agent_handles(snap) do
     (snap["sessions"] || [])
@@ -245,30 +246,34 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     # actives sort LAST so they win the Map.new overwrite
     |> Enum.sort_by(&(&1["state"] == "active"))
     |> Enum.reduce(%{}, fn s, acc ->
-      case session_overlay(s) do
+      case avatar_seed(s) do
         nil -> acc
-        overlay -> Map.put(acc, s["agent"], overlay)
+        seed -> Map.put(acc, s["agent"], seed)
       end
     end)
   end
 
-  defp session_overlay(s) do
-    session = presence(s["session_id"])
-    seed = avatar_seed(s)
-
-    if is_nil(session) and is_nil(seed) do
-      nil
-    else
-      # seed always resolves to *something* drawable — the session id is the
-      # last-resort avatar seed so a handle-less slot still gets a distinct icon
-      %{"session" => session, "seed" => seed || session}
-    end
+  @doc """
+  agent slot => session id, for canvas click→inspect and the label sub-line.
+  Same active-wins precedence as `agent_handles/1` but NO display filter: a
+  session without handle/label/name must still be clickable and labelled.
+  Public for unit tests.
+  """
+  def agent_sessions(snap) do
+    (snap["sessions"] || [])
+    |> Enum.filter(&(is_binary(&1["agent"]) and is_binary(&1["session_id"])))
+    # actives sort LAST so they win the Map.new overwrite
+    |> Enum.sort_by(&(&1["state"] == "active"))
+    |> Map.new(&{&1["agent"], &1["session_id"]})
   end
 
+  # telegram handle first, then adapter label / name, and the session id as a
+  # last resort so a handle-less leased slot still gets a distinct avatar
   defp avatar_seed(s) do
     presence(get_in(s, ["user", "handle"])) ||
       presence(s["label"]) ||
-      presence(get_in(s, ["user", "name"]))
+      presence(get_in(s, ["user", "name"])) ||
+      presence(s["session_id"])
   end
 
   defp presence(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)
