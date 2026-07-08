@@ -85,6 +85,35 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "2048"
   end
 
+  test "overview renders the inbox queue tile when the host publishes it", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "events", {
+      :story,
+      %{
+        feed_status: :ok,
+        feed_age_s: 0,
+        baseline_at: DateTime.utc_now(),
+        in_flight: [],
+        agents: [],
+        kpis: %{},
+        issues: [],
+        story: []
+      }
+    })
+
+    snap =
+      put_in(@snap, ["extensions", "inbox_queue"], %{
+        "depth" => 23,
+        "oldest_seconds" => 240
+      })
+
+    html = push_snap(view, snap)
+
+    assert html =~ "23"
+    assert html =~ "oldest 4m"
+  end
+
   test "layout renders the host-provided dashboard title from the snapshot", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/")
 

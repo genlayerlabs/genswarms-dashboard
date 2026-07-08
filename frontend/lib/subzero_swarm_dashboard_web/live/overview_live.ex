@@ -228,6 +228,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       assigns
       |> assign(:k, assigns.story[:kpis] || %{})
       |> assign(:today, metrics_today(assigns.snapshot))
+      |> assign(:inbox_queue, get_in(assigns.snapshot || %{}, ["extensions", "inbox_queue"]))
       |> assign(
         :attention,
         ReplyHealth.counts(assigns.snapshot, assigns.story, System.os_time(:second))
@@ -295,6 +296,14 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           title="messages bounced because an agent's mailbox was full — users hitting a busy bot"
         />
         <.metric
+          :if={@inbox_queue}
+          label="queue"
+          value={@inbox_queue["depth"]}
+          sub={queue_sub(@inbox_queue)}
+          tone={alarm_tone(@inbox_queue["depth"], "warn")}
+          title="Messages waiting for a free agent slot — queued, never dropped; drained oldest-first every 20s."
+        />
+        <.metric
           label="stalled"
           value={@k[:stalled] || 0}
           tone={alarm_tone(@k[:stalled], "warn")}
@@ -322,6 +331,11 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   # "2 blocked · 1 failed" under the browser rate — blocked (policy) and broken
   # (render) are different problems with different owners; nil hides the line.
+  defp queue_sub(%{"oldest_seconds" => seconds}) when is_number(seconds),
+    do: "oldest #{div(trunc(seconds), 60)}m"
+
+  defp queue_sub(_), do: nil
+
   defp browse_sub(k) do
     total = k[:browse_total] || 0
     ok = k[:browse_ok] || 0
