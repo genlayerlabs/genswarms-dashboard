@@ -218,12 +218,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         <.icon name="hero-eye-slash" class="size-3.5" /> hide
       </button>
     </div>
-    <div class="space-y-2">
-      <div :for={t <- @turns} class={["chat", (t["role"] == "user" && "chat-start") || "chat-end"]}>
-        <div class="chat-header text-xs opacity-60">{t["role"]}</div>
-        <div class="chat-bubble whitespace-pre-wrap">{t["content"]}</div>
-      </div>
-    </div>
+    <.conversation id="session-conversation" turns={@turns} />
     """
   end
 

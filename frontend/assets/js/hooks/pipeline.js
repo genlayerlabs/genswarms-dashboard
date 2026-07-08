@@ -84,6 +84,19 @@ export const Pipeline = {
     this.q("rig").addEventListener("change", (e) => this.setDebug(e.target.checked))
     this.q("copy").addEventListener("click", () => this.copyDbg())
 
+    // canvas click → shared inspector (same phx-click="inspect" contract as
+    // the node table below the canvas). POS is CSS-pixel space (layout() sizes
+    // the canvas from clientWidth/Height), so offsetX/Y need no scaling.
+    this.SESSIONS = {}
+    this.cv.addEventListener("click", (e) => {
+      const hit = this.agentAt(e.offsetX, e.offsetY)
+      if (hit && this.SESSIONS[hit]) this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
+    })
+    this.cv.addEventListener("mousemove", (e) => {
+      const hit = this.agentAt(e.offsetX, e.offsetY)
+      this.cv.style.cursor = hit && this.SESSIONS[hit] ? "pointer" : ""
+    })
+
     this.handleEvent("pipeline:init", (layout) => {
       this.LAYOUT = layout
       this.FIXED = new Set((layout.nodes || []).map((n) => n.name))
@@ -96,8 +109,9 @@ export const Pipeline = {
     // `handles` maps a leased slot to WHO it serves — labels prefer "@handle"
     // over "agent_15"; the map is replaced wholesale so a released slot falls
     // back to its slot name on the next snapshot.
-    this.handleEvent("pipeline:agents", ({agents, handles}) => {
+    this.handleEvent("pipeline:agents", ({agents, handles, sessions}) => {
       this.HANDLES = handles || {}
+      this.SESSIONS = sessions || {}
       let changed = false
       for (const name of agents || []) {
         if (!this.FIXED.has(name) && !this.AGENTS.has(name)) {
@@ -581,6 +595,15 @@ export const Pipeline = {
   },
 
   // ── geometry ─────────────────────────────────────────────────────────────────
+  // nearest agent dot under the pointer (CSS px — same space as POS)
+  agentAt(x, y) {
+    for (const [name, p] of Object.entries(this.POS || {})) {
+      if (p.kind !== "agent") continue
+      if (Math.hypot(x - p.x, y - p.y) <= (p.r || 10) + 6) return name
+    }
+    return null
+  },
+
   layout() {
     if (!this.LAYOUT) return
     const W = (this.cv.width = this.cv.clientWidth || this.el.clientWidth)
