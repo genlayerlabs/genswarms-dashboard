@@ -9,6 +9,8 @@
 // rig. Colors come from the theme's CSS variables (success/warning/error/info/
 // primary + base-content alphas), so light and dark both render correctly.
 
+import * as jdenticon from "../../vendor/jdenticon"
+
 const FLIGHT = 1100 // packet flight time (ms)
 const STAGGER = 200 // launch stagger when flushing a backlog (ms)
 // turn-end is invisible to the feed (no engine turn-complete event), so a node's
@@ -54,6 +56,8 @@ export const Pipeline = {
     this.FIXED = new Set() // names with a fixed lane position
     this.BG = new Set() //   chatter nodes (mutual traffic = background noise)
     this.AGENTS = new Set() // dynamic agent slots (snapshot pool + events)
+    this.HANDLES = {} //     slot → {session, seed} overlay (leased slots only)
+    this.AVATARS = {} //     avatar seed → offscreen canvas (generated once, cached)
     this.EXTRAS = new Set() // unknown non-agent endpoints → right-edge stack
     this.POS = {} //         name → {x, y, r, kind}
     this.AG = {} //          name → {state, waitOn, since, queue}
@@ -93,9 +97,10 @@ export const Pipeline = {
     })
     // snapshot wins existence: slots appear before their first event (additive —
     // a torn-down slot stays drawn idle rather than flickering between snapshots).
-    // `handles` maps a leased slot to WHO it serves — labels prefer "@handle"
-    // over "agent_15"; the map is replaced wholesale so a released slot falls
-    // back to its slot name on the next snapshot.
+    // `handles` overlays a leased slot with {session, seed}: the node is labelled
+    // "agent_15" + the session id it serves, and wears an avatar generated from
+    // the seed (the telegram handle). The map is replaced wholesale so a released
+    // slot drops its overlay (bare slot id, no avatar) on the next snapshot.
     this.handleEvent("pipeline:agents", ({agents, handles}) => {
       this.HANDLES = handles || {}
       let changed = false
@@ -808,9 +813,11 @@ export const Pipeline = {
       const ag = P.kind === "agent" ? this.AG[n] : null
       const st = ag ? ag.state : null
       const objBusy = P.kind !== "agent" && busyObjs[n]
-      // a leased slot wears its USER's name; free slots keep the short slot id
-      const label =
-        P.kind === "agent" && (this.HANDLES || {})[n] ? this.trunc(this.HANDLES[n]) : this.short(n)
+      // overlay for a leased slot: {session, seed}. The label is ALWAYS the slot
+      // id (agent_15) now; identity comes from the drawn avatar + the session id
+      // sub-line, not a "@handle" text label.
+      const ov = P.kind === "agent" ? (this.HANDLES || {})[n] : null
+      const label = this.short(n)
       // chatter nodes recede so the user-request lane owns the eye
       const dim = P.kind !== "agent" && this.BG.has(n) && !objBusy ? 0.5 : 1
 
@@ -850,6 +857,17 @@ export const Pipeline = {
           g.lineWidth = 1.5
           g.stroke()
           g.globalAlpha = 1
+        }
+        // leased slot → paint the seed's avatar inside the bubble (clipped round,
+        // over the body). Free slots keep the plain dot.
+        const av = ov && this.avatarFor(ov.seed)
+        if (av) {
+          g.save()
+          g.beginPath()
+          g.arc(P.x, P.y, P.r, 0, TAU)
+          g.clip()
+          g.drawImage(av, P.x - P.r, P.y - P.r, P.r * 2, P.r * 2)
+          g.restore()
         }
       } else if (P.kind === "ext") {
         g.fillStyle = C.ink
@@ -953,6 +971,17 @@ export const Pipeline = {
       }
       g.globalAlpha = 1
 
+      // the session id the slot serves — a dim second line under the slot id
+      if (ov && ov.session) {
+        g.fillStyle = C.ink
+        g.globalAlpha = 0.55
+        g.font = `500 9.5px ${MONO}`
+        g.textAlign = "center"
+        g.textBaseline = "top"
+        g.fillText(this.trunc(ov.session), P.x, P.y + hh + 20)
+        g.globalAlpha = 1
+      }
+
       // status line under busy nodes
       let stxt = null
       let scol = null
@@ -970,11 +999,13 @@ export const Pipeline = {
         scol = C.warn
       }
       if (stxt) {
+        // agents with a session sub-line push the status line down another row
+        const agentStatusY = ov && ov.session ? P.y + hh + 33 : P.y + hh + 21
         g.fillStyle = scol
         g.font = `600 10.5px ${MONO}`
         g.textAlign = "center"
         g.textBaseline = "top"
-        g.fillText(stxt, P.x, P.kind === "obj" ? P.y + hh + 8 : P.y + hh + 21)
+        g.fillText(stxt, P.x, P.kind === "obj" ? P.y + hh + 8 : agentStatusY)
       }
     }
 
@@ -1032,5 +1063,28 @@ export const Pipeline = {
   trunc(s) {
     s = String(s)
     return s.length > 14 ? s.slice(0, 13) + "…" : s
+  },
+
+  // deterministic jdenticon avatar for a seed (telegram handle), rendered ONCE
+  // into an offscreen canvas and cached — the draw loop just blits it. Rendered
+  // oversized (48px) so the tiny bubble stays crisp; nulls on any failure so a
+  // bad seed never breaks the frame.
+  avatarFor(seed) {
+    if (!seed) return null
+    if (seed in this.AVATARS) return this.AVATARS[seed]
+    // this dashboard runs 24/7; drop the cache wholesale if the churn of distinct
+    // seeds grows large rather than leaking canvases forever
+    if (Object.keys(this.AVATARS).length > 500) this.AVATARS = {}
+    let av = null
+    try {
+      const S = 48
+      const c = document.createElement("canvas")
+      c.width = c.height = S
+      jdenticon.drawIcon(c.getContext("2d"), String(seed), S)
+      av = c
+    } catch (e) {
+      this.dbg(`avatar gen failed for ${seed}: ${e.message}`)
+    }
+    return (this.AVATARS[seed] = av)
   },
 }

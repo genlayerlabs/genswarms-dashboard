@@ -82,13 +82,18 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert html =~ "12.4s"
     refute html =~ "feed unavailable"
   end
-  describe "agent_handles/1 (canvas labels: slot => who it serves)" do
+  describe "agent_handles/1 (canvas overlay: slot => {session, avatar seed})" do
     alias SubzeroSwarmDashboardWeb.TopologyLive
 
-    test "joins sessions to slots, @handle first, label/name fallbacks" do
+    test "session id passes through; avatar seed is handle first, label/name fallbacks" do
       snap = %{
         "sessions" => [
-          %{"agent" => "wingston_agent_1", "state" => "active", "user" => %{"handle" => "kongtouquan"}},
+          %{
+            "agent" => "wingston_agent_1",
+            "session_id" => "telegram:111",
+            "state" => "active",
+            "user" => %{"handle" => "kongtouquan"}
+          },
           %{"agent" => "wingston_agent_2", "state" => "active", "user" => %{}, "label" => "@CUPZ_0x"},
           %{"agent" => "wingston_agent_3", "state" => "active", "user" => %{"name" => "Crypto Li"}},
           %{"agent" => "wingston_agent_4", "state" => "active", "user" => %{}}
@@ -96,21 +101,38 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       }
 
       assert TopologyLive.agent_handles(snap) == %{
-               "wingston_agent_1" => "@kongtouquan",
-               "wingston_agent_2" => "@CUPZ_0x",
-               "wingston_agent_3" => "Crypto Li"
+               # handle is the avatar seed (raw, no "@"); session id is the label line
+               "wingston_agent_1" => %{"session" => "telegram:111", "seed" => "kongtouquan"},
+               # no session id → nil session; label fallback seeds the avatar
+               "wingston_agent_2" => %{"session" => nil, "seed" => "@CUPZ_0x"},
+               "wingston_agent_3" => %{"session" => nil, "seed" => "Crypto Li"}
+               # agent_4: no session id and no handle/label/name → no overlay
+             }
+    end
+
+    test "a session id alone (no handle) still yields an overlay, seeding the avatar off the cid" do
+      snap = %{
+        "sessions" => [
+          %{"agent" => "wingston_agent_1", "session_id" => "telegram:222", "state" => "active", "user" => %{}}
+        ]
+      }
+
+      assert TopologyLive.agent_handles(snap) == %{
+               "wingston_agent_1" => %{"session" => "telegram:222", "seed" => "telegram:222"}
              }
     end
 
     test "an ACTIVE session beats an idle leftover on a recycled slot" do
       snap = %{
         "sessions" => [
-          %{"agent" => "wingston_agent_1", "state" => "active", "user" => %{"handle" => "now"}},
-          %{"agent" => "wingston_agent_1", "state" => "idle", "user" => %{"handle" => "before"}}
+          %{"agent" => "wingston_agent_1", "session_id" => "telegram:new", "state" => "active", "user" => %{"handle" => "now"}},
+          %{"agent" => "wingston_agent_1", "session_id" => "telegram:old", "state" => "idle", "user" => %{"handle" => "before"}}
         ]
       }
 
-      assert TopologyLive.agent_handles(snap) == %{"wingston_agent_1" => "@now"}
+      assert TopologyLive.agent_handles(snap) == %{
+               "wingston_agent_1" => %{"session" => "telegram:new", "seed" => "now"}
+             }
     end
 
     test "no sessions / no agents → empty map (canvas falls back to slot ids)" do
