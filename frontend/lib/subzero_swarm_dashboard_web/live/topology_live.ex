@@ -76,6 +76,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     assigns =
       assigns
       |> assign(:inspect_lookup, inspect_lookup)
+      |> assign(:layout_snapshot, layout_snapshot(assigns[:snapshot], privacy?))
       |> assign(:nodes, table_nodes(assigns[:snapshot], privacy?, inspect_lookup))
       |> assign(:gauge, pool_meta(assigns[:snapshot]))
       |> assign(:in_flight, (assigns[:story] && assigns.story[:in_flight]) || [])
@@ -85,7 +86,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       flash={@flash}
       active={:topology}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
       privacy={@privacy}
       inspect={@inspect}
@@ -433,4 +434,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       masked -> masked
     end
   end
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

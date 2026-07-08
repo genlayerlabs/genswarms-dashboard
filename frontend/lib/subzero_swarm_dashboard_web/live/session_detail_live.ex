@@ -85,13 +85,14 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
       assigns
       |> assign(:session, find_session(assigns[:snapshot], assigns.session_id))
       |> assign(:display_session_id, display_session_id(assigns.session_id, privacy?))
+      |> assign(:layout_snapshot, layout_snapshot(assigns[:snapshot], privacy?))
 
     ~H"""
     <Layouts.app
       flash={@flash}
       active={:sessions}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
       privacy={@privacy}
       inspect={@inspect}
@@ -290,6 +291,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
       masked -> masked
     end
   end
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 
   # ── REQUESTS: the event-derived lifecycle for this cid (spec §5.6) ──────────
   # Episodes come from the EventsFeed fold, newest first, refreshed on the same

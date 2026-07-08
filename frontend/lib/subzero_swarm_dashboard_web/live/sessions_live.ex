@@ -3,6 +3,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   # Classifier + thresholds live in ReplyHealth — shared with Overview's
   # attention tile so the two pages can never disagree about "unanswered".
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboardWeb.ReplyHealth
   alias SubzeroSwarmDashboardWeb.DashHooks
 
@@ -55,7 +56,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
         suppressed_count: Enum.count(statuses, fn {_, st} -> st == :suppressed end),
         issues_by_cid: story_issues(assigns.story),
         modes_by_cid: modes_by_cid(assigns[:snapshot]),
-        audience: audience(assigns[:snapshot])
+        audience: audience(assigns[:snapshot]),
+        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?)
       )
 
     ~H"""
@@ -63,7 +65,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
       flash={@flash}
       active={:sessions}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
       privacy={@privacy}
       inspect={@inspect}
@@ -445,4 +447,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     <span class="opacity-40 text-xs">—</span>
     """
   end
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end
