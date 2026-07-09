@@ -2,6 +2,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.PrivacyRedactor
+  alias SubzeroSwarmDashboardWeb.CoreComponents
   alias SubzeroSwarmDashboardWeb.DashHooks
 
   @impl true
@@ -76,7 +77,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     assigns =
       assigns
       |> assign(:inspect_lookup, inspect_lookup)
-      |> assign(:layout_snapshot, layout_snapshot(assigns[:snapshot], privacy?))
+      |> assign(:layout_snapshot, DashHooks.layout_snapshot(assigns[:snapshot], privacy?))
       |> assign(:nodes, table_nodes(assigns[:snapshot], privacy?, inspect_lookup))
       |> assign(:gauge, pool_meta(assigns[:snapshot]))
       |> assign(:in_flight, (assigns[:story] && assigns.story[:in_flight]) || [])
@@ -219,6 +220,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
                       <.identity_avatar
                         user={n["raw_user"]}
                         session_id={n["raw_session_id"]}
+                        label={n["raw_label"]}
+                        privacy={@privacy}
                         size={:sm}
                       />
                       <span class="font-mono text-sm">•••</span>
@@ -228,6 +231,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
                       :if={n["type"] == "agent"}
                       user={n["user"]}
                       session_id={n["session_id"]}
+                      label={n["label"]}
                       size={:sm}
                     />
                   <% end %>
@@ -298,9 +302,9 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     # actives sort LAST so they win the Map.new overwrite
     |> Enum.sort_by(&(&1["state"] == "active"))
     |> Enum.reduce(%{}, fn s, acc ->
-      case avatar_seed(s) do
+      case CoreComponents.avatar_seed(s) do
         nil -> acc
-        seed -> Map.put(acc, s["agent"], avatar_seed_for_display(seed, privacy?))
+        seed -> Map.put(acc, s["agent"], CoreComponents.avatar_seed_for_display(seed, privacy?))
       end
     end)
   end
@@ -335,23 +339,6 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   defp maybe_add_session_labels(payload, snap, true),
     do: Map.put(payload, :session_labels, agent_session_labels(snap, true))
-
-  # telegram handle first, then adapter label / name, and the session id as a
-  # last resort so a handle-less leased slot still gets a distinct avatar
-  defp avatar_seed(s) do
-    presence(get_in(s, ["user", "handle"])) ||
-      presence(s["label"]) ||
-      presence(get_in(s, ["user", "name"])) ||
-      presence(s["session_id"])
-  end
-
-  defp presence(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)
-  defp presence(_), do: nil
-
-  defp avatar_seed_for_display(seed, false), do: seed
-
-  defp avatar_seed_for_display(seed, true),
-    do: :crypto.hash(:sha256, seed) |> Base.encode16(case: :lower)
 
   defp display_event_for_privacy(ev, false), do: ev
 
@@ -409,8 +396,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
       n
       |> Map.put("user", sess && sess["user"])
+      |> Map.put("label", sess && sess["label"])
       |> Map.put("state", (sess && sess["state"]) || n["state"])
       |> Map.put("raw_user", sess && sess["user"])
+      |> Map.put("raw_label", sess && sess["label"])
       |> Map.put("raw_session_id", raw_sid)
       |> Map.put("inspect_value", inspect_value(inspect_lookup, privacy?, raw_sid))
       |> maybe_mask_table_node(privacy?)
@@ -434,7 +423,4 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       masked -> masked
     end
   end
-
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

@@ -388,7 +388,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     assigns =
       assign(assigns,
         inspect_lookup: inspect_lookup,
-        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?),
+        layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?),
         kinds: @kinds,
         story_href: story_path(assigns, view: "story"),
         raw_href: story_path(assigns, view: "raw"),
@@ -725,9 +725,6 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   defp inspect_value(lookup, privacy?, sid),
     do: DashHooks.inspect_value(lookup, privacy? == true, sid)
-
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 
   defp iso_unix(ts) when is_binary(ts) do
     case DateTime.from_iso8601(ts) do

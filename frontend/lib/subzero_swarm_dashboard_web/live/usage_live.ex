@@ -4,6 +4,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.RouterClient
   alias SubzeroSwarmDashboard.RouterUsageCache
+  alias SubzeroSwarmDashboardWeb.DashHooks
 
   # Selectable look-back windows → seconds (nil = all recorded). Passed to the
   # router as a unix `since` (the v2 usage endpoint accepts since/until/bucket).
@@ -56,7 +57,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   @impl true
   def render(assigns) do
     privacy? = assigns[:privacy] == true
-    assigns = assign(assigns, :layout_snapshot, layout_snapshot(assigns[:snapshot], privacy?))
+    assigns = assign(assigns, :layout_snapshot, DashHooks.layout_snapshot(assigns[:snapshot], privacy?))
 
     ~H"""
     <Layouts.app
@@ -615,6 +616,4 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp redact_string(value, true) when is_binary(value), do: PrivacyRedactor.mask_cid(value)
   defp redact_string(value, true), do: value
 
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

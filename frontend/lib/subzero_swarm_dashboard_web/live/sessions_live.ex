@@ -3,7 +3,6 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   # Classifier + thresholds live in ReplyHealth — shared with Overview's
   # attention tile so the two pages can never disagree about "unanswered".
-  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboardWeb.ReplyHealth
   alias SubzeroSwarmDashboardWeb.DashHooks
 
@@ -57,7 +56,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
         issues_by_cid: story_issues(assigns.story),
         modes_by_cid: modes_by_cid(assigns[:snapshot]),
         audience: audience(assigns[:snapshot]),
-        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?)
+        layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?)
       )
 
     ~H"""
@@ -147,7 +146,12 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                   <td>
                     <div class="flex items-center gap-2 min-w-0">
                       <%= if @privacy do %>
-                        <.identity_avatar user={row.session["user"]} session_id={row.sid} />
+                        <.identity_avatar
+                          user={row.session["user"]}
+                          session_id={row.sid}
+                          label={row.session["label"]}
+                          privacy={@privacy}
+                        />
                         <span class="font-mono text-sm">•••</span>
                       <% else %>
                         <.identity
@@ -447,7 +451,4 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     <span class="opacity-40 text-xs">—</span>
     """
   end
-
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

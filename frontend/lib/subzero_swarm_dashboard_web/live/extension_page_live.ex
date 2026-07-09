@@ -2,6 +2,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.PrivacyRedactor
+  alias SubzeroSwarmDashboardWeb.DashHooks
   alias SubzeroSwarmDashboardWeb.ExtensionPages
 
   @impl true
@@ -15,7 +16,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
 
     assigns =
       assign(assigns,
-        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?),
+        layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?),
         page: page_for_privacy(ExtensionPages.find(assigns.snapshot, assigns.page_id), privacy?)
       )
 
@@ -55,7 +56,17 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
     page
     |> PrivacyRedactor.mask_identity()
     |> mask_extension_payload()
+    |> restore_page_title(page)
   end
+
+  # The page's own h1 is the same operator chrome as its sidebar nav entry —
+  # readable (cid-swept), matching DashHooks.layout_snapshot's label restore.
+  # Deeper "label" keys (table columns, row cells) stay masked: a row column
+  # may legitimately be keyed "label" and carry user data.
+  defp restore_page_title(%{} = masked, %{"label" => label}) when is_binary(label),
+    do: Map.put(masked, "label", PrivacyRedactor.mask_cid(label))
+
+  defp restore_page_title(masked, _original), do: masked
 
   defp mask_extension_payload(%{} = map) do
     Map.new(map, fn {key, value} -> {key, mask_extension_value(key, value)} end)
@@ -80,7 +91,4 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
     do: true
 
   defp structural_key?(_key), do: false
-
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

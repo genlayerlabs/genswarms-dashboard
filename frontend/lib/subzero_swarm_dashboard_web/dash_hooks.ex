@@ -13,6 +13,7 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   import Phoenix.Component
 
   alias SubzeroSwarmDashboard.EventsFeed
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.SwarmFeed
   alias SubzeroSwarmDashboard.SwarmClient
 
@@ -162,9 +163,57 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
   def inspect_value(_lookup, _privacy?, _sid), do: nil
 
+  @doc """
+  Masks the shared layout snapshot for privacy mode.
+
+  Extension page labels are operator chrome for the sidebar, so they are restored
+  from the original snapshot after the normal deep identity mask. Page sections
+  and every other extension payload field remain masked.
+  """
+  def layout_snapshot(snapshot, true) do
+    snapshot
+    |> PrivacyRedactor.mask_identity()
+    |> restore_dashboard_page_labels(snapshot)
+  end
+
+  def layout_snapshot(snapshot, _privacy?), do: snapshot
+
   defp resolve_inspect_sid(socket, submitted) do
     Map.get(socket.assigns[:inspect_lookup] || %{}, submitted, submitted)
   end
+
+  defp restore_dashboard_page_labels(masked, %{
+         "extensions" => %{"dashboard_pages" => original_pages}
+       })
+       when is_map(masked) and is_list(original_pages) do
+    case get_in(masked, ["extensions", "dashboard_pages"]) do
+      masked_pages when is_list(masked_pages) ->
+        put_in(masked, ["extensions", "dashboard_pages"], restore_page_labels(masked_pages, original_pages))
+
+      _ ->
+        masked
+    end
+  end
+
+  defp restore_dashboard_page_labels(masked, _original), do: masked
+
+  defp restore_page_labels(masked_pages, original_pages) do
+    original_by_index =
+      original_pages
+      |> Enum.with_index()
+      |> Map.new(fn {page, index} -> {index, page} end)
+
+    masked_pages
+    |> Enum.with_index()
+    |> Enum.map(fn {page, index} -> restore_page_label(page, Map.get(original_by_index, index)) end)
+  end
+
+  # Restored verbatim EXCEPT for cid-shaped substrings — a page label is
+  # operator chrome, but sweeping it keeps a careless host from leaking a cid.
+  defp restore_page_label(%{} = masked_page, %{"label" => label}),
+    do: Map.put(masked_page, "label", PrivacyRedactor.mask_cid(label))
+
+  defp restore_page_label(masked_page, _original_page), do: masked_page
 
   # Lazily fetch the full session detail (durable transcript + raw slot activity),
   # so the inspector shows everything the dedicated page does. Ignore if the user

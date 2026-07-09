@@ -17,6 +17,7 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
 
   alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.{EngineClient, SwarmClient}
+  alias SubzeroSwarmDashboardWeb.DashHooks
 
   @identity_key_fragments ~w(chat cid conversation from handle label name session user username)
 
@@ -84,7 +85,7 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
         display_edit_error: redact_string(assigns[:edit_error], privacy?),
         display_objects: objects_for_privacy(assigns[:objects], privacy?),
         display_overlay: overlay_for_privacy(assigns[:overlay], privacy?),
-        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?)
+        layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?)
       )
 
     ~H"""
@@ -345,6 +346,4 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
   defp redact_string(value, true) when is_binary(value), do: PrivacyRedactor.mask_cid(value)
   defp redact_string(value, true), do: value
 
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end
