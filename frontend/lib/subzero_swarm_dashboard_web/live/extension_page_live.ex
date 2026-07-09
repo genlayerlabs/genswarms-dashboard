@@ -7,17 +7,48 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    {:ok, assign(socket, page_id: id, page_title: "Extension")}
+    {:ok, assign(socket, page_id: id, page_title: "Extension", ext_sort: %{})}
+  end
+
+  @impl true
+  def handle_event("ext_sort", %{"sec" => sec, "key" => key}, socket) do
+    idx = String.to_integer(sec)
+
+    next =
+      case Map.get(socket.assigns.ext_sort, idx) do
+        {^key, :asc} -> {key, :desc}
+        {^key, :desc} -> nil
+        _ -> {key, :asc}
+      end
+
+    sort =
+      if next,
+        do: Map.put(socket.assigns.ext_sort, idx, next),
+        else: Map.delete(socket.assigns.ext_sort, idx)
+
+    {:noreply, assign(socket, ext_sort: sort)}
   end
 
   @impl true
   def render(assigns) do
     privacy? = assigns[:privacy] == true
+    inspect_lookup = assigns[:inspect_lookup] || DashHooks.inspect_lookup(assigns[:snapshot])
+
+    # Row targets resolve BEFORE the privacy mask (mask_cid would destroy the
+    # "_cid" metadata); the metadata keys are stripped in the same pass, so no
+    # raw cid ever reaches the rendered page in either mode.
+    {page, row_targets} =
+      ExtensionPages.extract_row_targets(
+        ExtensionPages.find(assigns.snapshot, assigns.page_id),
+        privacy?,
+        inspect_lookup
+      )
 
     assigns =
       assign(assigns,
         layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?),
-        page: page_for_privacy(ExtensionPages.find(assigns.snapshot, assigns.page_id), privacy?)
+        row_targets: row_targets,
+        page: page_for_privacy(page, privacy?)
       )
 
     ~H"""
@@ -33,7 +64,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
       inspect_activity={@inspect_activity}
     >
       <%= if @page do %>
-        <ExtensionPages.page page={@page} />
+        <ExtensionPages.page page={@page} sort={@ext_sort} row_targets={@row_targets} />
       <% else %>
         <div class="max-w-3xl">
           <.empty_state
