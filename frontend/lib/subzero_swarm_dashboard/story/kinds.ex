@@ -50,6 +50,10 @@ defmodule SubzeroSwarmDashboard.Story.Kinds do
      }},
     {"browser_done",
      %{sample: %{"agent" => "wingston_agent_0", "verdict" => "ok"}, story: true, canvas: true}},
+    # runtime allowlist grant (browser pkg 0.2.0 allow_sync): the grantor is an
+    # object, not an agent slot — audit row only, no canvas geometry
+    {"browser_grant",
+     %{sample: %{"host" => "docs.example.com", "source" => "rally"}, story: true, canvas: false}},
     {"progress_sent", %{sample: %{"cid" => "tg:1:0"}, story: true, canvas: true}},
     {"reply_sent", %{sample: %{"cid" => "tg:1:0", "ok" => true}, story: true, canvas: true}},
     {"reply_failed", %{sample: %{"from" => "wingston_agent_0"}, story: true, canvas: true}},
