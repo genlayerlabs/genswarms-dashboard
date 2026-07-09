@@ -4,7 +4,7 @@ defmodule GenswarmsDashboard.MixProject do
   def project do
     [
       app: :genswarms_dashboard,
-      version: "0.3.4",
+      version: "0.3.5",
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: false,
@@ -29,7 +29,8 @@ defmodule GenswarmsDashboard.MixProject do
       {:phoenix_pubsub, "~> 2.1"},
       {:bandit, "~> 1.10"},
       {:plug, "~> 1.19"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:telemetry, "~> 1.0"}
     ]
   end
 end
