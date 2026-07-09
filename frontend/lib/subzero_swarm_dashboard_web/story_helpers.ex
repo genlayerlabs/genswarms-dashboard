@@ -42,9 +42,15 @@ defmodule SubzeroSwarmDashboardWeb.StoryHelpers do
   def sec(v) when is_number(v), do: :erlang.float_to_binary(v / 1, decimals: 1)
   def sec(_), do: "—"
 
-  @doc "Human duration: `9.2s` under a minute, `1m 23s` from there."
+  @doc "Human duration: `9.2s` under a minute, `1m 23s` from there, `2h 20m` past an hour."
   def duration(s) when is_number(s) and s < 60, do: "#{sec(s)}s"
-  def duration(s) when is_number(s), do: "#{div(trunc(s), 60)}m #{rem(trunc(s), 60)}s"
+
+  def duration(s) when is_number(s) and s < 3600,
+    do: "#{div(trunc(s), 60)}m #{rem(trunc(s), 60)}s"
+
+  def duration(s) when is_number(s),
+    do: "#{div(trunc(s), 3600)}h #{div(rem(trunc(s), 3600), 60)}m"
+
   def duration(_), do: "—"
 
   @doc ~S(Integer/float with thousands separators — 3862856 → "3,862,856".)
