@@ -100,7 +100,10 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
         "dashboard_pages" => [
           %{
             "id" => "canary-consumers",
-            "label" => @label,
+            # Page labels are operator chrome: privacy mode restores them for
+            # the sidebar nav (cid-swept). User data lives in meta/sections and
+            # must still be masked — those keep their canaries.
+            "label" => "Canary Panel",
             "meta" => "#{@cid} #{@group_cid}",
             "sections" => [
               %{
@@ -471,6 +474,13 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
     refute_canary(html, "extension")
   end
 
+  test "privacy keeps the sidebar nav readable — extension page labels survive the mask" do
+    html = extension_html(true)
+
+    assert html =~ "Canary Panel",
+           "privacy mode masked the extension page's sidebar label (operator chrome)"
+  end
+
   test "extension page privacy off proves the canary fixture is wired" do
     html = extension_html(false)
 
@@ -631,7 +641,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
 
   defp assert_privacy_badge(html, context) do
     assert html =~ ~s(data-privacy="on"), "#{context} did not render privacy-on chrome"
-    assert html =~ ~s(id="privacy-badge"), "#{context} did not render the privacy badge"
+    assert html =~ ~s(aria-pressed="true"), "#{context} did not render the active privacy toggle"
   end
 
   defp refute_canary(value, context) do

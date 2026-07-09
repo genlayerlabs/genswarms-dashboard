@@ -1,8 +1,8 @@
 defmodule SubzeroSwarmDashboardWeb.LogsLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
-  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.SwarmClient
+  alias SubzeroSwarmDashboardWeb.DashHooks
 
   @impl true
   def mount(_params, _session, socket),
@@ -35,7 +35,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
     assigns =
       assign(assigns,
-        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?),
+        layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?),
         session_options: session_options(assigns[:snapshot], assigns[:selected], privacy?)
       )
 
@@ -191,6 +191,4 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   defp line_count_label(1), do: "1 line"
   defp line_count_label(n), do: "#{n} lines"
 
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

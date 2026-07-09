@@ -29,6 +29,7 @@ import {ConversationDays} from "./hooks/conversation_days"
 import {ScrollBottom} from "./hooks/scroll_bottom"
 import {TranscriptGate} from "./hooks/transcript_gate"
 import {ClipboardCopy} from "./hooks/clipboard_copy"
+import {GenAvatar} from "./hooks/gen_avatar"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
@@ -43,6 +44,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     ScrollBottom,
     TranscriptGate,
     ClipboardCopy,
+    GenAvatar,
   },
 })
 

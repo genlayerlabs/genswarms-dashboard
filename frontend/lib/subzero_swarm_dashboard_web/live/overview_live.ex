@@ -37,7 +37,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     assigns =
       assign(assigns,
         inspect_lookup: inspect_lookup,
-        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?),
+        layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?),
         warnings: warnings(assigns[:snapshot], privacy?)
       )
 
@@ -175,7 +175,13 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
         >
           <%= if @privacy do %>
             <span class="w-36 min-w-0 flex items-center gap-2 font-semibold">
-              <.identity_avatar user={session_user(@snapshot, ep.cid)} session_id={ep.cid} size={:sm} />
+              <.identity_avatar
+                user={session_user(@snapshot, ep.cid)}
+                session_id={ep.cid}
+                label={session_label(@snapshot, ep.cid)}
+                privacy={@privacy}
+                size={:sm}
+              />
               <span class="truncate">•••</span>
             </span>
           <% else %>
@@ -647,6 +653,13 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     end
   end
 
+  defp session_label(snapshot, cid) do
+    case session_for(snapshot, cid) do
+      %{} = session -> session["label"]
+      _ -> nil
+    end
+  end
+
   defp session_for(%{"sessions" => sessions}, cid) when is_list(sessions),
     do: Enum.find(sessions, &(&1["session_id"] == cid))
 
@@ -654,9 +667,6 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   defp inspect_value(lookup, privacy?, sid),
     do: DashHooks.inspect_value(lookup, privacy? == true, sid)
-
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 
   # Staleness from the server-side snapshot time (spec §12).
   defp snapshot_age(snap) do

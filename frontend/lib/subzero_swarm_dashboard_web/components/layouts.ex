@@ -51,10 +51,10 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       <span id="transcript-gate" phx-hook="TranscriptGate" class="hidden"></span>
       <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
         <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
-          <img src={~p"/images/logo.svg"} width="30" class="drop-shadow" alt="" />
+          <img src={~p"/images/logo.svg"} width="30" class="drop-shadow shrink-0" alt="" />
           <div class="leading-none min-w-0 flex-1">
             <div
-              class="font-display font-extrabold text-lg tracking-tight truncate max-w-36"
+              class="font-display font-extrabold text-lg tracking-tight truncate"
               title={@dashboard_title}
             >
               {@dashboard_title}
@@ -237,15 +237,12 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         aria-pressed={to_string(@privacy)}
         title={if @privacy, do: "Privacy mode on", else: "Privacy mode off"}
         class={[
-          "btn btn-sm min-h-0 h-8 rounded-lg border px-2 gap-1.5",
-          @privacy && "btn-warning border-warning/60",
-          !@privacy && "btn-ghost border-base-300 opacity-70 hover:opacity-100"
+          "btn btn-ghost h-7 w-7 min-h-0 rounded-md border border-transparent p-0",
+          @privacy && "opacity-75 hover:opacity-90",
+          !@privacy && "opacity-40 hover:opacity-90"
         ]}
       >
         <.icon name={if @privacy, do: "hero-eye-slash", else: "hero-eye"} class="size-4 shrink-0" />
-        <span :if={@privacy} id="privacy-badge" class="badge badge-sm uppercase tracking-[0.14em]">
-          privacy
-        </span>
       </button>
     </form>
     """

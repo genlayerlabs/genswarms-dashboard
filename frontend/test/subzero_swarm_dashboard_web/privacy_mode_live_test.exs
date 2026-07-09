@@ -246,7 +246,10 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     put_in(@canary_snap, ["extensions", "dashboard_pages"], [
       %{
         "id" => "canary-report",
-        "label" => @canary_handle,
+        # Page labels are operator chrome: privacy mode restores them for the
+        # sidebar nav (cid-swept), so the fixture uses a benign label. User data
+        # in meta/sections below must still be masked.
+        "label" => "Canary Report",
         "meta" => @canary_cid,
         "sections" => [
           %{
@@ -316,12 +319,11 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
 
     assert html =~ ~s(data-privacy="on")
     assert html =~ ~s(aria-pressed="true")
-    assert html =~ ~s(id="privacy-badge")
-    assert html =~ ~r/<span id="privacy-badge"[^>]*>\s*privacy\s*<\/span>/
+    refute html =~ ~s(id="privacy-badge")
     assert html =~ "hero-eye-slash"
   end
 
-  test "privacy badge is absent when privacy is off", %{conn: conn} do
+  test "privacy toggle is inactive when privacy is off", %{conn: conn} do
     conn = init_test_session(conn, %{privacy: false})
 
     {:ok, _view, html} = live(conn, ~p"/")
@@ -625,7 +627,10 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
 
     refute_canary(html)
     assert html =~ "7"
-    assert html =~ "•••"
+    # page title is operator chrome and stays readable (nav + h1)…
+    assert html =~ "Canary Report"
+    # …while payload strings are masked to the fixed placeholder
+    assert html =~ "▪▪▪▪▪"
   end
 
   test "extension page privacy off keeps arbitrary extension payloads", %{conn: conn} do

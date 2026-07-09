@@ -4,6 +4,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.EventsFeed
   alias SubzeroSwarmDashboard.SwarmClient
+  alias SubzeroSwarmDashboardWeb.DashHooks
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -85,7 +86,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
       assigns
       |> assign(:session, find_session(assigns[:snapshot], assigns.session_id))
       |> assign(:display_session_id, display_session_id(assigns.session_id, privacy?))
-      |> assign(:layout_snapshot, layout_snapshot(assigns[:snapshot], privacy?))
+      |> assign(:layout_snapshot, DashHooks.layout_snapshot(assigns[:snapshot], privacy?))
 
     ~H"""
     <Layouts.app
@@ -108,7 +109,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <%= if @privacy do %>
-            <.identity_avatar user={@session && @session["user"]} session_id={@session_id} size={:lg} />
+            <.identity_avatar
+              user={@session && @session["user"]}
+              session_id={@session_id}
+              label={@session && @session["label"]}
+              privacy={@privacy}
+              size={:lg}
+            />
           <% else %>
             <.identity
               user={@session && @session["user"]}
@@ -291,9 +298,6 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
       masked -> masked
     end
   end
-
-  defp layout_snapshot(snapshot, false), do: snapshot
-  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 
   # ── REQUESTS: the event-derived lifecycle for this cid (spec §5.6) ──────────
   # Episodes come from the EventsFeed fold, newest first, refreshed on the same

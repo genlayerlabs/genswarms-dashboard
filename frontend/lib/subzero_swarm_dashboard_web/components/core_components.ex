@@ -509,10 +509,13 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   `user` is the dashboard's `session["user"]` map (`%{"handle", "name"}`) or nil.
   """
   attr :label, :any, default: nil
+  attr :avatar_label, :any, default: nil
   attr :user, :any, default: nil
   attr :session_id, :string, default: nil
+  attr :privacy, :boolean, default: false
   attr :size, :atom, default: :md, values: [:sm, :md, :lg]
   attr :class, :any, default: nil
+  attr :id, :string, default: nil
 
   def identity(assigns) do
     lines = identity_lines(assigns.user, assigns.session_id, assigns.label)
@@ -524,19 +527,24 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
         _ -> nil
       end
 
-    assigns = assign(assigns, lines: lines, size_class: size_class)
+    assigns =
+      assigns
+      |> assign(lines: lines, size_class: size_class)
+      |> assign_avatar()
 
     ~H"""
     <div class={["flex items-center gap-2.5 min-w-0", @class]}>
       <span
+        id={@avatar_id}
+        phx-hook="GenAvatar"
+        data-seed={@avatar_seed}
         class={[
-          "monogram shrink-0",
-          @size == :sm && "!w-7 !h-7 !text-xs",
-          @size == :lg && "!w-10 !h-10 !text-base"
+          avatar_class(@size),
+          "shrink-0"
         ]}
-        style={monogram_style(@user, @session_id)}
+        aria-label="user avatar"
       >
-        {@lines.monogram}
+        <canvas width={@avatar_px} height={@avatar_px} class="block h-full w-full"></canvas>
       </span>
       <div class="min-w-0 leading-tight">
         <div class={[
@@ -561,22 +569,28 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   """
   attr :user, :any, default: nil
   attr :session_id, :string, default: nil
+  attr :label, :any, default: nil
+  attr :privacy, :boolean, default: false
   attr :size, :atom, default: :md, values: [:sm, :md, :lg]
   attr :class, :any, default: nil
+  attr :id, :string, default: nil
 
   def identity_avatar(assigns) do
+    assigns = assign_avatar(assigns)
+
     ~H"""
     <span
+      id={@avatar_id}
+      phx-hook="GenAvatar"
+      data-seed={@avatar_seed}
       class={[
-        "monogram shrink-0",
-        @size == :sm && "!w-7 !h-7 !text-xs",
-        @size == :lg && "!w-10 !h-10 !text-base",
+        avatar_class(@size),
+        "shrink-0",
         @class
       ]}
-      style={monogram_style(@user, @session_id)}
       aria-label="user avatar"
     >
-      •
+      <canvas width={@avatar_px} height={@avatar_px} class="block h-full w-full"></canvas>
     </span>
     """
   end
@@ -631,6 +645,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
               <.identity_avatar
                 user={@inspect["user"]}
                 session_id={@inspect["session_id"]}
+                label={@inspect["label"]}
+                privacy={@privacy}
                 size={:lg}
               />
             <% else %>
@@ -1097,6 +1113,66 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp activity_dot(_), do: "bg-base-content/20"
 
   # ── identity / formatting helpers ───────────────────────────────────────────
+
+  @doc false
+  def avatar_seed(%{} = session) do
+    user = session["user"]
+
+    presence(user && user["handle"]) ||
+      presence(session["label"]) ||
+      presence(user && user["name"]) ||
+      presence(session["session_id"])
+  end
+
+  def avatar_seed(_session), do: nil
+
+  @doc false
+  def avatar_seed(user, session_id, label \\ nil) do
+    avatar_seed(%{"user" => user, "label" => label, "session_id" => session_id})
+  end
+
+  @doc false
+  def presence(value, fallback \\ nil)
+
+  def presence(value, fallback) when is_binary(value) do
+    if String.trim(value) == "", do: fallback, else: value
+  end
+
+  def presence(_value, fallback), do: fallback
+
+  @doc false
+  def avatar_seed_for_display(nil, _privacy?), do: nil
+  def avatar_seed_for_display(seed, false), do: seed
+
+  def avatar_seed_for_display(seed, true) when is_binary(seed),
+    do: :crypto.hash(:sha256, seed) |> Base.encode16(case: :lower)
+
+  defp assign_avatar(assigns) do
+    raw_seed = avatar_seed(assigns.user, assigns.session_id, assigns[:avatar_label] || assigns.label) || "x"
+    display_seed = avatar_seed_for_display(raw_seed, assigns.privacy == true)
+    size_px = avatar_size_px(assigns.size)
+
+    assigns
+    |> assign(:avatar_seed, display_seed)
+    |> assign(:avatar_px, size_px)
+    |> assign(:avatar_id, assigns.id || "gen-avatar-#{:erlang.unique_integer([:positive])}")
+  end
+
+  defp avatar_class(:sm),
+    do:
+      "inline-grid place-items-center h-7 w-7 overflow-hidden rounded-[0.6rem] border border-base-content/10 bg-base-100"
+
+  defp avatar_class(:lg),
+    do:
+      "inline-grid place-items-center h-10 w-10 overflow-hidden rounded-[0.6rem] border border-base-content/10 bg-base-100"
+
+  defp avatar_class(_),
+    do:
+      "inline-grid place-items-center h-8 w-8 overflow-hidden rounded-[0.6rem] border border-base-content/10 bg-base-100"
+
+  defp avatar_size_px(:sm), do: 28
+  defp avatar_size_px(:lg), do: 40
+  defp avatar_size_px(_), do: 32
 
   @doc false
   def identity_lines(user, session_id, label \\ nil) do
