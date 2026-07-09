@@ -44,11 +44,13 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   def active_key(_), do: nil
 
   attr :page, :map, required: true
+  attr :sort, :map, default: %{}
+  attr :row_targets, :map, default: %{}
 
   def page(assigns) do
     assigns =
       assigns
-      |> assign(:sections, sections(assigns.page))
+      |> assign(:sections, assigns.page |> sections() |> Enum.with_index())
       |> assign(:dom_id, "extension-page-" <> assigns.page["id"])
 
     ~H"""
@@ -61,13 +63,22 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       <%= if @sections == [] do %>
         <.empty_state msg="No extension data yet." />
       <% else %>
-        <.section :for={section <- @sections} section={section} />
+        <.section
+          :for={{section, idx} <- @sections}
+          section={section}
+          idx={idx}
+          sort={Map.get(@sort, idx)}
+          row_targets={@row_targets}
+        />
       <% end %>
     </div>
     """
   end
 
   attr :section, :map, required: true
+  attr :idx, :integer, default: 0
+  attr :sort, :any, default: nil
+  attr :row_targets, :map, default: %{}
 
   defp section(%{section: %{"type" => "metrics"} = section} = assigns) do
     assigns =
@@ -99,7 +110,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       |> assign(:title, section["title"] || "Table")
       |> assign(:meta, display(section["meta"]))
       |> assign(:columns, columns(section["columns"]))
-      |> assign(:rows, rows(section["rows"]))
+      |> assign(:rows, section["rows"] |> rows() |> Enum.with_index() |> sort_rows(assigns[:sort]))
 
     ~H"""
     <.panel title={@title} body_class="px-4 py-2">
@@ -108,16 +119,27 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         <table class="table table-xs">
           <thead>
             <tr>
-              <th
-                :for={col <- @columns}
-                class={col_align(col)}
-              >
-                {col["label"]}
+              <th :for={col <- @columns} class={[col_align(col), "p-0"]}>
+                <button
+                  type="button"
+                  phx-click="ext_sort"
+                  phx-value-sec={@idx}
+                  phx-value-key={col["key"]}
+                  class="w-full px-2 py-1 cursor-pointer hover:opacity-100 opacity-80 font-inherit text-inherit text-left"
+                  title="sort"
+                >
+                  {col["label"]}{sort_marker(@sort, col["key"])}
+                </button>
               </th>
             </tr>
           </thead>
           <tbody>
-            <tr :for={row <- @rows}>
+            <tr
+              :for={{row, ridx} <- @rows}
+              class={Map.has_key?(@row_targets, {@idx, ridx}) && "row-press"}
+              phx-click={Map.has_key?(@row_targets, {@idx, ridx}) && "inspect"}
+              phx-value-session_id={Map.get(@row_targets, {@idx, ridx})}
+            >
               <td :for={col <- @columns} class={["max-w-xs", col_align(col)]}>
                 <span class={cell_class(col)}>{display(Map.get(row, col["key"]))}</span>
               </td>
@@ -129,6 +151,96 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     </.panel>
     """
   end
+
+  # ── sortable tables ──────────────────────────────────────────────────────────
+  # Rows travel WITH their original index so the row→inspector targets (keyed by
+  # source position) survive reordering. Numeric-aware: "$0.50", "1,234", "27%"
+  # and raw numbers order numerically; everything else falls back to
+  # case-insensitive text (numbers always sort before text).
+
+  defp sort_rows(indexed_rows, nil), do: indexed_rows
+
+  defp sort_rows(indexed_rows, {key, dir}) do
+    Enum.sort_by(indexed_rows, fn {row, _idx} -> sort_value(Map.get(row, key)) end, dir)
+  end
+
+  defp sort_rows(indexed_rows, _), do: indexed_rows
+
+  @doc false
+  def sort_value(v) when is_number(v), do: {0, v * 1.0}
+
+  def sort_value(v) when is_binary(v) do
+    cleaned = v |> String.replace(["$", ",", "%"], "") |> String.trim()
+
+    case Float.parse(cleaned) do
+      {num, ""} -> {0, num}
+      _ -> {1, String.downcase(v)}
+    end
+  end
+
+  def sort_value(nil), do: {2, ""}
+  def sort_value(v), do: {1, v |> inspect() |> String.downcase()}
+
+  defp sort_marker({key, :asc}, key), do: " ↑"
+  defp sort_marker({key, :desc}, key), do: " ↓"
+  defp sort_marker(_sort, _key), do: nil
+
+  @doc """
+  Split a page into `{page-with-metadata-stripped, row_targets}`.
+
+  Underscore-prefixed row keys are the page grammar's metadata channel — never
+  rendered. `"_cid"` marks a row as inspectable: its target is resolved through
+  `DashHooks.inspect_value/3` (the raw cid in the clear, an opaque `inspect:N`
+  token in privacy mode — an unresolvable cid simply isn't clickable), keyed by
+  `{section_index, row_index}` so sorting can't misroute a click.
+  """
+  def extract_row_targets(nil, _privacy?, _lookup), do: {nil, %{}}
+
+  def extract_row_targets(page, privacy?, lookup) do
+    {sections, targets} =
+      page
+      |> sections()
+      |> Enum.with_index()
+      |> Enum.map_reduce(%{}, fn {sec, sidx}, acc ->
+        case sec do
+          %{"type" => "table", "rows" => rows} when is_list(rows) ->
+            {rows2, acc2} =
+              rows
+              |> Enum.with_index()
+              |> Enum.map_reduce(acc, fn {row, ridx}, a ->
+                a = put_row_target(a, {sidx, ridx}, row, privacy?, lookup)
+                {strip_row_meta(row), a}
+              end)
+
+            {Map.put(sec, "rows", rows2), acc2}
+
+          _ ->
+            {sec, acc}
+        end
+      end)
+
+    {Map.put(page, "sections", sections), targets}
+  end
+
+  defp put_row_target(acc, key, row, privacy?, lookup) when is_map(row) do
+    with cid when is_binary(cid) and cid != "" <- Map.get(row, "_cid"),
+         target when is_binary(target) <-
+           SubzeroSwarmDashboardWeb.DashHooks.inspect_value(lookup, privacy?, cid) do
+      Map.put(acc, key, target)
+    else
+      _ -> acc
+    end
+  end
+
+  defp put_row_target(acc, _key, _row, _privacy?, _lookup), do: acc
+
+  defp strip_row_meta(row) when is_map(row) do
+    row
+    |> Enum.reject(fn {k, _v} -> is_binary(k) and String.starts_with?(k, "_") end)
+    |> Map.new()
+  end
+
+  defp strip_row_meta(row), do: row
 
   defp section(%{section: %{"type" => "text"} = section} = assigns) do
     assigns =

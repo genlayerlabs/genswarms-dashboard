@@ -310,6 +310,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     end)
 
     {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    # activity is behind the transcript gate — reveal explicitly (like the
+    # sibling tests) instead of depending on ambient gate state, which made
+    # this test order-dependent across seeds
+    render_click(view, "transcripts_reveal", %{})
     html = render(view)
 
     assert html =~ "Agent activity"
@@ -487,6 +491,108 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "0.125"
     assert html =~ "item-100"
     refute html =~ "item-101"
+  end
+
+  test "extension tables sort numerically on header click and toggle direction", %{conn: conn} do
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "sortable",
+          "label" => "Sortable",
+          "sections" => [
+            %{
+              "type" => "table",
+              "title" => "Money",
+              "columns" => [
+                %{"key" => "name", "label" => "name"},
+                %{"key" => "spent", "label" => "spent"}
+              ],
+              "rows" => [
+                %{"name" => "mid", "spent" => "$2.00"},
+                %{"name" => "low", "spent" => "$0.50"},
+                %{"name" => "high", "spent" => "$10.00"}
+              ]
+            }
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/sortable")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    render(view)
+
+    # "$10.00" must sort as 10 (numeric), not "1..." (text)
+    html = view |> element("button[phx-value-key='spent']") |> render_click()
+    assert :binary.match(html, "low") |> elem(0) < :binary.match(html, "mid") |> elem(0)
+    assert :binary.match(html, "mid") |> elem(0) < :binary.match(html, "high") |> elem(0)
+    assert html =~ "↑"
+
+    html = view |> element("button[phx-value-key='spent']") |> render_click()
+    assert :binary.match(html, "high") |> elem(0) < :binary.match(html, "mid") |> elem(0)
+    assert html =~ "↓"
+  end
+
+  test "extension rows carrying _cid open the shared inspector; the cid never renders", %{
+    conn: conn
+  } do
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "clickable",
+          "label" => "Clickable",
+          "sections" => [
+            %{
+              "type" => "table",
+              "title" => "Users",
+              "columns" => [%{"key" => "user", "label" => "user"}],
+              "rows" => [
+                %{"user" => "@alberto", "_cid" => "tg:1:0"},
+                %{"user" => "unmapped"}
+              ]
+            }
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/clickable")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    # metadata channel: used for the click target, never rendered as content
+    refute html =~ "_cid"
+
+    html = view |> element(~s(tr[phx-value-session_id="tg:1:0"])) |> render_click()
+    assert html =~ "Conversation"
+  end
+
+  describe "ExtensionPages.extract_row_targets/3 (privacy seam)" do
+    test "privacy resolves targets to opaque tokens and strips the raw cid" do
+      page = %{
+        "id" => "p",
+        "sections" => [
+          %{
+            "type" => "table",
+            "rows" => [%{"user" => "x", "_cid" => "tg:9:0"}, %{"user" => "y", "_cid" => "tg:unknown:0"}]
+          }
+        ]
+      }
+
+      lookup = %{"inspect:0" => "tg:9:0"}
+      {clean, targets} = ExtensionPages.extract_row_targets(page, true, lookup)
+
+      assert targets == %{{0, 0} => "inspect:0"}
+      [%{"rows" => rows}] = clean["sections"]
+      refute Enum.any?(rows, &Map.has_key?(&1, "_cid"))
+    end
+
+    test "clear mode passes the cid through as the target" do
+      page = %{
+        "id" => "p",
+        "sections" => [%{"type" => "table", "rows" => [%{"user" => "x", "_cid" => "tg:9:0"}]}]
+      }
+
+      assert {_clean, %{{0, 0} => "tg:9:0"}} = ExtensionPages.extract_row_targets(page, false, %{})
+    end
   end
 
   defp v2_usage do
