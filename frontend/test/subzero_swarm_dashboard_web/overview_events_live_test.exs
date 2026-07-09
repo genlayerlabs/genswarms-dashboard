@@ -155,10 +155,66 @@ defmodule SubzeroSwarmDashboardWeb.OverviewEventsLiveTest do
       assert html =~ "@albert"
       # each row deep-links to its session (cid base64-encoded like SessionsLive)
       assert has_element?(view, ~s(#in-flight-tg-1-0 a[href="/sessions/#{@cid_path}"]))
-      # the agents strip reflects the slot state
+      # the serving strip is USER-first: the chip names the person, carries the
+      # slot's live state, links to the session — the slot name is tooltip-only
       assert has_element?(view, "#agents-strip")
+      assert has_element?(view, "#serving-tg-1-0", "@albert")
+      assert has_element?(view, ~s(a#serving-tg-1-0[href="/sessions/#{@cid_path}"]))
+      assert has_element?(view, ~s(#serving-tg-1-0[title="slot wingston_agent_0"]))
       assert html =~ "waiting browse"
       assert html =~ "pool 1/2048 leased"
+    end
+
+    test "the serving strip shows leased users (idle slots collapse into the pool count)",
+         %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      push_snap(view)
+
+      # feed knows nothing about the leased slot yet (post-restart blindness) and
+      # observed a pile of UNLEASED idle slots — only the leased user gets a chip
+      html =
+        push_story(view,
+          agents:
+            for n <- 1..8 do
+              %{
+                name: "wingston_agent_#{n}",
+                state: :idle,
+                wait_on: nil,
+                queue: 0,
+                since: 100.0,
+                elapsed_s: 8_446.0
+              }
+            end
+        )
+
+      assert has_element?(view, "#serving-tg-1-0", "@albert")
+      refute html =~ "wingston_agent_3"
+      # snapshot lease with no feed evidence renders as idle, without a fake age
+      assert has_element?(view, "#serving-tg-1-0", "idle")
+    end
+
+    test "an in-flight conversation not yet on the roster still gets a serving chip",
+         %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      push_snap(view)
+
+      push_story(view,
+        in_flight: [
+          %{
+            cid: "tg:7:0",
+            user: "7",
+            agent: "wingston_agent_9",
+            count: 1,
+            opened_at: 100.0,
+            elapsed_s: 4.2,
+            stalled: false,
+            activity: "thinking"
+          }
+        ]
+      )
+
+      assert has_element?(view, "#serving-tg-7-0", "@7")
+      assert has_element?(view, "#serving-tg-1-0", "@albert")
     end
 
     test "collapses to the idle one-liner when nothing is in flight", %{conn: conn} do

@@ -93,7 +93,12 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
             inspect_lookup={@inspect_lookup}
           />
           <div class="grid lg:grid-cols-2 gap-5">
-            <.agents_panel story={@story} snapshot={@snapshot} />
+            <.agents_panel
+              story={@story}
+              snapshot={@snapshot}
+              privacy={@privacy}
+              inspect_lookup={@inspect_lookup}
+            />
             <.issues_panel story={@story} snapshot={@snapshot} privacy={@privacy} />
           </div>
           <.kpi_panel story={@story} snapshot={@snapshot} />
@@ -227,38 +232,163 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   attr :story, :map, required: true
   attr :snapshot, :map, default: nil
+  attr :privacy, :boolean, default: false
+  attr :inspect_lookup, :map, default: %{}
 
+  # User-first: one chip per conversation currently HOLDING an agent (snapshot
+  # lease truth), overlaid with the live state the feed knows for that slot.
+  # Slot names are fungible pool infrastructure, not identity — they survive
+  # only as a tooltip. Unleased idle slots collapse into the pool meta line.
   defp agents_panel(assigns) do
     assigns =
       assigns
-      |> assign(:agents, assigns.story[:agents] || [])
+      |> assign(:rows, serving_rows(assigns.snapshot, assigns.story))
       |> assign(:pool, get_in(assigns.snapshot || %{}, ["summary", "pool"]))
 
     ~H"""
-    <.panel id="agents-strip" title="Agents">
+    <.panel id="agents-strip" title="Serving">
       <%!-- pool is snapshot truth (existence/leases); "avg backend-up" was cut —
             the feed has no spawn-ready event, so it is not derivable (spec §5.6) --%>
       <:meta>
         <span :if={@pool} class="font-mono">pool {@pool["leased"]}/{@pool["size"]} leased</span>
       </:meta>
       <div class="flex flex-wrap gap-2">
-        <span
-          :for={ag <- @agents}
-          class="inline-flex items-center gap-1.5 rounded-lg border border-base-300 bg-base-100/60 px-2.5 py-1.5 font-mono text-xs whitespace-nowrap"
-        >
-          <span class={agent_tone(ag.state)}>{agent_glyph(ag.state)}</span>
-          <span class="font-semibold">{ag.name}</span>
-          <span class="opacity-60">{agent_state_label(ag)}</span>
-          <span class="opacity-40 tnum">{duration(ag.elapsed_s)}</span>
-          <span :if={ag.queue > 0} class="badge badge-warning badge-xs">+{ag.queue}</span>
-        </span>
-        <span :if={@agents == []} class="text-sm opacity-60 py-1">
-          no agent activity observed yet
+        <.serving_chip
+          :for={row <- @rows}
+          row={row}
+          privacy={@privacy}
+          inspect_lookup={@inspect_lookup}
+        />
+        <span :if={@rows == []} class="text-sm opacity-60 py-1">
+          no conversation holds an agent right now — the pool is all idle
         </span>
       </div>
     </.panel>
     """
   end
+
+  attr :row, :map, required: true
+  attr :privacy, :boolean, default: false
+  attr :inspect_lookup, :map, default: %{}
+
+  defp serving_chip(assigns) do
+    assigns =
+      assign(assigns, :inspect_target, inspect_value(assigns.inspect_lookup, true, assigns.row.cid))
+
+    ~H"""
+    <%= if @privacy do %>
+      <button
+        type="button"
+        id={"serving-#{dom_cid(@row.cid, true)}"}
+        phx-click={@inspect_target && "inspect"}
+        phx-value-session_id={@inspect_target}
+        class="inline-flex items-center gap-1.5 rounded-lg border border-base-300 bg-base-100/60 px-2.5 py-1.5 font-mono text-xs whitespace-nowrap"
+      >
+        <span class={agent_tone(@row.state)}>{agent_glyph(@row.state)}</span>
+        <.identity_avatar
+          user={@row.user}
+          session_id={@row.cid}
+          label={@row.label}
+          privacy={@privacy}
+          size={:sm}
+        />
+        <span class="font-semibold">•••</span>
+        <span class="opacity-60">{agent_state_label(@row)}</span>
+        <span :if={@row.elapsed_s} class="opacity-40 tnum">{duration(@row.elapsed_s)}</span>
+        <span :if={@row.queue > 0} class="badge badge-warning badge-xs">+{@row.queue}</span>
+      </button>
+    <% else %>
+      <.link
+        navigate={session_href(@row.cid)}
+        id={"serving-#{dom_cid(@row.cid, false)}"}
+        title={@row.agent && "slot #{@row.agent}"}
+        class="inline-flex items-center gap-1.5 rounded-lg border border-base-300 bg-base-100/60 px-2.5 py-1.5 font-mono text-xs whitespace-nowrap hover:border-primary/50"
+      >
+        <span class={agent_tone(@row.state)}>{agent_glyph(@row.state)}</span>
+        <span class="font-semibold">@{@row.who}</span>
+        <span class="opacity-60">{agent_state_label(@row)}</span>
+        <span :if={@row.elapsed_s} class="opacity-40 tnum">{duration(@row.elapsed_s)}</span>
+        <span :if={@row.queue > 0} class="badge badge-warning badge-xs">+{@row.queue}</span>
+      </.link>
+    <% end %>
+    """
+  end
+
+  # Leased sessions (snapshot truth: who holds an agent) joined with the feed's
+  # per-slot state, plus in-flight episodes whose conversation hasn't reached
+  # the snapshot roster yet (first turn) — active first, then queued, then by
+  # slot recency.
+  defp serving_rows(snapshot, story) do
+    slot_state = Map.new(story[:agents] || [], &{&1.name, &1})
+    sessions = (is_map(snapshot) && snapshot["sessions"]) || []
+
+    leased =
+      for s <- sessions, is_binary(s["agent"]) and s["agent"] != "" do
+        ag = slot_state[s["agent"]]
+
+        %{
+          cid: s["session_id"],
+          who: session_display(s),
+          user: s["user"],
+          label: s["label"],
+          agent: s["agent"],
+          state: (ag && ag.state) || :idle,
+          wait_on: ag && ag.wait_on,
+          queue: (ag && ag.queue) || 0,
+          elapsed_s: ag && ag.elapsed_s
+        }
+      end
+
+    leased_cids = MapSet.new(leased, & &1.cid)
+
+    in_flight =
+      for ep <- story[:in_flight] || [],
+          is_binary(ep.cid),
+          not MapSet.member?(leased_cids, ep.cid) do
+        ag = ep.agent && slot_state[ep.agent]
+
+        %{
+          cid: ep.cid,
+          who: ep.user,
+          user: nil,
+          label: ep.user,
+          agent: ep.agent,
+          state: (ag && ag.state) || :thinking,
+          wait_on: ag && ag.wait_on,
+          queue: (ag && ag.queue) || 0,
+          elapsed_s: ep.elapsed_s
+        }
+      end
+
+    Enum.sort_by(leased ++ in_flight, &{serving_rank(&1.state), -&1.queue, -(&1.elapsed_s || 0)})
+  end
+
+  defp serving_rank(:thinking), do: 0
+  defp serving_rank(:waiting), do: 1
+  defp serving_rank(:spawning), do: 2
+  defp serving_rank(_state), do: 3
+
+  # @handle when the roster knows it, else the session label, else the raw chat
+  # part of the cid — same fallback ladder the story fold uses.
+  defp session_display(s) do
+    handle = get_in(s, ["user", "handle"])
+    label = s["label"]
+
+    cond do
+      is_binary(handle) and handle != "" -> handle
+      is_binary(label) and label != "" -> label
+      true -> chat_part(s["session_id"])
+    end
+  end
+
+  defp chat_part(cid) when is_binary(cid) do
+    case String.split(cid, ":") do
+      [_, chat, _ | _] -> chat
+      _ -> cid
+    end
+  end
+
+  defp chat_part(cid), do: to_string(cid)
 
   defp agent_tone(:thinking), do: "text-primary"
   defp agent_tone(:waiting), do: "text-warning"
