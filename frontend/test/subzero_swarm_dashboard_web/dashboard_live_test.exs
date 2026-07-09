@@ -200,25 +200,82 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
   end
 
   test "sessions show a reply-health badge from the sender's deliveries extension", %{conn: conn} do
-    in_unix = "2026-06-03T15:22:01Z" |> DateTime.from_iso8601() |> elem(1) |> DateTime.to_unix()
+    # reply-health classifies against the REAL clock, so the inbound must be
+    # recent: fresh enough to be :unanswered (not :stale), old enough to be
+    # past the 120s pending grace.
+    recent = DateTime.utc_now() |> DateTime.add(-3600, :second)
+    recent_iso = DateTime.to_iso8601(recent)
+    in_unix = DateTime.to_unix(recent)
+    snap = put_in(@snap, ["sessions", Access.at(0), "last_activity"], recent_iso)
 
     {:ok, view, _} = live(conn, "/sessions")
 
     # answered: a delivery AFTER the last inbound
     answered =
-      put_in(@snap, ["extensions", "deliveries"], %{
+      put_in(snap, ["extensions", "deliveries"], %{
         "items" => [%{"session_id" => "tg:1:0", "at" => in_unix + 10, "status" => "sent"}]
       })
 
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, answered})
     assert render(view) =~ "answered"
 
-    # unanswered: old inbound, no delivery at all -> flagged + counted in the header
-    unanswered = put_in(@snap, ["extensions", "deliveries"], %{"items" => []})
+    # unanswered: recent inbound, no delivery -> alarm badge with the waiting
+    # time + counted in the clickable facet chip
+    unanswered = put_in(snap, ["extensions", "deliveries"], %{"items" => []})
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, unanswered})
     html = render(view)
-    assert html =~ "no reply"
+    assert html =~ "no reply · 1h"
     assert html =~ "unanswered"
+  end
+
+  test "sessions: an unanswered row older than 48h decays to stale (no alarm)", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/sessions")
+
+    # @snap's last_activity is 2026-06-03 — long past the 48h decay window
+    stale = put_in(@snap, ["extensions", "deliveries"], %{"items" => []})
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, stale})
+    html = render(view)
+
+    assert html =~ "stale"
+    assert html =~ "no reply"
+    # the warning facet only renders when something is FRESH-unanswered
+    refute html =~ "⚠ unanswered"
+  end
+
+  test "sessions: facet chips filter the table and the cap hides the long tail", %{conn: conn} do
+    now = DateTime.utc_now()
+
+    mk = fn n, state ->
+      %{
+        "session_id" => "tg:#{n}:0",
+        "transport" => "telegram",
+        "state" => state,
+        "last_activity" => now |> DateTime.add(-60 - n, :second) |> DateTime.to_iso8601(),
+        "transport_ref" => %{"chat_id" => "#{n}", "thread_id" => "0"},
+        "metadata" => %{"chat_type" => "dm"}
+      }
+    end
+
+    sessions = [mk.(9000, "active") | Enum.map(1..60, &mk.(&1, "idle"))]
+
+    snap =
+      @snap
+      |> put_in(["sessions"], sessions)
+      |> put_in(["extensions", "deliveries"], %{"items" => []})
+
+    {:ok, view, _} = live(conn, "/sessions")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    # 61 rows > the 50-row cap: the tail hides behind one "show more" row
+    assert html =~ "show 11 more"
+    assert view |> element("tr td button", "show 11 more") |> render_click() =~ "show fewer"
+
+    # the "live" facet narrows to the one active session
+    html = view |> element("button[phx-value-f='live']") |> render_click()
+    assert html =~ "tg:9000:0"
+    refute html =~ "show 11 more"
+    refute html =~ "tg:1:0\n"
   end
 
   test "clicking a session opens the shared inspector, Esc-close clears it", %{conn: conn} do

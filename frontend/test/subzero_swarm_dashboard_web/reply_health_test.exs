@@ -21,10 +21,24 @@ defmodule SubzeroSwarmDashboardWeb.ReplyHealthTest do
 
     story = %{story: [%{kind: "reply_suppressed", cid: "tg:2:0", ts: @in_s + 3.0}]}
 
-    assert ReplyHealth.counts(snap, story, @in_s + 300) == %{unanswered: 1, suppressed: 1}
+    assert ReplyHealth.counts(snap, story, @in_s + 300) ==
+             %{unanswered: 1, suppressed: 1, stale: 0}
+  end
+
+  test "counts age unanswered rows into stale — Overview's alarm only counts fresh waits" do
+    snap = %{
+      "sessions" => [
+        %{"session_id" => "tg:fresh:0", "last_activity" => @iso},
+        %{"session_id" => "tg:old:0", "last_activity" => "2026-05-01T00:00:00Z"}
+      ],
+      "extensions" => %{"deliveries" => %{"items" => []}}
+    }
+
+    assert ReplyHealth.counts(snap, %{story: []}, @in_s + 300) ==
+             %{unanswered: 1, suppressed: 0, stale: 1}
   end
 
   test "nil snapshot/story count zero (page boots before the first snapshot)" do
-    assert ReplyHealth.counts(nil, nil, 0) == %{unanswered: 0, suppressed: 0}
+    assert ReplyHealth.counts(nil, nil, 0) == %{unanswered: 0, suppressed: 0, stale: 0}
   end
 end

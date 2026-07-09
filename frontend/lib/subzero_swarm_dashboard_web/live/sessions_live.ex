@@ -6,16 +6,28 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   alias SubzeroSwarmDashboardWeb.ReplyHealth
   alias SubzeroSwarmDashboardWeb.DashHooks
 
+  # DOM cap: with a 750+ roster every row re-diffs on each 3s snapshot poll;
+  # the long tail hides behind one "show all" row instead.
+  @page_size 50
+
   @impl true
   def mount(_params, _session, socket),
-    do: {:ok, assign(socket, page_title: "Sessions", q: "", show_idle: false)}
+    do: {:ok, assign(socket, page_title: "Sessions", q: "", filter: "all", expanded: false)}
 
   @impl true
   def handle_event("search", %{"q" => q}, socket), do: {:noreply, assign(socket, q: q)}
 
   @impl true
-  def handle_event("toggle_idle", _params, socket),
-    do: {:noreply, assign(socket, show_idle: !socket.assigns.show_idle)}
+  def handle_event("filter", %{"f" => f}, socket),
+    do: {:noreply, assign(socket, filter: f, expanded: false)}
+
+  @impl true
+  def handle_event("expand", _params, socket),
+    do: {:noreply, assign(socket, expanded: true)}
+
+  @impl true
+  def handle_event("collapse", _params, socket),
+    do: {:noreply, assign(socket, expanded: false)}
 
   @impl true
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -34,12 +46,21 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
     sessions = sort_by_attention(sessions, statuses)
 
-    # Search overrides the idle collapse: a query must show every match.
-    {shown, idle_hidden} =
-      if assigns.q == "" and not assigns.show_idle do
-        Enum.split_with(sessions, &(statuses[&1["session_id"]] != :idle))
+    # Chip facets are counted over the search scope, so search + chips agree.
+    chip_counts = chip_counts(sessions, statuses)
+
+    # Search overrides the chip filter AND the DOM cap: a query must show
+    # every match, whatever facet was active.
+    visible =
+      if assigns.q == "",
+        do: apply_chip_filter(sessions, statuses, assigns.filter),
+        else: sessions
+
+    {shown, hidden_count} =
+      if assigns.expanded or assigns.q != "" do
+        {visible, 0}
       else
-        {sessions, []}
+        {Enum.take(visible, @page_size), max(length(visible) - @page_size, 0)}
       end
 
     assigns =
@@ -47,12 +68,11 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
         inspect_lookup: inspect_lookup,
         sessions: sessions,
         shown: shown,
-        shown_rows: session_rows(shown, privacy?, inspect_lookup),
-        idle_hidden_count: length(idle_hidden),
+        shown_rows: session_rows(shown, privacy?, inspect_lookup, statuses, now),
+        hidden_count: hidden_count,
         statuses: statuses,
-        live_count: Enum.count(sessions, &(&1["state"] == "active")),
-        unanswered: Enum.count(statuses, fn {_, st} -> st == :unanswered end),
-        suppressed_count: Enum.count(statuses, fn {_, st} -> st == :suppressed end),
+        chip_counts: chip_counts,
+        live_count: chip_counts["live"],
         issues_by_cid: story_issues(assigns.story),
         modes_by_cid: modes_by_cid(assigns[:snapshot]),
         audience: audience(assigns[:snapshot]),
@@ -74,7 +94,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
       <div class="space-y-5">
         <h1 class="text-2xl">Sessions</h1>
 
-        <%!-- one toolbar: search left, the reply-health alarm anchored right --%>
+        <%!-- one toolbar: search left, clickable status facets right --%>
         <div class="flex flex-wrap gap-2 items-center rounded-box border border-base-300 bg-base-200/60 px-3 py-2.5 text-sm">
           <form phx-change="search" class="w-full max-w-sm">
             <label class="input input-bordered input-sm flex items-center gap-2 w-full">
@@ -89,20 +109,16 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
               />
             </label>
           </form>
-          <span
-            :if={@snapshot && @unanswered > 0}
-            class="badge badge-warning badge-sm gap-1 ml-auto"
-            title="conversations that received a message but got no reply"
-          >
-            ⚠ {@unanswered} unanswered
-          </span>
-          <span
-            :if={@snapshot && @suppressed_count > 0}
-            class={["badge badge-ghost badge-sm gap-1", @unanswered == 0 && "ml-auto"]}
-            title="replies withheld by the sender's spam window — policy, not a failure"
-          >
-            🤫 {@suppressed_count} suppressed
-          </span>
+          <div :if={@snapshot} class="flex flex-wrap gap-1.5 items-center ml-auto">
+            <.facet_chip
+              :for={{key, label, title} <- facets()}
+              key={key}
+              label={label}
+              title={title}
+              count={@chip_counts[key]}
+              active={@filter == key}
+            />
+          </div>
         </div>
 
         <.panel
@@ -125,10 +141,8 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                 <tr class="text-xs uppercase tracking-wide">
                   <th>User</th>
                   <th>State</th>
-                  <th>Reply</th>
+                  <th>Health</th>
                   <th>Mode</th>
-                  <th>Issues</th>
-                  <th>Agent</th>
                   <th>Last seen</th>
                   <th></th>
                 </tr>
@@ -168,17 +182,28 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                       <% end %>
                     </div>
                   </td>
-                  <td><.live_dot state={row.session["state"]} label /></td>
-                  <td><.reply_badge status={@statuses[row.sid]} /></td>
-                  <td><.mode_badge mode={@modes_by_cid[row.sid]} /></td>
                   <td>
-                    <.issue_badge
-                      sid={row.sid}
-                      issues={@issues_by_cid[row.sid] || []}
-                      privacy={@privacy}
-                    />
+                    <div class="flex items-center gap-2 whitespace-nowrap">
+                      <.live_dot state={row.session["state"]} label />
+                      <span
+                        :if={row.session["agent"]}
+                        class="font-mono text-xs opacity-70"
+                      >
+                        {row.session["agent"]}
+                      </span>
+                    </div>
                   </td>
-                  <td class="font-mono text-xs opacity-70">{row.session["agent"]}</td>
+                  <td>
+                    <div class="flex items-center gap-1.5 whitespace-nowrap">
+                      <.reply_badge status={@statuses[row.sid]} waiting={row.waiting} />
+                      <.issue_badge
+                        sid={row.sid}
+                        issues={@issues_by_cid[row.sid] || []}
+                        privacy={@privacy}
+                      />
+                    </div>
+                  </td>
+                  <td><.mode_badge mode={@modes_by_cid[row.sid]} /></td>
                   <td class="text-sm opacity-70 tnum whitespace-nowrap">
                     {relative_time(row.session["last_activity"])}
                   </td>
@@ -206,27 +231,25 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                     <% end %>
                   </td>
                 </tr>
-                <tr :if={@idle_hidden_count > 0}>
-                  <td colspan="8" class="p-0">
+                <tr :if={@hidden_count > 0}>
+                  <td colspan="6" class="p-0">
                     <button
                       type="button"
-                      phx-click="toggle_idle"
+                      phx-click="expand"
                       class="w-full py-2 text-xs opacity-60 hover:opacity-100 text-center"
                     >
-                      — {@idle_hidden_count} idle sessions — show
+                      — show {@hidden_count} more —
                     </button>
                   </td>
                 </tr>
-                <tr :if={
-                  @show_idle and @q == "" and Enum.any?(@statuses, fn {_, st} -> st == :idle end)
-                }>
-                  <td colspan="8" class="p-0">
+                <tr :if={@expanded and @q == ""}>
+                  <td colspan="6" class="p-0">
                     <button
                       type="button"
-                      phx-click="toggle_idle"
+                      phx-click="collapse"
                       class="w-full py-2 text-xs opacity-60 hover:opacity-100 text-center"
                     >
-                      — hide idle sessions —
+                      — show fewer —
                     </button>
                   </td>
                 </tr>
@@ -290,16 +313,108 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     Enum.any?(haystack, &String.contains?(&1, q))
   end
 
-  defp session_rows(sessions, privacy?, inspect_lookup) do
+  defp session_rows(sessions, privacy?, inspect_lookup, statuses, now) do
     Enum.map(sessions, fn s ->
       sid = s["session_id"]
 
       %{
         session: s,
         sid: sid,
-        inspect_value: DashHooks.inspect_value(inspect_lookup, privacy? == true, sid)
+        inspect_value: DashHooks.inspect_value(inspect_lookup, privacy? == true, sid),
+        waiting: waiting_label(statuses[sid], s["last_activity"], now)
       }
     end)
+  end
+
+  # How long the user has been waiting — rendered inside the no-reply badge,
+  # because on an oldest-first unanswered sort the operative number is the wait,
+  # not a generic "last seen".
+  defp waiting_label(st, last_activity, now) when st in [:unanswered, :stale] do
+    case to_unix(last_activity) do
+      nil -> nil
+      t -> ago_compact(max(now - t, 0))
+    end
+  end
+
+  defp waiting_label(_st, _last_activity, _now), do: nil
+
+  defp ago_compact(s) when s < 3600, do: "#{div(s, 60)}m"
+  defp ago_compact(s) when s < 86_400, do: "#{div(s, 3600)}h"
+  defp ago_compact(s), do: "#{div(s, 86_400)}d"
+
+  # ── status facets (chips) ────────────────────────────────────────────────────
+  # The old toolbar badges were inert labels; each facet is one click away from
+  # the rows it counts. Keys double as the filter value.
+  defp facets do
+    [
+      {"all", "all", "every session"},
+      {"live", "live", "currently leased to an agent slot"},
+      {"unanswered", "⚠ unanswered", "received a message but got no reply (fresh — under 48h)"},
+      {"suppressed", "🤫 suppressed",
+       "replies withheld by the sender's spam window — policy, not a failure"},
+      {"stale", "stale", "unanswered for over 48h — aged out of the alarm"},
+      {"idle", "idle", "no activity recorded"}
+    ]
+  end
+
+  defp chip_counts(sessions, statuses) do
+    by_status =
+      Enum.reduce(sessions, %{}, fn s, acc ->
+        st = Atom.to_string(statuses[s["session_id"]] || :idle)
+        Map.update(acc, st, 1, &(&1 + 1))
+      end)
+
+    Map.merge(by_status, %{
+      "all" => length(sessions),
+      "live" => Enum.count(sessions, &(&1["state"] == "active"))
+    })
+  end
+
+  defp apply_chip_filter(sessions, _statuses, "all"), do: sessions
+
+  defp apply_chip_filter(sessions, _statuses, "live"),
+    do: Enum.filter(sessions, &(&1["state"] == "active"))
+
+  defp apply_chip_filter(sessions, statuses, f)
+       when f in ["unanswered", "suppressed", "stale", "idle", "answered", "pending"],
+       do:
+         Enum.filter(
+           sessions,
+           &(Atom.to_string(statuses[&1["session_id"]] || :idle) == f)
+         )
+
+  defp apply_chip_filter(sessions, _statuses, _unknown), do: sessions
+
+  attr :key, :string, required: true
+  attr :label, :string, required: true
+  attr :title, :string, required: true
+  attr :count, :any, default: nil
+  attr :active, :boolean, default: false
+
+  # Facets with nothing to show stay out of the toolbar ("all" always renders,
+  # and an ACTIVE facet stays visible even at zero so it can be un-clicked).
+  defp facet_chip(%{key: key, count: count, active: false} = assigns)
+       when key != "all" and (is_nil(count) or count == 0) do
+    ~H""
+  end
+
+  defp facet_chip(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="filter"
+      phx-value-f={@key}
+      title={@title}
+      class={[
+        "badge badge-sm gap-1 cursor-pointer transition-opacity",
+        @active && "badge-neutral",
+        !@active && "badge-ghost opacity-70 hover:opacity-100",
+        @key == "unanswered" && !@active && "badge-warning opacity-100"
+      ]}
+    >
+      {@label} <span class="font-mono tnum">{@count || 0}</span>
+    </button>
+    """
   end
 
   # The old Consumers panel was 139 raw cids duplicating this table — its one
@@ -360,8 +475,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
 
   # Attention-first: the row that hurts most goes on top. Unanswered sort oldest
   # first (longest-waiting user at the very top); every other bucket sorts most
-  # recent first. Public for unit tests.
-  @attention_rank %{unanswered: 0, pending: 1, suppressed: 2, answered: 3, idle: 4}
+  # recent first. Stale (aged-out unanswered) sits below answered — visible
+  # history, not an alarm. Public for unit tests.
+  @attention_rank %{unanswered: 0, pending: 1, suppressed: 2, answered: 3, stale: 4, idle: 5}
 
   def sort_by_attention(sessions, statuses) do
     Enum.sort_by(sessions, fn s ->
@@ -381,6 +497,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
   defp to_unix(_), do: nil
 
   attr :status, :atom, required: true
+  attr :waiting, :string, default: nil
 
   defp reply_badge(assigns) do
     ~H"""
@@ -400,10 +517,10 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     </span>
     <span
       :if={@status == :unanswered}
-      class="badge badge-warning badge-xs"
+      class="badge badge-warning badge-xs whitespace-nowrap"
       title="received a message but never replied"
     >
-      ⚠ no reply
+      ⚠ no reply{if @waiting, do: " · #{@waiting}"}
     </span>
     <span
       :if={@status == :suppressed}
@@ -411,6 +528,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
       title="reply withheld by the sender's spam window — policy, not a failure"
     >
       🤫 suppressed
+    </span>
+    <span
+      :if={@status == :stale}
+      class="badge badge-ghost badge-xs opacity-60 whitespace-nowrap"
+      title="unanswered for over 48h — aged out of the alarm"
+    >
+      no reply{if @waiting, do: " · #{@waiting}"}
     </span>
     <span :if={@status == :idle} class="opacity-40 text-xs">—</span>
     """
@@ -446,9 +570,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
     """
   end
 
+  # No issues ⇒ nothing: the badge shares the Health cell with the reply badge
+  # now, so an em-dash here would just be noise next to a real status.
   defp issue_badge(assigns) do
-    ~H"""
-    <span class="opacity-40 text-xs">—</span>
-    """
+    ~H""
   end
 end

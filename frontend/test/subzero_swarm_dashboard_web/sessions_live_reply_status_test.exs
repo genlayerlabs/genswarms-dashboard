@@ -36,6 +36,39 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLiveReplyStatusTest do
     assert SessionsLive.reply_status(session(), %{}, @in_s + 121) == :unanswered
   end
 
+  # ── :stale (alarm decay) ─────────────────────────────────────────────────────
+  # "⚠ no reply" must mean someone is waiting NOW. A roster accumulates
+  # permanently-unanswered conversations forever; without decay the alarm count
+  # converges on the roster size and reads as wallpaper (prod 2026-07-09:
+  # 754/758). Past 48h an unanswered row ages into :stale — visible, not alarmed.
+  test "unanswered ages into stale after 48h; the boundary second is still unanswered" do
+    stale_after = 48 * 3600
+    assert SessionsLive.reply_status(session(), %{}, %{}, @in_s + stale_after) == :unanswered
+    assert SessionsLive.reply_status(session(), %{}, %{}, @in_s + stale_after + 1) == :stale
+  end
+
+  test "a fresh delivery still wins over staleness (answered outranks everything)" do
+    stale_now = @in_s + 49 * 3600
+    assert SessionsLive.reply_status(session(), deliv(@in_s + 10), %{}, stale_now) == :answered
+  end
+
+  # ── delivery `at` tolerance ──────────────────────────────────────────────────
+  # The contract is unix seconds, but a host shipping its store's TEXT stamp here
+  # silently disabled :answered for its ENTIRE roster (the is_integer guard fails
+  # per-row, no error anywhere — prod 2026-07-09). Be liberal: accept ISO8601 and
+  # naive-UTC strings by converting; junk stays "no delivery evidence".
+  test "a delivery `at` as ISO8601 or naive-UTC text still counts as answered" do
+    assert SessionsLive.reply_status(session(), deliv("2026-06-03T15:25:00Z"), @in_s + 300) ==
+             :answered
+
+    assert SessionsLive.reply_status(session(), deliv("2026-06-03 15:25:00"), @in_s + 300) ==
+             :answered
+  end
+
+  test "an unparseable delivery `at` is treated as no delivery, never a crash" do
+    assert SessionsLive.reply_status(session(), deliv("garbage"), @in_s + 300) == :unanswered
+  end
+
   test "a delivery for ANOTHER conversation does not count as answered" do
     assert SessionsLive.reply_status(session(), deliv(@in_s + 10, "tg:other:0"), @in_s + 30) ==
              :pending
@@ -79,7 +112,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLiveReplyStatusTest do
 
   # ── attention-first sort ─────────────────────────────────────────────────────
 
-  test "sort_by_attention: unanswered (oldest first) → pending → suppressed → answered → idle (newest first)" do
+  test "sort_by_attention: unanswered (oldest first) → pending → suppressed → answered → stale → idle (newest first)" do
     mk = fn sid, iso -> %{"session_id" => sid, "last_activity" => iso} end
     statuses = %{
       "a-old" => :unanswered,
@@ -87,6 +120,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLiveReplyStatusTest do
       "p" => :pending,
       "s" => :suppressed,
       "ok" => :answered,
+      "st" => :stale,
       "i-old" => :idle,
       "i-new" => :idle
     }
@@ -96,12 +130,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLiveReplyStatusTest do
       mk.("ok", "2026-06-03T12:00:00Z"),
       mk.("a-new", "2026-06-03T15:00:00Z"),
       mk.("s", "2026-06-03T14:00:00Z"),
+      mk.("st", "2026-05-20T09:00:00Z"),
       mk.("i-new", "2026-06-03T10:00:00Z"),
       mk.("a-old", "2026-06-03T09:00:00Z"),
       mk.("p", "2026-06-03T15:30:00Z")
     ]
 
     assert Enum.map(SessionsLive.sort_by_attention(sessions, statuses), & &1["session_id"]) ==
-             ["a-old", "a-new", "p", "s", "ok", "i-new", "i-old"]
+             ["a-old", "a-new", "p", "s", "ok", "st", "i-new", "i-old"]
   end
 end
