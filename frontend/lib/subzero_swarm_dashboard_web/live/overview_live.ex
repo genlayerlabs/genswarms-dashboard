@@ -1,8 +1,10 @@
 defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.RouterClient
   alias SubzeroSwarmDashboard.RouterUsageCache
+  alias SubzeroSwarmDashboardWeb.DashHooks
   alias SubzeroSwarmDashboardWeb.ReplyHealth
 
   # The router-usage card refreshes on its own slow pulse — every other card on
@@ -14,8 +16,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     if connected?(socket), do: send(self(), :load_usage)
 
     # stale-while-revalidate off the same cache the Usage page fills
-    {:ok,
-     assign(socket, usage: RouterUsageCache.get("all") || :loading, page_title: "Overview")}
+    {:ok, assign(socket, usage: RouterUsageCache.get("all") || :loading, page_title: "Overview")}
   end
 
   @impl true
@@ -30,13 +31,24 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   @impl true
   def render(assigns) do
+    privacy? = assigns[:privacy] == true
+    inspect_lookup = assigns[:inspect_lookup] || DashHooks.inspect_lookup(assigns[:snapshot])
+
+    assigns =
+      assign(assigns,
+        inspect_lookup: inspect_lookup,
+        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?),
+        warnings: warnings(assigns[:snapshot], privacy?)
+      )
+
     ~H"""
     <Layouts.app
       flash={@flash}
       active={:overview}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
+      privacy={@privacy}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}
       inspect_activity={@inspect_activity}
@@ -74,10 +86,15 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           live story unavailable — the display-event feed isn't answering; snapshot cards below keep working.
         </div>
         <%= if @story && @story[:feed_status] == :ok do %>
-          <.in_flight_panel story={@story} snapshot={@snapshot} />
+          <.in_flight_panel
+            story={@story}
+            snapshot={@snapshot}
+            privacy={@privacy}
+            inspect_lookup={@inspect_lookup}
+          />
           <div class="grid lg:grid-cols-2 gap-5">
             <.agents_panel story={@story} snapshot={@snapshot} />
-            <.issues_panel story={@story} snapshot={@snapshot} />
+            <.issues_panel story={@story} snapshot={@snapshot} privacy={@privacy} />
           </div>
           <.kpi_panel story={@story} snapshot={@snapshot} />
         <% end %>
@@ -106,12 +123,12 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
         </div>
 
         <.panel
-          :if={@snapshot && (@snapshot["warnings"] || []) != []}
+          :if={@snapshot && @warnings != []}
           title="Warnings"
           class="border-warning/50 bg-warning/5"
         >
           <ul class="text-sm space-y-1">
-            <li :for={w <- @snapshot["warnings"]} class="font-mono">
+            <li :for={w <- @warnings} class="font-mono">
               <span class="badge badge-warning badge-sm">{w["code"]}</span>
               {w["object"]} — {w["reason"]}
             </li>
@@ -127,12 +144,14 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   # ── story panels (spec §5.6) ─────────────────────────────────────────────────
   attr :story, :map, required: true
   attr :snapshot, :map, default: nil
+  attr :privacy, :boolean, default: false
+  attr :inspect_lookup, :map, default: %{}
 
   defp in_flight_panel(assigns) do
     assigns =
       assigns
       |> assign(:eps, assigns.story[:in_flight] || [])
-      |> assign(:last, last_close(assigns.story))
+      |> assign(:last, last_close(assigns.story, assigns.privacy))
 
     ~H"""
     <.panel id="in-flight-panel" title="In flight">
@@ -151,12 +170,19 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
       <div class="divide-y divide-base-300/50">
         <div
           :for={ep <- @eps}
-          id={"in-flight-#{dom_cid(ep.cid)}"}
+          id={"in-flight-#{dom_cid(ep.cid, @privacy)}"}
           class="flex items-center gap-3 font-mono text-sm py-2 first:pt-0 last:pb-0"
         >
-          <span class="w-36 truncate font-semibold">
-            @{handle_for(@snapshot, ep.cid, ep.user)}
-          </span>
+          <%= if @privacy do %>
+            <span class="w-36 min-w-0 flex items-center gap-2 font-semibold">
+              <.identity_avatar user={session_user(@snapshot, ep.cid)} session_id={ep.cid} size={:sm} />
+              <span class="truncate">•••</span>
+            </span>
+          <% else %>
+            <span class="w-36 truncate font-semibold">
+              @{handle_for(@snapshot, ep.cid, ep.user)}
+            </span>
+          <% end %>
           <span class="w-36 truncate opacity-60">{ep.agent || "routing"}</span>
           <span class={["flex-1 truncate", (ep.stalled && "text-error") || "text-primary"]}>
             {ep.activity}<span
@@ -171,9 +197,22 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
             value={stall_pct(ep.elapsed_s)}
             max="100"
           />
-          <.link navigate={session_href(ep.cid)} class="link link-hover text-xs opacity-70">
-            session
-          </.link>
+          <%= if @privacy do %>
+            <% inspect_target = inspect_value(@inspect_lookup, true, ep.cid) %>
+            <button
+              :if={inspect_target}
+              type="button"
+              phx-click="inspect"
+              phx-value-session_id={inspect_target}
+              class="link link-hover text-xs opacity-70"
+            >
+              session
+            </button>
+          <% else %>
+            <.link navigate={session_href(ep.cid)} class="link link-hover text-xs opacity-70">
+              session
+            </.link>
+          <% end %>
         </div>
       </div>
     </.panel>
@@ -351,12 +390,13 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   attr :story, :map, required: true
   attr :snapshot, :map, default: nil
+  attr :privacy, :boolean, default: false
 
   defp issues_panel(assigns) do
     assigns =
       assign(assigns,
-        issues: dedupe_issues(assigns.story[:issues] || []),
-        who: session_who(assigns.snapshot)
+        issues: issues_for_privacy(dedupe_issues(assigns.story[:issues] || []), assigns.privacy),
+        who: session_who(assigns.snapshot, assigns.privacy)
       )
 
     ~H"""
@@ -378,13 +418,16 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           <span class="opacity-50 whitespace-nowrap">
             <.local_time id={"issue-#{i}-t"} ts={issue.ts} />
           </span>
-          <span class="w-28 truncate opacity-70" title={issue.cid}>
+          <span class="w-28 truncate opacity-70" title={if(@privacy, do: nil, else: issue.cid)}>
             {@who[issue.cid] || issue.cid || issue.agent}
           </span>
           <span class="flex-1 truncate text-warning">
             {issue.text}<span :if={issue.count > 1} class="opacity-60"> ×{issue.count}</span>
           </span>
-          <.link navigate={issue_href(issue)} class="link link-hover opacity-70 whitespace-nowrap">
+          <.link
+            navigate={issue_href(issue, @privacy)}
+            class="link link-hover opacity-70 whitespace-nowrap"
+          >
             events →
           </.link>
         </div>
@@ -408,14 +451,22 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   # cid => "@handle" from the snapshot's sessions — issues name PEOPLE, not
   # transport ids, whenever the join is available (raw cid stays as tooltip).
-  defp session_who(nil), do: %{}
+  defp session_who(nil, _privacy?), do: %{}
 
-  defp session_who(snap) do
+  defp session_who(snap, false) do
     for s <- snap["sessions"] || [],
         handle = get_in(s, ["user", "handle"]),
         is_binary(handle) and handle != "",
         into: %{},
         do: {s["session_id"], "@" <> handle}
+  end
+
+  defp session_who(snap, true) do
+    for s <- snap["sessions"] || [],
+        sid = s["session_id"],
+        is_binary(sid) and sid != "",
+        into: %{},
+        do: {sid, "•••"}
   end
 
   # ── components ───────────────────────────────────────────────────────────────
@@ -491,8 +542,15 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   # ── story helpers ────────────────────────────────────────────────────────────
   # the idle one-liner reads the freshest successful close out of the story tail
-  defp last_close(story),
+  defp last_close(story, false),
     do: Enum.find(story[:story] || [], &(&1.kind == "reply_sent" and not &1.issue))
+
+  defp last_close(story, true) do
+    case last_close(story, false) do
+      %{} = row -> Map.update(row, :text, nil, &PrivacyRedactor.mask_text/1)
+      other -> other
+    end
+  end
 
   defp today_val(nil, _key), do: nil
 
@@ -537,13 +595,68 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     end
   end
 
-  defp issue_href(%{cid: cid}) when is_binary(cid), do: ~p"/events?#{[cid: cid, issues: 1]}"
-  defp issue_href(_issue), do: ~p"/events?#{[issues: 1]}"
+  defp issue_href(%{cid: cid}, false) when is_binary(cid),
+    do: ~p"/events?#{[cid: cid, issues: 1]}"
 
-  defp dom_cid(cid), do: String.replace(to_string(cid), ~r/[^A-Za-z0-9_-]/, "-")
+  defp issue_href(_issue, _privacy?), do: ~p"/events?#{[issues: 1]}"
+
+  defp dom_cid(cid, false), do: String.replace(to_string(cid), ~r/[^A-Za-z0-9_-]/, "-")
+
+  defp dom_cid(cid, true) do
+    cid
+    |> to_string()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+    |> String.slice(0, 12)
+  end
 
   # ── helpers ──────────────────────────────────────────────────────────────────
   defp consumers_count(snap), do: get_in(snap, ["extensions", "consumers", "count"]) || 0
+
+  defp warnings(nil, _privacy?), do: []
+  defp warnings(snap, false), do: snap["warnings"] || []
+
+  defp warnings(snap, true) do
+    snap
+    |> Map.get("warnings", [])
+    |> PrivacyRedactor.mask_identity()
+    |> Enum.map(fn
+      %{} = w ->
+        w
+        |> Map.update("object", nil, &PrivacyRedactor.mask_cid/1)
+        |> Map.update("reason", nil, &PrivacyRedactor.mask_cid/1)
+
+      other ->
+        other
+    end)
+  end
+
+  defp issues_for_privacy(issues, false), do: issues
+
+  defp issues_for_privacy(issues, true) do
+    Enum.map(issues, fn
+      %{} = issue -> Map.update(issue, :text, nil, &PrivacyRedactor.mask_text/1)
+      issue -> issue
+    end)
+  end
+
+  defp session_user(snapshot, cid) do
+    case session_for(snapshot, cid) do
+      %{} = session -> session["user"]
+      _ -> nil
+    end
+  end
+
+  defp session_for(%{"sessions" => sessions}, cid) when is_list(sessions),
+    do: Enum.find(sessions, &(&1["session_id"] == cid))
+
+  defp session_for(_snapshot, _cid), do: nil
+
+  defp inspect_value(lookup, privacy?, sid),
+    do: DashHooks.inspect_value(lookup, privacy? == true, sid)
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 
   # Staleness from the server-side snapshot time (spec §12).
   defp snapshot_age(snap) do

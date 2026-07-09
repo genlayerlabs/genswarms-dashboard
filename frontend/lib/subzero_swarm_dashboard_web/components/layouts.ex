@@ -33,6 +33,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   attr :inspect, :any, default: nil, doc: "the session currently open in the inspector"
   attr :inspect_transcript, :any, default: nil, doc: "lazily-loaded durable transcript"
   attr :inspect_activity, :any, default: nil, doc: "lazily-loaded raw slot activity"
+  attr :privacy, :boolean, default: false, doc: "server-session privacy-mode state"
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -45,13 +46,13 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       |> assign(:dashboard_title, dashboard_title(assigns[:snapshot], assigns[:swarm]))
 
     ~H"""
-    <div class="flex min-h-screen">
+    <div class="flex min-h-screen" data-privacy={if @privacy, do: "on", else: "off"}>
       <%!-- replays the per-browser sensitive-content preference on every mount --%>
       <span id="transcript-gate" phx-hook="TranscriptGate" class="hidden"></span>
       <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
         <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
           <img src={~p"/images/logo.svg"} width="30" class="drop-shadow" alt="" />
-          <div class="leading-none min-w-0">
+          <div class="leading-none min-w-0 flex-1">
             <div
               class="font-display font-extrabold text-lg tracking-tight truncate max-w-36"
               title={@dashboard_title}
@@ -62,6 +63,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
               swarm console
             </div>
           </div>
+          <.privacy_toggle privacy={@privacy} />
         </div>
 
         <div class="px-2 mb-5 space-y-2">
@@ -147,7 +149,12 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       </main>
     </div>
 
-    <.inspector inspect={@inspect} transcript={@inspect_transcript} activity={@inspect_activity} />
+    <.inspector
+      inspect={@inspect}
+      transcript={@inspect_transcript}
+      activity={@inspect_activity}
+      privacy={@privacy}
+    />
     <.flash_group flash={@flash} />
     """
   end
@@ -214,6 +221,33 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         {@label}
       </.link>
     </li>
+    """
+  end
+
+  attr :privacy, :boolean, default: false
+
+  defp privacy_toggle(assigns) do
+    ~H"""
+    <form action={~p"/privacy/toggle"} method="post" class="shrink-0">
+      <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
+      <button
+        id="privacy-toggle"
+        type="submit"
+        aria-label={if @privacy, do: "Disable privacy mode", else: "Enable privacy mode"}
+        aria-pressed={to_string(@privacy)}
+        title={if @privacy, do: "Privacy mode on", else: "Privacy mode off"}
+        class={[
+          "btn btn-sm min-h-0 h-8 rounded-lg border px-2 gap-1.5",
+          @privacy && "btn-warning border-warning/60",
+          !@privacy && "btn-ghost border-base-300 opacity-70 hover:opacity-100"
+        ]}
+      >
+        <.icon name={if @privacy, do: "hero-eye-slash", else: "hero-eye"} class="size-4 shrink-0" />
+        <span :if={@privacy} id="privacy-badge" class="badge badge-sm uppercase tracking-[0.14em]">
+          privacy
+        </span>
+      </button>
+    </form>
     """
   end
 

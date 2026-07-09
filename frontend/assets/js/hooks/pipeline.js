@@ -92,6 +92,7 @@ export const Pipeline = {
     // the node table below the canvas). POS is CSS-pixel space (layout() sizes
     // the canvas from clientWidth/Height), so offsetX/Y need no scaling.
     this.SESSIONS = {}
+    this.SESSION_LABELS = {}
     this.cv.addEventListener("click", (e) => {
       const hit = this.agentAt(e.offsetX, e.offsetY)
       if (hit && this.SESSIONS[hit]) this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
@@ -113,11 +114,13 @@ export const Pipeline = {
     // `handles` maps a leased slot to its avatar seed (the telegram handle) —
     // the node is labelled "agent_15" + the session id it serves and wears a
     // generated avatar. `sessions` maps the slot to the session id it serves
-    // (label sub-line + canvas click→inspect target). Both replaced wholesale so
-    // a released slot drops its avatar + session on the next snapshot.
-    this.handleEvent("pipeline:agents", ({agents, handles, sessions}) => {
+    // (canvas click→inspect target); `session_labels` is the drawn sub-line and
+    // may be redacted independently. All maps are replaced wholesale so a
+    // released slot drops its avatar + session on the next snapshot.
+    this.handleEvent("pipeline:agents", ({agents, handles, sessions, session_labels}) => {
       this.HANDLES = handles || {}
       this.SESSIONS = sessions || {}
+      this.SESSION_LABELS = session_labels || sessions || {}
       let changed = false
       for (const name of agents || []) {
         if (!this.FIXED.has(name) && !this.AGENTS.has(name)) {
@@ -838,10 +841,12 @@ export const Pipeline = {
       const st = ag ? ag.state : null
       const objBusy = P.kind !== "agent" && busyObjs[n]
       // a leased slot: HANDLES[n] is its avatar seed, SESSIONS[n] the session id
-      // it serves. The label is ALWAYS the slot id (agent_15) now; identity comes
-      // from the drawn avatar + the session sub-line, not a "@handle" text label.
+      // or inspect token it serves. SESSION_LABELS[n] is the drawn sub-line. The
+      // label is ALWAYS the slot id (agent_15) now; identity comes from the drawn
+      // avatar + the session sub-line, not a "@handle" text label.
       const seed = P.kind === "agent" ? (this.HANDLES || {})[n] : null
       const sess = P.kind === "agent" ? (this.SESSIONS || {})[n] : null
+      const sessLabel = P.kind === "agent" ? (this.SESSION_LABELS || {})[n] : null
       const label = this.short(n)
       // chatter nodes recede so the user-request lane owns the eye
       const dim = P.kind !== "agent" && this.BG.has(n) && !objBusy ? 0.5 : 1
@@ -996,14 +1001,14 @@ export const Pipeline = {
       }
       g.globalAlpha = 1
 
-      // the session id the slot serves — a dim second line under the slot id
-      if (sess) {
+      // the session label the slot serves — a dim second line under the slot id
+      if (sessLabel) {
         g.fillStyle = C.ink
         g.globalAlpha = 0.55
         g.font = `500 9.5px ${MONO}`
         g.textAlign = "center"
         g.textBaseline = "top"
-        g.fillText(this.trunc(sess), P.x, P.y + hh + 20)
+        g.fillText(this.trunc(sessLabel), P.x, P.y + hh + 20)
         g.globalAlpha = 1
       }
 

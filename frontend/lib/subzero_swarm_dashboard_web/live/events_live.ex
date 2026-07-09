@@ -2,7 +2,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.EventsFeed
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.SwarmClient
+  alias SubzeroSwarmDashboardWeb.DashHooks
 
   @refresh_ms 5_000
   # the stream mirrors the story ring cap; the pause buffer is bounded the same
@@ -80,8 +82,8 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     # _target says which control changed so the free cid input isn't clobbered
     cid =
       if params["_target"] == ["user"],
-        do: params["user"] || "",
-        else: params["cid"] || ""
+        do: resolve_user_filter(socket, params["user"] || ""),
+        else: resolve_cid_filter(socket, params["cid"] || "")
 
     {:noreply,
      push_patch(socket,
@@ -101,7 +103,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   def handle_event("resume", _params, socket) do
     socket =
       socket
-      |> prepend_rows(socket.assigns.pending)
+      |> prepend_rows(
+        story_rows_for_privacy(socket.assigns.pending, socket.assigns[:privacy] == true)
+      )
       |> assign(paused: false, pending: [], pending_count: 0)
 
     {:noreply, socket}
@@ -110,7 +114,10 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   # Fresh 10-minute fetch (not the filtered table state): the copy is a debugging
   # handoff and should carry everything, independent of the current view filters.
   def handle_event("copy_log", _params, socket) do
-    {:noreply, push_event(socket, "clipboard-copy", %{text: copy_log_text(socket.assigns.swarm)})}
+    {:noreply,
+     push_event(socket, "clipboard-copy", %{
+       text: copy_log_text(socket.assigns.swarm, socket.assigns[:privacy] == true)
+     })}
   end
 
   def handle_event("filter", params, socket) do
@@ -153,7 +160,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
           assign(socket, pending: pending, pending_count: length(pending))
 
         true ->
-          prepend_rows(socket, fresh)
+          prepend_rows(socket, story_rows_for_privacy(fresh, socket.assigns[:privacy] == true))
       end
 
     {:noreply, socket}
@@ -167,11 +174,12 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   # re-seed the seen-set that diffs live ticks
   defp reset_story(socket) do
     ring = story_ring()
+    rows = ring |> filter_rows(socket.assigns) |> Enum.take(@stream_max)
 
     socket
     |> assign(seen: MapSet.new(Enum.take(ring, @summary_tail), &row_dom_id/1))
     |> assign(paused: false, pending: [], pending_count: 0)
-    |> stream(:story_rows, ring |> filter_rows(socket.assigns) |> Enum.take(@stream_max),
+    |> stream(:story_rows, story_rows_for_privacy(rows, socket.assigns[:privacy] == true),
       reset: true
     )
   end
@@ -229,13 +237,52 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   end
 
   # nobody types a raw scheme-prefixed cid by hand — the dropdown maps label → session_id
-  defp user_options(snapshot) do
-    for s <- (is_map(snapshot) && snapshot["sessions"]) || [],
+  defp user_options(snapshot, selected_cid, false) do
+    for s <- sessions(snapshot),
         h = get_in(s, ["user", "handle"]),
         is_binary(h) and h != "" do
-      {"@" <> h, s["session_id"]}
+      %{label: "@" <> h, value: s["session_id"], selected: selected_cid == s["session_id"]}
     end
   end
+
+  defp user_options(snapshot, selected_cid, true) do
+    snapshot
+    |> sessions()
+    |> Enum.with_index()
+    |> Enum.map(fn {s, i} ->
+      %{
+        label: "user #{i + 1}",
+        value: "session:#{i}",
+        selected: selected_cid == s["session_id"]
+      }
+    end)
+  end
+
+  defp sessions(snapshot), do: (is_map(snapshot) && snapshot["sessions"]) || []
+
+  defp resolve_user_filter(_socket, ""), do: ""
+
+  defp resolve_user_filter(socket, "session:" <> index) do
+    with {i, ""} <- Integer.parse(index),
+         %{"session_id" => sid} <- Enum.at(sessions(socket.assigns[:snapshot]), i) do
+      sid
+    else
+      _ -> ""
+    end
+  end
+
+  defp resolve_user_filter(_socket, value), do: value
+
+  defp resolve_cid_filter(socket, submitted) do
+    if socket.assigns[:privacy] == true and submitted == display_cid(socket.assigns.cid, true) do
+      socket.assigns.cid
+    else
+      submitted
+    end
+  end
+
+  defp display_cid(cid, true) when is_binary(cid), do: PrivacyRedactor.mask_cid(cid)
+  defp display_cid(cid, _privacy?), do: cid
 
   # ── engine-raw plumbing (unchanged) ──────────────────────────────────────────
 
@@ -274,12 +321,15 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   # the swarm pod rolls independently (it's the heavy image) and its version is
   # the "<name> release v-…" system line it logs at boot. Showing only the
   # dashboard's already misled a debugging session once (2026-07-05).
-  defp copy_log_text(swarm) do
+  defp copy_log_text(swarm, privacy?) do
     case SwarmClient.events(swarm, %{minutes: 10, limit: 500}) do
       {:ok, events} ->
         swarm_rel = swarm_release(events)
-        header = "dashboard #{release_tag()} · swarm #{swarm_rel} — engine log, last 10 min (times UTC)"
-        [header | Enum.map(events, &copy_log_line/1)] |> Enum.join("\n")
+
+        header =
+          "dashboard #{release_tag()} · swarm #{swarm_rel} — engine log, last 10 min (times UTC)"
+
+        [header | Enum.map(events, &copy_log_line(&1, privacy?))] |> Enum.join("\n")
 
       {:error, reason} ->
         "dashboard #{release_tag()} — engine log fetch failed: #{inspect(reason)}"
@@ -289,15 +339,21 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   # The swarm's own boot stamp ("wingston release v-…", category system). A boot
   # older than the fetch window won't be in `events` — say so instead of guessing.
   defp swarm_release(events) do
-    Enum.find_value(events, "(boot older than window — see the '<swarm> release' line at its boot)", fn e ->
-      case Regex.run(~r/^\S+ release (\S+)$/, e["message"] || "") do
-        [_, rel] -> rel
-        _ -> nil
+    Enum.find_value(
+      events,
+      "(boot older than window — see the '<swarm> release' line at its boot)",
+      fn e ->
+        case Regex.run(~r/^\S+ release (\S+)$/, e["message"] || "") do
+          [_, rel] -> rel
+          _ -> nil
+        end
       end
-    end)
+    )
   end
 
-  defp copy_log_line(e) do
+  defp copy_log_line(e, privacy?) do
+    e = event_for_privacy(e, privacy?)
+
     base =
       [ts_hms(e["timestamp"]), e["level"], e["category"], e["agent"] || "-", e["message"]]
       |> Enum.map(&to_string/1)
@@ -326,12 +382,17 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   @impl true
   def render(assigns) do
+    privacy? = assigns[:privacy] == true
+    inspect_lookup = assigns[:inspect_lookup] || DashHooks.inspect_lookup(assigns[:snapshot])
+
     assigns =
       assign(assigns,
+        inspect_lookup: inspect_lookup,
+        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?),
         kinds: @kinds,
         story_href: story_path(assigns, view: "story"),
         raw_href: story_path(assigns, view: "raw"),
-        user_opts: user_options(assigns[:snapshot])
+        user_opts: user_options(assigns[:snapshot], assigns.cid, privacy?)
       )
 
     ~H"""
@@ -339,8 +400,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
       flash={@flash}
       active={:events}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
+      privacy={@privacy}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}
       inspect_activity={@inspect_activity}
@@ -393,14 +455,14 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
                 class="select select-bordered select-sm w-40"
               >
                 <option value="">user…</option>
-                <option :for={{label, sid} <- @user_opts} value={sid} selected={@cid == sid}>
-                  {label}
+                <option :for={opt <- @user_opts} value={opt.value} selected={opt.selected}>
+                  {opt.label}
                 </option>
               </select>
               <input
                 type="text"
                 name="cid"
-                value={@cid}
+                value={display_cid(@cid, @privacy)}
                 placeholder="cid (deep link)"
                 class="input input-bordered input-sm w-40 font-mono"
               />
@@ -468,13 +530,26 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
                   <.local_time id={id <> "-t"} ts={row.ts} fmt="hms" />
                 </span>
                 <span class={["flex-1 truncate", row.issue && "text-warning"]}>{row.text}</span>
-                <.link
-                  :if={row.cid}
-                  navigate={session_href(row.cid)}
-                  class="link link-hover opacity-60 whitespace-nowrap"
-                >
-                  session
-                </.link>
+                <%= if @privacy do %>
+                  <% inspect_target = inspect_value(@inspect_lookup, true, row.cid) %>
+                  <button
+                    :if={inspect_target}
+                    type="button"
+                    phx-click="inspect"
+                    phx-value-session_id={inspect_target}
+                    class="link link-hover opacity-60 whitespace-nowrap"
+                  >
+                    session
+                  </button>
+                <% else %>
+                  <.link
+                    :if={row.cid}
+                    navigate={session_href(row.cid)}
+                    class="link link-hover opacity-60 whitespace-nowrap"
+                  >
+                    session
+                  </.link>
+                <% end %>
               </div>
             </div>
           </.panel>
@@ -540,7 +615,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
           </form>
 
           <.panel title="Engine log" body_class="px-4 py-2">
-            <.event_table events={@events} contains={@contains} />
+            <.event_table events={@events} contains={@contains} privacy={@privacy} />
           </.panel>
         </div>
       </div>
@@ -550,9 +625,17 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   attr :events, :any, required: true
   attr :contains, :string, default: ""
+  attr :privacy, :boolean, default: false
 
   defp event_table(%{events: {:ok, events}} = assigns) do
-    assigns = assign(assigns, :events, client_filter(events, assigns.contains))
+    assigns =
+      assign(
+        assigns,
+        :events,
+        events
+        |> client_filter(assigns.contains)
+        |> events_for_privacy(assigns.privacy)
+      )
 
     ~H"""
     <table class="table table-xs">
@@ -618,6 +701,34 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     Enum.filter(events, &String.contains?(String.downcase(to_string(&1["message"])), q))
   end
 
+  defp events_for_privacy(events, false), do: events
+  defp events_for_privacy(events, true), do: Enum.map(events, &event_for_privacy(&1, true))
+
+  defp event_for_privacy(e, false), do: e
+
+  defp event_for_privacy(%{} = e, true) do
+    e
+    |> PrivacyRedactor.mask_identity()
+    |> Map.update("message", nil, &PrivacyRedactor.mask_text/1)
+  end
+
+  defp event_for_privacy(e, _privacy?), do: e
+
+  defp story_rows_for_privacy(rows, false), do: rows
+
+  defp story_rows_for_privacy(rows, true) do
+    Enum.map(rows, fn
+      %{} = row -> Map.update(row, :text, nil, &PrivacyRedactor.mask_text/1)
+      row -> row
+    end)
+  end
+
+  defp inspect_value(lookup, privacy?, sid),
+    do: DashHooks.inspect_value(lookup, privacy? == true, sid)
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
+
   defp iso_unix(ts) when is_binary(ts) do
     case DateTime.from_iso8601(ts) do
       {:ok, dt, _} -> DateTime.to_unix(dt)
@@ -636,8 +747,16 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   defp row_tone(%{kind: "reply_sent"}), do: "border-success/60"
   defp row_tone(%{kind: k}) when k in ["request_open", "routed"], do: "border-primary/50"
 
-  defp row_tone(%{kind: k}) when k in ["browse_dispatch", "browse_done", "browser_dispatch", "browser_done", "spawn_start", "ask"],
-    do: "border-info/40"
+  defp row_tone(%{kind: k})
+       when k in [
+              "browse_dispatch",
+              "browse_done",
+              "browser_dispatch",
+              "browser_done",
+              "spawn_start",
+              "ask"
+            ],
+       do: "border-info/40"
 
   defp row_tone(_row), do: "border-base-300/40"
 end

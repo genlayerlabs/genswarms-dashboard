@@ -5,6 +5,7 @@ defmodule SubzeroSwarmDashboardWeb.Router do
     plug :accepts, ["html"]
     plug :fetch_session
     plug :fetch_live_flash
+    plug :put_privacy_assign
     plug :put_root_layout, html: {SubzeroSwarmDashboardWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
@@ -23,6 +24,8 @@ defmodule SubzeroSwarmDashboardWeb.Router do
 
   scope "/", SubzeroSwarmDashboardWeb do
     pipe_through :browser
+
+    post "/privacy/toggle", PrivacyController, :toggle
 
     live_session :dashboard, on_mount: {SubzeroSwarmDashboardWeb.DashHooks, :default} do
       live "/", OverviewLive
@@ -48,6 +51,14 @@ defmodule SubzeroSwarmDashboardWeb.Router do
       conn
     end
   end
+
+  defp put_privacy_assign(conn, _opts) do
+    assign(conn, :privacy, privacy_enabled?(get_session(conn, :privacy)))
+  end
+
+  defp privacy_enabled?(true), do: true
+  defp privacy_enabled?("true"), do: true
+  defp privacy_enabled?(_), do: false
 
   if Application.compile_env(:subzero_swarm_dashboard, :dev_routes) do
     import Phoenix.LiveDashboard.Router

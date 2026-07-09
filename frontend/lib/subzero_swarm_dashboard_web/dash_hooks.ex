@@ -16,8 +16,11 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   alias SubzeroSwarmDashboard.SwarmFeed
   alias SubzeroSwarmDashboard.SwarmClient
 
-  def on_mount(:default, _params, _session, socket) do
+  @privacy_session_key :privacy
+
+  def on_mount(:default, _params, session, socket) do
     swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
+    privacy? = privacy_enabled?(session)
 
     if connected?(socket) do
       SwarmFeed.subscribe()
@@ -29,6 +32,7 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
     # with nil assigns and flashed the empty state ("Extension unavailable",
     # incomplete menu) for up to one poll interval (3s).
     cached_snapshot = SwarmFeed.current()
+    cached_inspect_lookup = inspect_lookup(cached_snapshot)
     dashboard_title = dashboard_title(cached_snapshot, swarm)
 
     socket =
@@ -42,6 +46,8 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
       |> assign_new(:inspect, fn -> nil end)
       |> assign_new(:inspect_transcript, fn -> nil end)
       |> assign_new(:inspect_activity, fn -> nil end)
+      |> assign_new(:inspect_lookup, fn -> cached_inspect_lookup end)
+      |> assign_new(:privacy, fn -> privacy? end)
       # Sensitive-content gate: user conversations are NOT fetched (not merely
       # hidden) until revealed. Default comes from config; the TranscriptGate
       # JS hook replays a per-browser localStorage preference on every mount.
@@ -56,9 +62,21 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
     {:cont, socket}
   end
 
+  defp privacy_enabled?(session) when is_map(session) do
+    session
+    |> Map.get("privacy", Map.get(session, @privacy_session_key))
+    |> privacy_enabled?()
+  end
+
+  defp privacy_enabled?(true), do: true
+  defp privacy_enabled?("true"), do: true
+  defp privacy_enabled?(_), do: false
+
   # ── shared inspector: open on any page, close on Esc / click-away ────────────
-  defp handle_inspect_event("inspect", %{"session_id" => sid}, socket)
-       when is_binary(sid) and sid != "" do
+  defp handle_inspect_event("inspect", %{"session_id" => submitted}, socket)
+       when is_binary(submitted) and submitted != "" do
+    sid = resolve_inspect_sid(socket, submitted)
+
     case find_session(socket.assigns[:snapshot], sid) do
       nil ->
         {:halt, socket}
@@ -82,7 +100,8 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   # localStorage), and — when the inspector sits open on gated placeholders —
   # fetch the real detail now instead of waiting for the next snapshot tick.
   defp handle_inspect_event("transcripts_reveal", _params, socket) do
-    socket = socket |> assign(reveal_transcripts: true) |> push_event("transcripts:store", %{show: true})
+    socket =
+      socket |> assign(reveal_transcripts: true) |> push_event("transcripts:store", %{show: true})
 
     if connected?(socket) do
       if socket.assigns[:inspect],
@@ -111,6 +130,41 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
   # Not an inspector event — let the page's own handle_event run.
   defp handle_inspect_event(_event, _params, socket), do: {:cont, socket}
+
+  @doc """
+  Builds the per-render inspect token map used by privacy-mode views.
+
+  The map is intentionally one-way for rendering: DOM/canvas payloads can carry
+  `inspect:N` tokens while the server keeps the raw session id in assigns.
+  """
+  def inspect_lookup(%{"sessions" => sessions}) when is_list(sessions) do
+    sessions
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn
+      {%{"session_id" => sid}, i}, acc when is_binary(sid) and sid != "" ->
+        Map.put(acc, "inspect:#{i}", sid)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  def inspect_lookup(_snapshot), do: %{}
+
+  def inspect_value(_lookup, false, sid), do: sid
+
+  def inspect_value(lookup, true, sid) when is_map(lookup) and is_binary(sid) do
+    Enum.find_value(lookup, fn
+      {token, ^sid} -> token
+      _ -> nil
+    end)
+  end
+
+  def inspect_value(_lookup, _privacy?, _sid), do: nil
+
+  defp resolve_inspect_sid(socket, submitted) do
+    Map.get(socket.assigns[:inspect_lookup] || %{}, submitted, submitted)
+  end
 
   # Lazily fetch the full session detail (durable transcript + raw slot activity),
   # so the inspector shows everything the dedicated page does. Ignore if the user
@@ -166,6 +220,7 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
       assign(socket,
         snapshot: snap,
         conn_status: :connected,
+        inspect_lookup: inspect_lookup(snap),
         dashboard_title: dashboard_title(snap, socket.assigns[:swarm])
       )
 

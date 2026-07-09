@@ -1,6 +1,9 @@
 defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
+  alias SubzeroSwarmDashboard.PrivacyRedactor
+  alias SubzeroSwarmDashboardWeb.DashHooks
+
   @impl true
   def mount(_params, _session, socket) do
     layout = Application.get_env(:subzero_swarm_dashboard, :pipeline_layout, %{})
@@ -29,7 +32,13 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   @impl true
   # Raw display events drive the canvas; the hook owns playback timing (causal).
   def handle_info({:display_event, ev}, socket),
-    do: {:noreply, push_event(socket, "pipeline:event", ev)}
+    do:
+      {:noreply,
+       push_event(
+         socket,
+         "pipeline:event",
+         display_event_for_privacy(ev, socket.assigns[:privacy] == true)
+       )}
 
   # Agent nodes are dynamic. Precedence (spec §5.5): the snapshot wins existence
   # (which slots are in the pool), the event story wins activity state.
@@ -37,22 +46,38 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   # serves (the canvas labels the node "agent_15" + that session id) and an
   # avatar seed (the telegram handle) — the identity lives in the drawn avatar,
   # not in a "@handle" text label.
-  def handle_info({:snapshot, snap}, socket),
-    do:
-      {:noreply,
-       push_event(socket, "pipeline:agents", %{
-         agents: agent_names(snap, socket.assigns.agent_re),
-         handles: agent_handles(snap),
-         sessions: agent_sessions(snap)
-       })}
+  def handle_info({:snapshot, snap}, socket) do
+    privacy? = socket.assigns[:privacy] == true
+    inspect_lookup = DashHooks.inspect_lookup(snap)
+
+    payload =
+      %{
+        agents: agent_names(snap, socket.assigns.agent_re),
+        handles: agent_handles(snap, privacy?),
+        sessions: agent_session_targets(snap, privacy?, inspect_lookup)
+      }
+      |> maybe_add_session_labels(snap, privacy?)
+
+    socket =
+      socket
+      |> assign(:inspect_lookup, inspect_lookup)
+      |> push_event("pipeline:agents", payload)
+
+    {:noreply, socket}
+  end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
   def render(assigns) do
+    privacy? = assigns[:privacy] == true
+    inspect_lookup = assigns[:inspect_lookup] || DashHooks.inspect_lookup(assigns[:snapshot])
+
     assigns =
       assigns
-      |> assign(:nodes, table_nodes(assigns[:snapshot]))
+      |> assign(:inspect_lookup, inspect_lookup)
+      |> assign(:layout_snapshot, layout_snapshot(assigns[:snapshot], privacy?))
+      |> assign(:nodes, table_nodes(assigns[:snapshot], privacy?, inspect_lookup))
       |> assign(:gauge, pool_meta(assigns[:snapshot]))
       |> assign(:in_flight, (assigns[:story] && assigns.story[:in_flight]) || [])
 
@@ -61,8 +86,9 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       flash={@flash}
       active={:topology}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
+      privacy={@privacy}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}
       inspect_activity={@inspect_activity}
@@ -127,22 +153,37 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
               <div class="space-y-1 font-mono text-sm">
                 <div :for={ep <- @in_flight} class="flex items-baseline gap-3">
                   <span class="min-w-32 truncate">
-                    @{handle_for(@snapshot, ep.cid, ep.user)}
+                    @{display_handle(@snapshot, ep, @privacy)}
                   </span>
                   <span class="opacity-80">{short(ep.agent) || "routing…"}</span>
-                  <span class={activity_tone(ep.activity)}>{ep.activity}<span
+                  <span class={activity_tone(ep.activity)}>
+                    {ep.activity}<span
                       :if={queued_turns(@story, ep) > 0}
                       class="opacity-60"
                       title="messages from this user waiting for the current turn to finish"
-                    > · +{queued_turns(@story, ep)} queued</span></span>
+                    > · +{queued_turns(@story, ep)} queued</span>
+                  </span>
                   <span :if={ep.stalled} class="badge badge-error badge-xs">stalled</span>
                   <span class="tnum ml-auto opacity-60">{duration(ep.elapsed_s)}</span>
-                  <.link
-                    navigate={session_href(ep.cid)}
-                    class="link link-hover text-xs opacity-70 whitespace-nowrap"
-                  >
-                    session
-                  </.link>
+                  <% inspect_target = inspect_value(@inspect_lookup, @privacy, ep.cid) %>
+                  <%= if @privacy do %>
+                    <button
+                      :if={inspect_target}
+                      type="button"
+                      phx-click="inspect"
+                      phx-value-session_id={inspect_target}
+                      class="link link-hover text-xs opacity-70 whitespace-nowrap"
+                    >
+                      session
+                    </button>
+                  <% else %>
+                    <.link
+                      navigate={session_href(ep.cid)}
+                      class="link link-hover text-xs opacity-70 whitespace-nowrap"
+                    >
+                      session
+                    </.link>
+                  <% end %>
                 </div>
               </div>
           <% end %>
@@ -165,20 +206,31 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
             <tbody>
               <tr
                 :for={n <- @nodes}
-                class={[n["type"] == "agent" && n["session_id"] && "row-press"]}
-                phx-click={n["type"] == "agent" && n["session_id"] && "inspect"}
-                phx-keydown={n["type"] == "agent" && n["session_id"] && "inspect"}
+                class={[n["type"] == "agent" && n["inspect_value"] && "row-press"]}
+                phx-click={n["type"] == "agent" && n["inspect_value"] && "inspect"}
+                phx-keydown={n["type"] == "agent" && n["inspect_value"] && "inspect"}
                 phx-key="Enter"
-                phx-value-session_id={n["session_id"]}
-                tabindex={if(n["type"] == "agent" && n["session_id"], do: "0")}
+                phx-value-session_id={n["inspect_value"]}
+                tabindex={if(n["type"] == "agent" && n["inspect_value"], do: "0")}
               >
                 <td>
-                  <.identity
-                    :if={n["type"] == "agent"}
-                    user={n["user"]}
-                    session_id={n["session_id"]}
-                    size={:sm}
-                  />
+                  <%= if n["type"] == "agent" and @privacy do %>
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <.identity_avatar
+                        user={n["raw_user"]}
+                        session_id={n["raw_session_id"]}
+                        size={:sm}
+                      />
+                      <span class="font-mono text-sm">•••</span>
+                    </div>
+                  <% else %>
+                    <.identity
+                      :if={n["type"] == "agent"}
+                      user={n["user"]}
+                      session_id={n["session_id"]}
+                      size={:sm}
+                    />
+                  <% end %>
                   <span :if={n["type"] != "agent"} class="font-mono">{n["name"]}</span>
                 </td>
                 <td>{n["type"]}</td>
@@ -240,7 +292,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   the slot serves (drawn under the slot id) comes from `agent_sessions/1`. Public
   for unit tests.
   """
-  def agent_handles(snap) do
+  def agent_handles(snap, privacy? \\ false) do
     (snap["sessions"] || [])
     |> Enum.filter(&is_binary(&1["agent"]))
     # actives sort LAST so they win the Map.new overwrite
@@ -248,7 +300,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     |> Enum.reduce(%{}, fn s, acc ->
       case avatar_seed(s) do
         nil -> acc
-        seed -> Map.put(acc, s["agent"], seed)
+        seed -> Map.put(acc, s["agent"], avatar_seed_for_display(seed, privacy?))
       end
     end)
   end
@@ -267,6 +319,23 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     |> Map.new(&{&1["agent"], &1["session_id"]})
   end
 
+  defp agent_session_targets(snap, privacy?, inspect_lookup) do
+    snap
+    |> agent_sessions()
+    |> Map.new(fn {agent, sid} -> {agent, inspect_value(inspect_lookup, privacy?, sid)} end)
+  end
+
+  defp agent_session_labels(snap, privacy?) do
+    snap
+    |> agent_sessions()
+    |> Map.new(fn {agent, sid} -> {agent, display_session_id(sid, privacy?)} end)
+  end
+
+  defp maybe_add_session_labels(payload, _snap, false), do: payload
+
+  defp maybe_add_session_labels(payload, snap, true),
+    do: Map.put(payload, :session_labels, agent_session_labels(snap, true))
+
   # telegram handle first, then adapter label / name, and the session id as a
   # last resort so a handle-less leased slot still gets a distinct avatar
   defp avatar_seed(s) do
@@ -279,7 +348,45 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   defp presence(v) when is_binary(v), do: if(String.trim(v) == "", do: nil, else: v)
   defp presence(_), do: nil
 
+  defp avatar_seed_for_display(seed, false), do: seed
+
+  defp avatar_seed_for_display(seed, true),
+    do: :crypto.hash(:sha256, seed) |> Base.encode16(case: :lower)
+
+  defp display_event_for_privacy(ev, false), do: ev
+
+  defp display_event_for_privacy(%{} = ev, true) do
+    Map.new(ev, fn {key, value} ->
+      {key, redact_display_event_value(to_string(key), value)}
+    end)
+  end
+
+  defp display_event_for_privacy(ev, _privacy?), do: ev
+
+  defp redact_display_event_value("cid", value) when is_binary(value),
+    do: "cid:" <> (:crypto.hash(:sha256, value) |> Base.encode16(case: :lower))
+
+  defp redact_display_event_value(key, value)
+       when key in ["session_id", "chat_id", "conversation_id"] and is_binary(value),
+       do: display_session_id(value, true)
+
+  defp redact_display_event_value(key, value)
+       when key in ["handle", "username", "name", "label", "user"] and is_binary(value),
+       do: "•••"
+
+  defp redact_display_event_value(key, value)
+       when key in ["text", "message", "content"] and is_binary(value),
+       do: PrivacyRedactor.mask_text(value)
+
+  defp redact_display_event_value(_key, value), do: value
+
   # ── in-flight strip (TRUE state from @story — not the paced animation) ────────
+  defp display_handle(_snap, _ep, true), do: "•••"
+  defp display_handle(snap, ep, _privacy?), do: handle_for(snap, ep.cid, ep.user)
+
+  defp inspect_value(lookup, privacy?, sid),
+    do: DashHooks.inspect_value(lookup, privacy? == true, sid)
+
   defp short(nil), do: nil
   defp short(name), do: String.replace(name, "wingston_agent_", "agent_")
 
@@ -291,17 +398,43 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   defp activity_tone(_activity), do: "opacity-60"
 
   # ── table fallback rows (with the joined user identity) ──────────────────────
-  defp table_nodes(nil), do: []
+  defp table_nodes(nil, _privacy?, _inspect_lookup), do: []
 
-  defp table_nodes(snap) do
+  defp table_nodes(snap, privacy?, inspect_lookup) do
     by_cid = Map.new(snap["sessions"] || [], &{&1["session_id"], &1})
 
     Enum.map(snap["nodes"] || [], fn n ->
       sess = n["session_id"] && by_cid[n["session_id"]]
+      raw_sid = n["session_id"]
 
       n
       |> Map.put("user", sess && sess["user"])
       |> Map.put("state", (sess && sess["state"]) || n["state"])
+      |> Map.put("raw_user", sess && sess["user"])
+      |> Map.put("raw_session_id", raw_sid)
+      |> Map.put("inspect_value", inspect_value(inspect_lookup, privacy?, raw_sid))
+      |> maybe_mask_table_node(privacy?)
     end)
   end
+
+  defp maybe_mask_table_node(n, false), do: n
+
+  defp maybe_mask_table_node(n, true) do
+    n
+    |> Map.put("user", nil)
+    |> Map.put("session_id", display_session_id(n["session_id"], true))
+  end
+
+  defp display_session_id(nil, _privacy?), do: nil
+  defp display_session_id(sid, false), do: sid
+
+  defp display_session_id(sid, true) when is_binary(sid) do
+    case PrivacyRedactor.mask_cid(sid) do
+      ^sid -> "•••"
+      masked -> masked
+    end
+  end
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end

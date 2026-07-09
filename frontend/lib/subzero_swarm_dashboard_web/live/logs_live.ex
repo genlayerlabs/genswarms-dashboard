@@ -1,6 +1,7 @@
 defmodule SubzeroSwarmDashboardWeb.LogsLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.SwarmClient
 
   @impl true
@@ -11,9 +12,15 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   def handle_event("select", %{"session_id" => ""}, socket),
     do: {:noreply, assign(socket, selected: nil, logs: nil)}
 
-  def handle_event("select", %{"session_id" => sid}, socket) do
-    send(self(), {:load_logs, sid})
-    {:noreply, assign(socket, selected: sid, logs: :loading)}
+  def handle_event("select", %{"session_id" => submitted}, socket) do
+    case resolve_session_id(socket, submitted) do
+      nil ->
+        {:noreply, assign(socket, selected: nil, logs: nil)}
+
+      sid ->
+        send(self(), {:load_logs, sid})
+        {:noreply, assign(socket, selected: sid, logs: :loading)}
+    end
   end
 
   @impl true
@@ -24,13 +31,22 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   @impl true
   def render(assigns) do
+    privacy? = assigns[:privacy] == true
+
+    assigns =
+      assign(assigns,
+        layout_snapshot: layout_snapshot(assigns[:snapshot], privacy?),
+        session_options: session_options(assigns[:snapshot], assigns[:selected], privacy?)
+      )
+
     ~H"""
     <Layouts.app
       flash={@flash}
       active={:logs}
       swarm={@swarm}
-      snapshot={@snapshot}
+      snapshot={@layout_snapshot}
       story={@story}
+      privacy={@privacy}
       inspect={@inspect}
       inspect_transcript={@inspect_transcript}
       inspect_activity={@inspect_activity}
@@ -48,11 +64,11 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
             <select name="session_id" class="select select-bordered select-sm font-mono">
               <option value="">select a session…</option>
               <option
-                :for={s <- sessions(@snapshot)}
-                value={s["session_id"]}
-                selected={@selected == s["session_id"]}
+                :for={opt <- @session_options}
+                value={opt.value}
+                selected={opt.selected}
               >
-                {s["session_id"]} ({s["agent"]})
+                {opt.label}
               </option>
             </select>
           </form>
@@ -63,7 +79,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
           </span>
         </div>
 
-        <.logs logs={@logs} selected={@selected} />
+        <.logs logs={@logs} selected={@selected} privacy={@privacy} />
       </div>
     </Layouts.app>
     """
@@ -71,6 +87,25 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   attr :logs, :any, required: true
   attr :selected, :any, default: nil
+  attr :privacy, :boolean, default: false
+
+  defp logs(%{privacy: true, logs: {:ok, %{"logs" => entries}}} = assigns)
+       when is_list(entries) do
+    assigns = assign(assigns, :line_count, length(entries))
+
+    ~H"""
+    <.panel title="Slot output">
+      <:meta>
+        <span class="font-mono">{line_count_label(@line_count)}</span>
+      </:meta>
+      <.empty_state
+        icon="hero-eye-slash"
+        msg="Raw slot output hidden in privacy mode."
+        hint={"#{line_count_label(@line_count)} suppressed."}
+      />
+    </.panel>
+    """
+  end
 
   defp logs(%{logs: {:ok, %{"logs" => [_ | _]}}} = assigns) do
     ~H"""
@@ -117,4 +152,45 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   defp sessions(nil), do: []
   defp sessions(snap), do: snap["sessions"] || []
+
+  defp session_options(snapshot, selected, false) do
+    for s <- sessions(snapshot) do
+      sid = s["session_id"]
+      %{value: sid, label: "#{sid} (#{s["agent"]})", selected: selected == sid}
+    end
+  end
+
+  defp session_options(snapshot, selected, true) do
+    snapshot
+    |> sessions()
+    |> Enum.with_index()
+    |> Enum.map(fn {s, i} ->
+      sid = s["session_id"]
+
+      %{
+        value: "session:#{i}",
+        label: "session #{i + 1} (#{s["agent"]})",
+        selected: selected == sid
+      }
+    end)
+  end
+
+  defp resolve_session_id(_socket, ""), do: nil
+
+  defp resolve_session_id(socket, "session:" <> index) do
+    with {i, ""} <- Integer.parse(index),
+         %{"session_id" => sid} <- Enum.at(sessions(socket.assigns[:snapshot]), i) do
+      sid
+    else
+      _ -> nil
+    end
+  end
+
+  defp resolve_session_id(_socket, sid), do: sid
+
+  defp line_count_label(1), do: "1 line"
+  defp line_count_label(n), do: "#{n} lines"
+
+  defp layout_snapshot(snapshot, false), do: snapshot
+  defp layout_snapshot(snapshot, true), do: PrivacyRedactor.mask_identity(snapshot)
 end
