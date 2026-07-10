@@ -7,12 +7,14 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    {:ok, assign(socket, page_id: id, page_title: "Extension", ext_sort: %{})}
+    {:ok, assign(socket, page_id: id, page_title: "Extension", ext_sort: %{}, ext_tab: %{})}
   end
 
   @impl true
   def handle_event("ext_sort", %{"sec" => sec, "key" => key}, socket) do
-    idx = String.to_integer(sec)
+    # Top-level sections key by integer position; tab-nested sections use the
+    # composite "<idx>/<tab>" string. Both are opaque map keys past this point.
+    idx = section_key(sec)
 
     next =
       case Map.get(socket.assigns.ext_sort, idx) do
@@ -27,6 +29,18 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
         else: Map.delete(socket.assigns.ext_sort, idx)
 
     {:noreply, assign(socket, ext_sort: sort)}
+  end
+
+  @impl true
+  def handle_event("ext_tab", %{"sec" => sec, "tab" => tab}, socket) do
+    {:noreply,
+     assign(socket,
+       ext_tab: Map.put(socket.assigns.ext_tab, section_key(sec), String.to_integer(tab))
+     )}
+  end
+
+  defp section_key(sec) do
+    if Regex.match?(~r/^\d+$/, sec), do: String.to_integer(sec), else: sec
   end
 
   @impl true
@@ -64,7 +78,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
       inspect_activity={@inspect_activity}
     >
       <%= if @page do %>
-        <ExtensionPages.page page={@page} sort={@ext_sort} row_targets={@row_targets} />
+        <ExtensionPages.page page={@page} sort={@ext_sort} tab={@ext_tab} row_targets={@row_targets} />
       <% else %>
         <div class="max-w-3xl">
           <.empty_state
