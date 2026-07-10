@@ -65,15 +65,21 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       <%= if @sections == [] do %>
         <.empty_state msg="No extension data yet." />
       <% else %>
-        <.section
-          :for={{section, idx} <- @sections}
-          section={section}
-          idx={idx}
-          sort={Map.get(@sort, idx)}
-          sort_map={@sort}
-          tab={@tab}
-          row_targets={@row_targets}
-        />
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div
+            :for={{section, idx} <- @sections}
+            class={span_class(section)}
+          >
+            <.section
+              section={section}
+              idx={idx}
+              sort={Map.get(@sort, idx)}
+              sort_map={@sort}
+              tab={@tab}
+              row_targets={@row_targets}
+            />
+          </div>
+        </div>
       <% end %>
     </div>
     """
@@ -300,22 +306,23 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
     ~H"""
     <div :if={@tabs != []} class="space-y-2">
-      <div class="flex items-center gap-3 flex-wrap">
-        <h2 :if={@title} class="text-sm opacity-60">{@title}</h2>
-        <div role="tablist" class="tabs tabs-boxed tabs-sm w-fit">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div class="flex items-center gap-3">
+          <h2 :if={@title} class="text-sm opacity-60">{@title}</h2>
+          <span :if={@meta} class="text-xs opacity-50 font-mono">{@meta}</span>
+        </div>
+        <div class="join">
           <button
             :for={{tab, i} <- @tabs}
             type="button"
-            role="tab"
             phx-click="ext_tab"
             phx-value-sec={@idx}
             phx-value-tab={i}
-            class={["tab", i == @active && "tab-active"]}
+            class={["btn btn-xs join-item", (i == @active && "btn-primary") || "btn-ghost"]}
           >
             {display(tab["label"])}
           </button>
         </div>
-        <span :if={@meta} class="text-xs opacity-50 font-mono">{@meta}</span>
       </div>
       <.section
         :if={@inner}
@@ -397,6 +404,11 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   end
 
   defp normalize_tabs(_), do: []
+
+  # Sections default to the full page width; "span" => "half" opts a section
+  # into one column of the two-column grid (summary blocks side by side).
+  defp span_class(%{"span" => "half"}), do: "ext-span-half lg:col-span-1"
+  defp span_class(_), do: "ext-span-full lg:col-span-2"
 
   defp metric_items(items) when is_list(items) do
     items
