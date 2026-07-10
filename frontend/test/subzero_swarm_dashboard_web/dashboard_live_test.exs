@@ -737,9 +737,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
     html = render(view)
 
-    # same control family as the Usage range selector: joined btn-xs buttons,
-    # active = btn-primary
-    assert html =~ "join-item"
+    # same control family AND placement as the Usage range selector: joined
+    # btn-xs buttons hoisted into the page header (top right), exactly one group
+    assert html =~ "ext-page-selector"
+    assert length(String.split(html, "join-item")) == 3
     assert html =~ "btn-xs"
     assert view |> element(~s(button[phx-value-tab="0"].btn-primary)) |> has_element?()
     refute view |> element(~s(button[phx-value-tab="1"].btn-primary)) |> has_element?()
