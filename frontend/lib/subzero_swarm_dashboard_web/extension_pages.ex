@@ -50,16 +50,37 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   attr :row_targets, :map, default: %{}
 
   def page(assigns) do
+    sections = assigns.page |> sections() |> Enum.with_index()
+
+    # A page with exactly ONE tabs section gets that selector hoisted into the
+    # page header — same top-right placement as the Usage range control. Pages
+    # with several tabs sections keep each control inline next to its section.
+    hoisted =
+      case Enum.filter(sections, fn {sec, _} -> sec["type"] == "tabs" end) do
+        [{sec, idx}] -> {idx, normalize_tabs(sec["tabs"])}
+        _ -> nil
+      end
+
     assigns =
       assigns
-      |> assign(:sections, assigns.page |> sections() |> Enum.with_index())
+      |> assign(:sections, sections)
+      |> assign(:hoisted, hoisted)
       |> assign(:dom_id, "extension-page-" <> assigns.page["id"])
 
     ~H"""
     <div id={@dom_id} class="space-y-5 max-w-6xl">
       <div class="flex items-center justify-between gap-4 flex-wrap">
         <h1 class="text-2xl">{@page["label"]}</h1>
-        <span :if={@page["meta"]} class="text-xs opacity-50 font-mono">{@page["meta"]}</span>
+        <div class="flex items-center gap-4">
+          <span :if={@page["meta"]} class="text-xs opacity-50 font-mono">{@page["meta"]}</span>
+          <.tab_control
+            :if={@hoisted}
+            idx={elem(@hoisted, 0)}
+            tabs={elem(@hoisted, 1)}
+            active={tab_active(@tab, elem(@hoisted, 0), elem(@hoisted, 1))}
+            class="ext-page-selector"
+          />
+        </div>
       </div>
 
       <%= if @sections == [] do %>
@@ -76,6 +97,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
               sort={Map.get(@sort, idx)}
               sort_map={@sort}
               tab={@tab}
+              hoisted_idx={@hoisted && elem(@hoisted, 0)}
               row_targets={@row_targets}
             />
           </div>
@@ -90,6 +112,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   attr :sort, :any, default: nil
   attr :sort_map, :map, default: %{}
   attr :tab, :map, default: %{}
+  attr :hoisted_idx, :any, default: nil
   attr :row_targets, :map, default: %{}
 
   defp section(%{section: %{"type" => "metrics"} = section} = assigns) do
@@ -285,44 +308,28 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   # and row->inspector targets stay scoped to their own tab.
   defp section(%{section: %{"type" => "tabs"} = section} = assigns) do
     tabs = normalize_tabs(section["tabs"])
-
-    active =
-      case Map.get(assigns.tab, assigns.idx, 0) do
-        n when is_integer(n) and n >= 0 and n < length(tabs) -> n
-        _ -> 0
-      end
-
+    active = tab_active(assigns.tab, assigns.idx, tabs)
     inner_idx = "#{assigns.idx}/#{active}"
 
     assigns =
       assigns
       |> assign(:title, section["title"])
       |> assign(:meta, display(section["meta"]))
-      |> assign(:tabs, Enum.with_index(tabs))
+      |> assign(:tabs, tabs)
       |> assign(:active, active)
-      |> assign(:inner, Enum.at(tabs, active)["section"])
+      |> assign(:inline_control?, assigns.hoisted_idx != assigns.idx)
+      |> assign(:inner, tabs != [] && Enum.at(tabs, active)["section"])
       |> assign(:inner_idx, inner_idx)
       |> assign(:inner_sort, Map.get(assigns.sort_map, inner_idx))
 
     ~H"""
     <div :if={@tabs != []} class="space-y-2">
-      <div class="flex items-center justify-between gap-4 flex-wrap">
+      <div :if={@title || @meta || @inline_control?} class="flex items-center justify-between gap-4 flex-wrap">
         <div class="flex items-center gap-3">
           <h2 :if={@title} class="text-sm opacity-60">{@title}</h2>
           <span :if={@meta} class="text-xs opacity-50 font-mono">{@meta}</span>
         </div>
-        <div class="join">
-          <button
-            :for={{tab, i} <- @tabs}
-            type="button"
-            phx-click="ext_tab"
-            phx-value-sec={@idx}
-            phx-value-tab={i}
-            class={["btn btn-xs join-item", (i == @active && "btn-primary") || "btn-ghost"]}
-          >
-            {display(tab["label"])}
-          </button>
-        </div>
+        <.tab_control :if={@inline_control?} idx={@idx} tabs={@tabs} active={@active} class={nil} />
       </div>
       <.section
         :if={@inner}
@@ -335,6 +342,38 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       />
     </div>
     """
+  end
+
+  attr :idx, :any, required: true
+  attr :tabs, :list, required: true
+  attr :active, :integer, required: true
+  attr :class, :any, default: nil
+
+  # The one selector control — the Usage page's range-button family.
+  defp tab_control(assigns) do
+    assigns = assign(assigns, :indexed, Enum.with_index(assigns.tabs))
+
+    ~H"""
+    <div class={["join", @class]}>
+      <button
+        :for={{tab, i} <- @indexed}
+        type="button"
+        phx-click="ext_tab"
+        phx-value-sec={@idx}
+        phx-value-tab={i}
+        class={["btn btn-xs join-item", (i == @active && "btn-primary") || "btn-ghost"]}
+      >
+        {display(tab["label"])}
+      </button>
+    </div>
+    """
+  end
+
+  defp tab_active(tab_state, idx, tabs) do
+    case Map.get(tab_state, idx, 0) do
+      n when is_integer(n) and n >= 0 and n < length(tabs) -> n
+      _ -> 0
+    end
   end
 
   defp section(%{section: %{"type" => "text"} = section} = assigns) do

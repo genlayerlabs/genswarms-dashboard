@@ -4,7 +4,7 @@ defmodule SubzeroSwarmDashboard.MixProject do
   def project do
     [
       app: :subzero_swarm_dashboard,
-      version: "0.3.6",
+      version: "0.3.7",
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
