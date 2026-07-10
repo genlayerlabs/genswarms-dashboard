@@ -27,6 +27,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   @max_metric_items 8
   @max_columns 12
   @max_rows 100
+  @max_tabs 6
 
   def pages(snapshot) do
     snapshot
@@ -45,6 +46,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
   attr :page, :map, required: true
   attr :sort, :map, default: %{}
+  attr :tab, :map, default: %{}
   attr :row_targets, :map, default: %{}
 
   def page(assigns) do
@@ -68,6 +70,8 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
           section={section}
           idx={idx}
           sort={Map.get(@sort, idx)}
+          sort_map={@sort}
+          tab={@tab}
           row_targets={@row_targets}
         />
       <% end %>
@@ -76,8 +80,10 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   end
 
   attr :section, :map, required: true
-  attr :idx, :integer, default: 0
+  attr :idx, :any, default: 0
   attr :sort, :any, default: nil
+  attr :sort_map, :map, default: %{}
+  attr :tab, :map, default: %{}
   attr :row_targets, :map, default: %{}
 
   defp section(%{section: %{"type" => "metrics"} = section} = assigns) do
@@ -214,6 +220,31 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
             {Map.put(sec, "rows", rows2), acc2}
 
+          %{"type" => "tabs", "tabs" => tabs} when is_list(tabs) ->
+            {tabs2, acc2} =
+              tabs
+              |> Enum.with_index()
+              |> Enum.map_reduce(acc, fn {tab, tidx}, a ->
+                case tab do
+                  %{"section" => %{"type" => "table", "rows" => rows} = inner}
+                  when is_list(rows) ->
+                    {rows2, a2} =
+                      rows
+                      |> Enum.with_index()
+                      |> Enum.map_reduce(a, fn {row, ridx}, aa ->
+                        aa = put_row_target(aa, {"#{sidx}/#{tidx}", ridx}, row, privacy?, lookup)
+                        {strip_row_meta(row), aa}
+                      end)
+
+                    {Map.put(tab, "section", Map.put(inner, "rows", rows2)), a2}
+
+                  _ ->
+                    {tab, a}
+                end
+              end)
+
+            {Map.put(sec, "tabs", tabs2), acc2}
+
           _ ->
             {sec, acc}
         end
@@ -241,6 +272,63 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   end
 
   defp strip_row_meta(row), do: row
+
+  # A segmented control over nested sections: each tab carries ONE inner
+  # metrics/table/text section; only the active tab's section is in the DOM.
+  # Inner sections get the composite index "<idx>/<tab>" so their sort state
+  # and row->inspector targets stay scoped to their own tab.
+  defp section(%{section: %{"type" => "tabs"} = section} = assigns) do
+    tabs = normalize_tabs(section["tabs"])
+
+    active =
+      case Map.get(assigns.tab, assigns.idx, 0) do
+        n when is_integer(n) and n >= 0 and n < length(tabs) -> n
+        _ -> 0
+      end
+
+    inner_idx = "#{assigns.idx}/#{active}"
+
+    assigns =
+      assigns
+      |> assign(:title, section["title"])
+      |> assign(:meta, display(section["meta"]))
+      |> assign(:tabs, Enum.with_index(tabs))
+      |> assign(:active, active)
+      |> assign(:inner, Enum.at(tabs, active)["section"])
+      |> assign(:inner_idx, inner_idx)
+      |> assign(:inner_sort, Map.get(assigns.sort_map, inner_idx))
+
+    ~H"""
+    <div :if={@tabs != []} class="space-y-2">
+      <div class="flex items-center gap-3 flex-wrap">
+        <h2 :if={@title} class="text-sm opacity-60">{@title}</h2>
+        <div role="tablist" class="tabs tabs-boxed tabs-sm w-fit">
+          <button
+            :for={{tab, i} <- @tabs}
+            type="button"
+            role="tab"
+            phx-click="ext_tab"
+            phx-value-sec={@idx}
+            phx-value-tab={i}
+            class={["tab", i == @active && "tab-active"]}
+          >
+            {display(tab["label"])}
+          </button>
+        </div>
+        <span :if={@meta} class="text-xs opacity-50 font-mono">{@meta}</span>
+      </div>
+      <.section
+        :if={@inner}
+        section={@inner}
+        idx={@inner_idx}
+        sort={@inner_sort}
+        sort_map={@sort_map}
+        tab={@tab}
+        row_targets={@row_targets}
+      />
+    </div>
+    """
+  end
 
   defp section(%{section: %{"type" => "text"} = section} = assigns) do
     assigns =
@@ -301,6 +389,14 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     do: sections |> Stream.filter(&is_map/1) |> Enum.take(@max_sections)
 
   defp sections(_), do: []
+
+  defp normalize_tabs(tabs) when is_list(tabs) do
+    tabs
+    |> Stream.filter(&(is_map(&1) and is_map(&1["section"])))
+    |> Enum.take(@max_tabs)
+  end
+
+  defp normalize_tabs(_), do: []
 
   defp metric_items(items) when is_list(items) do
     items

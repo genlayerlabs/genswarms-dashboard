@@ -565,6 +565,153 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Conversation"
   end
 
+  test "tabs section renders the active tab only and switches on click", %{conn: conn} do
+    tab_table = fn suffix ->
+      %{
+        "type" => "table",
+        "title" => "Users " <> suffix,
+        "columns" => [%{"key" => "user", "label" => "user"}],
+        "rows" => [%{"user" => "row-" <> suffix}]
+      }
+    end
+
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "tabbed",
+          "label" => "Tabbed",
+          "sections" => [
+            %{
+              "type" => "tabs",
+              "title" => "Users by period",
+              "tabs" => [
+                %{"label" => "Today", "section" => tab_table.("today")},
+                %{"label" => "All-time", "section" => tab_table.("alltime")}
+              ]
+            }
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/tabbed")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    # first tab is active by default; the other tab's rows are NOT in the DOM
+    assert html =~ "Today"
+    assert html =~ "row-today"
+    refute html =~ "row-alltime"
+
+    html = view |> element(~s(button[phx-value-tab="1"][phx-value-sec="0"])) |> render_click()
+    assert html =~ "row-alltime"
+    refute html =~ "row-today"
+  end
+
+  test "sorting inside a tab table is scoped to that tab", %{conn: conn} do
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "tab-sort",
+          "label" => "TabSort",
+          "sections" => [
+            %{
+              "type" => "tabs",
+              "tabs" => [
+                %{"label" => "Empty", "section" => %{"type" => "text", "body" => "nothing"}},
+                %{
+                  "label" => "Money",
+                  "section" => %{
+                    "type" => "table",
+                    "title" => "Money",
+                    "columns" => [
+                      %{"key" => "name", "label" => "name"},
+                      %{"key" => "spent", "label" => "spent"}
+                    ],
+                    "rows" => [
+                      %{"name" => "mid", "spent" => "$2.00"},
+                      %{"name" => "low", "spent" => "$0.50"},
+                      %{"name" => "high", "spent" => "$10.00"}
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/tab-sort")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    render(view)
+
+    view |> element(~s(button[phx-value-tab="1"][phx-value-sec="0"])) |> render_click()
+
+    html = view |> element(~s(button[phx-value-sec="0/1"][phx-value-key="spent"])) |> render_click()
+    assert :binary.match(html, "low") |> elem(0) < :binary.match(html, "mid") |> elem(0)
+    assert :binary.match(html, "mid") |> elem(0) < :binary.match(html, "high") |> elem(0)
+    assert html =~ "\u2191"
+  end
+
+  test "a _cid row inside a tab table opens the shared inspector", %{conn: conn} do
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "tab-click",
+          "label" => "TabClick",
+          "sections" => [
+            %{
+              "type" => "tabs",
+              "tabs" => [
+                %{
+                  "label" => "Users",
+                  "section" => %{
+                    "type" => "table",
+                    "title" => "Users",
+                    "columns" => [%{"key" => "user", "label" => "user"}],
+                    "rows" => [%{"user" => "@alberto", "_cid" => "tg:1:0"}]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/tab-click")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    refute html =~ "_cid"
+    html = view |> element(~s(tr[phx-value-session_id="tg:1:0"])) |> render_click()
+    assert html =~ "Conversation"
+  end
+
+  test "tabs are capped and malformed tabs are ignored", %{conn: conn} do
+    tabs =
+      Enum.map(1..8, fn n ->
+        %{
+          "label" => "T#{n}",
+          "section" => %{"type" => "text", "title" => "S#{n}", "body" => "b"}
+        }
+      end) ++ ["not-a-map"]
+
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "tab-cap",
+          "label" => "TabCap",
+          "sections" => [%{"type" => "tabs", "tabs" => tabs}]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/tab-cap")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    assert html =~ "T6"
+    refute html =~ "T7"
+  end
+
   describe "ExtensionPages.extract_row_targets/3 (privacy seam)" do
     test "privacy resolves targets to opaque tokens and strips the raw cid" do
       page = %{
