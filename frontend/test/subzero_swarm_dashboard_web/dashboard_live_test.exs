@@ -712,6 +712,74 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     refute html =~ "T7"
   end
 
+  test "tab selector uses the Usage-page join/btn style, right of the section title", %{
+    conn: conn
+  } do
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "tab-style",
+          "label" => "TabStyle",
+          "sections" => [
+            %{
+              "type" => "tabs",
+              "title" => "Users",
+              "tabs" => [
+                %{"label" => "Today", "section" => %{"type" => "text", "body" => "a"}},
+                %{"label" => "All-time", "section" => %{"type" => "text", "body" => "b"}}
+              ]
+            }
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/tab-style")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    # same control family as the Usage range selector: joined btn-xs buttons,
+    # active = btn-primary
+    assert html =~ "join-item"
+    assert html =~ "btn-xs"
+    assert view |> element(~s(button[phx-value-tab="0"].btn-primary)) |> has_element?()
+    refute view |> element(~s(button[phx-value-tab="1"].btn-primary)) |> has_element?()
+
+    view |> element(~s(button[phx-value-tab="1"][phx-value-sec="0"])) |> render_click()
+    assert view |> element(~s(button[phx-value-tab="1"].btn-primary)) |> has_element?()
+  end
+
+  test "span=half sections sit side by side in the section grid", %{conn: conn} do
+    half = fn title ->
+      %{
+        "type" => "metrics",
+        "title" => title,
+        "span" => "half",
+        "items" => [%{"label" => "X", "value" => 1}]
+      }
+    end
+
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "half-grid",
+          "label" => "HalfGrid",
+          "sections" => [
+            half.("Today"),
+            half.("All-time"),
+            %{"type" => "text", "title" => "Full", "body" => "spans both columns"}
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/half-grid")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    html = render(view)
+
+    # two half sections + one default full section
+    assert length(String.split(html, "ext-span-half")) == 3
+    assert html =~ "ext-span-full"
+  end
+
   describe "ExtensionPages.extract_row_targets/3 (privacy seam)" do
     test "privacy resolves targets to opaque tokens and strips the raw cid" do
       page = %{
