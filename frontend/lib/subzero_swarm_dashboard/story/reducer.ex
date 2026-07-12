@@ -266,6 +266,21 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     issue_row(state, ev, %{text: "⚠ reply dropped (no target)"})
   end
 
+  # a marked push (campaign/operator send) was attempted and failed non-403 —
+  # the mark is stamped, nothing re-drains, so this row is the only story
+  # trace; the campaign names which send died (wingston F1, 2026-07-11)
+  defp fold("push_failed", state, ev) do
+    state = bump(state, :failures)
+
+    text =
+      case ev["campaign"] do
+        c when is_binary(c) and c != "" -> "⚠ push failed (#{c})"
+        _ -> "⚠ push failed"
+      end
+
+    issue_row(state, ev, %{cid: ev["cid"], text: text})
+  end
+
   # spam-window suppress (DeliveryEffects hook, telegram pkg ≥ 0.3.1): the bot
   # chose silence — informational row, not an issue (suppression is the guard
   # working, not a failure)

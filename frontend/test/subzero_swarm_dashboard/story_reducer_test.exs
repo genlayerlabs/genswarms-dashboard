@@ -341,6 +341,18 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert [%{kind: "reply_failed"}, %{kind: "reply_sent"}] = state.issues
     end
 
+    test "push_failed is a failure issue naming the campaign; campaignless still folds" do
+      state =
+        fold([
+          ev("push_failed", 1, 100.0, %{"cid" => @cid, "campaign" => "reach:abc123", "error" => "429"}),
+          ev("push_failed", 2, 101.0, %{"cid" => @cid})
+        ])
+
+      assert state.counters.failures == 2
+      assert [%{kind: "push_failed"}, %{kind: "push_failed", text: text}] = state.issues
+      assert text =~ "reach:abc123"
+    end
+
     test "inbox_dropped idles the slot and reports the lost count" do
       state =
         fold([

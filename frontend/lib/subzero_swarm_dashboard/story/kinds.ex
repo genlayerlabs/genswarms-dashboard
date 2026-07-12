@@ -57,6 +57,15 @@ defmodule SubzeroSwarmDashboard.Story.Kinds do
     {"progress_sent", %{sample: %{"cid" => "tg:1:0"}, story: true, canvas: true}},
     {"reply_sent", %{sample: %{"cid" => "tg:1:0", "ok" => true}, story: true, canvas: true}},
     {"reply_failed", %{sample: %{"from" => "wingston_agent_0"}, story: true, canvas: true}},
+    # marked push (campaign/operator send) attempted and failed non-403 — the
+    # mark is stamped so nothing re-drains; this row is the only story trace
+    # (wingston F1, 2026-07-11). campaign/error are optional on the wire.
+    {"push_failed",
+     %{
+       sample: %{"cid" => "tg:1:0", "campaign" => "reach:abc123", "error" => "429"},
+       story: true,
+       canvas: true
+     }},
     {"reply_suppressed", %{sample: %{"cid" => "tg:1:0"}, story: true, canvas: true}},
     {"llm_error", %{sample: %{"cid" => "tg:1:0", "class" => "api"}, story: true, canvas: true}},
     {"llm_proxy_block",

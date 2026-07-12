@@ -441,6 +441,14 @@ export const Pipeline = {
       case "reply_failed":
         return [{flash: "sender"}]
 
+      // marked push (campaign/operator) attempted and failed non-403: the
+      // send left for telegram and died — a failed sent edge + sender flash
+      case "push_failed":
+        return [
+          {a: "sender", b: "telegram", kind: "sent", v: "failed"},
+          {flash: "sender"},
+        ]
+
       case "reply_suppressed": {
         // the spam-window guard chose silence — a 🤫 float, not a flash:
         // suppression is the guard working, not a failure

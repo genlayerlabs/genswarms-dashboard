@@ -49,6 +49,7 @@ Event registry v1 (authoritative copy: `Wingston.EventFeed` moduledoc):
 | `progress_sent` | cid                 | interim status posted to the user              |
 | `reply_sent`    | cid, ok, threaded   | THE reply delivered (ok: true/false)           |
 | `reply_failed`  | from                | reply dropped (unresolvable target)            |
+| `push_failed`   | cid, campaign?, error? | marked push (campaign/operator) attempted, failed non-403 |
 | `proactive_sent`| cid                 | proactive/push message sent                    |
 | `compaction`    | cid                 | agent context compacting (☕ note sent)        |
 | `inbox_dropped` | agent, count        | backend died with queued tasks stranded        |
@@ -234,6 +235,7 @@ Kind → fold (lifecycle vocabulary identical to the prototype):
 | `reply_sent` ok | `✓ @user replied in 9.0s`          | close episode (exact), agent queue-1 or idle |
 | `reply_sent` !ok| `⚠ delivery failed`                | issue |
 | `reply_failed`  | `⚠ reply dropped (no target)`      | issue |
+| `push_failed`   | `⚠ push failed (reach:abc123)`     | issue |
 | `inbox_full`    | `⚠ rejected — inbox full`          | issue |
 | `inbox_dropped` | `⚠ backend died, N tasks lost`     | issue, slot idle |
 | `teardown`      | `✖ agent_N torn down`              | slot idle |
@@ -242,7 +244,7 @@ Kind → fold (lifecycle vocabulary identical to the prototype):
 | unknown         | generic `· kind …` row             | — |
 
 **Issues** (one classifier, used by the Overview feed, Events "issues only" filter,
-and Sessions badges): `reply_failed`, `reply_sent ok:false`, `inbox_full`,
+and Sessions badges): `reply_failed`, `push_failed`, `reply_sent ok:false`, `inbox_full`,
 `inbox_dropped`, `browse_done` with a failure verdict, `feed_gap`, and the derived
 **stalled episode** (open with no close past `stall_after_ms`, default 3 min).
 
