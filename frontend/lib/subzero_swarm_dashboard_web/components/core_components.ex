@@ -28,7 +28,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   """
   use Phoenix.Component
 
-  alias SubzeroSwarmDashboard.PrivacyRedactor
+  alias SubzeroSwarmDashboard.{PrivacyRedactor, SessionEvidence}
   alias Phoenix.LiveView.JS
 
   @doc """
@@ -873,12 +873,18 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   read API returns, so the session page, the inspector, and the Logs page all share it.
   """
   attr :activity, :any, required: true
+  attr :rows, :any, default: nil
   attr :privacy, :boolean, default: false
 
   def activity_timeline(%{activity: {:ok, %{"logs" => [_ | _] = entries} = body}} = assigns) do
+    rows =
+      if is_list(assigns.rows),
+        do: assigns.rows,
+        else: entries |> classify_activity_rows() |> redact_activity_rows(assigns.privacy)
+
     assigns =
       assign(assigns,
-        rows: entries |> Enum.map(&classify_activity/1) |> redact_activity_rows(assigns.privacy),
+        rows: rows,
         source: body["source"]
       )
 
@@ -941,6 +947,60 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     """
   end
 
+  defp activity_row(%{row: %{kind: :compaction}} = assigns) do
+    ~H"""
+    <div class="flex flex-wrap items-baseline gap-2 text-xs">
+      <time class="font-mono opacity-60">{@row.ts}</time>
+      <span class={["badge badge-xs", compaction_badge_class(@row.event)]}>
+        {compaction_event_label(@row.event)}
+      </span>
+      <span class="opacity-70">structured compaction event</span>
+      <span class="font-mono opacity-40">source record {@row.source_record_index}</span>
+      <span :if={@row.event == "applied"} class="opacity-60">
+        {@row.before_messages}→{@row.after_messages} messages · {@row.before_bytes}→{@row.after_bytes} B
+      </span>
+      <code :if={@row[:reason]} class="opacity-60">{@row.reason}</code>
+    </div>
+    """
+  end
+
+  defp activity_row(%{row: %{kind: :compaction_summary, matched_applied: true}} = assigns) do
+    ~H"""
+    <details class="group">
+      <summary class="flex flex-wrap items-baseline gap-2 cursor-pointer list-none text-xs">
+        <time class="font-mono opacity-60">{@row.ts}</time>
+        <span class="badge badge-neutral badge-outline badge-xs">
+          applied memory · parser matched
+        </span>
+        <span class="font-mono opacity-40">
+          source record {@row.applied_source_record_index}
+        </span>
+        <span class="opacity-70">
+          {if @row[:privacy_masked],
+            do: "privacy-masked compaction result",
+            else: "exact sensitive compaction result"}
+        </span>
+        <span class="opacity-40 group-open:rotate-90 transition-transform">›</span>
+      </summary>
+      <pre class="mt-1 text-xs whitespace-pre-wrap break-words bg-base-300/40 rounded p-2 overflow-x-auto">{@row.content}</pre>
+    </details>
+    """
+  end
+
+  defp activity_row(%{row: %{kind: :compaction_summary}} = assigns) do
+    ~H"""
+    <details class="group">
+      <summary class="flex flex-wrap items-baseline gap-2 cursor-pointer list-none text-xs">
+        <time class="font-mono opacity-60">{@row.ts}</time>
+        <span class="badge badge-warning badge-outline badge-xs">summary · unmatched</span>
+        <span class="opacity-70">parser did not match this to applied evidence</span>
+        <span class="opacity-40 group-open:rotate-90 transition-transform">›</span>
+      </summary>
+      <pre class="mt-1 text-xs whitespace-pre-wrap break-words bg-base-300/40 rounded p-2 overflow-x-auto">{@row.content}</pre>
+    </details>
+    """
+  end
+
   # An assistant turn that is a tool-call emitted AS TEXT — never executed, so the
   # reply was never sent. This is the signal that was previously masked.
   defp activity_row(%{row: %{kind: :tool_intent}} = assigns) do
@@ -985,15 +1045,62 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     - `:sent` — an outbound reply that was actually executed (delivered);
     - `:tool_intent` — an assistant turn that is a tool call emitted AS TEXT and
       therefore NEVER executed/delivered (the previously-masked failure signal);
+    - `:compaction` — a validated and sanitized structured compaction event;
+    - `:compaction_summary` — a structured sensitive summary record carrying the
+      parser's authoritative applied-match decision;
     - `:noise` — tool plumbing, results, inter-object hops.
   plus the fields the row renderer needs.
   """
-  def classify_activity(e) do
+  def classify_activity(e),
+    do: classify_activity(e, SessionEvidence.classify_compaction_entry(e))
+
+  defp classify_activity(e, %{kind: :structured_event} = event) do
+    event
+    |> Map.take([
+      :event,
+      :source_record_index,
+      :integrity,
+      :before_messages,
+      :after_messages,
+      :before_bytes,
+      :after_bytes,
+      :reason
+    ])
+    |> Map.merge(%{kind: :compaction, ts: e["timestamp"]})
+  end
+
+  defp classify_activity(e, %{kind: :structured_summary} = summary) do
+    %{
+      kind: :compaction_summary,
+      ts: e["timestamp"],
+      matched_applied: summary.matched_applied,
+      applied_source_record_index: summary[:applied_source_record_index],
+      content: to_string(e["content"] || "")
+    }
+  end
+
+  defp classify_activity(e, :not_compaction) do
     role = to_string(e["role"] || "")
     content = to_string(e["content"] || "")
     ts = e["timestamp"]
     trimmed = String.trim_leading(content)
 
+    classify_non_compaction(role, content, ts, trimmed)
+  end
+
+  @doc false
+  def activity_rows({:ok, %{"logs" => entries}}, privacy?) when is_list(entries),
+    do: entries |> classify_activity_rows() |> redact_activity_rows(privacy?)
+
+  def activity_rows(_activity, _privacy?), do: nil
+
+  defp classify_activity_rows(entries) do
+    Enum.map(entries, fn entry ->
+      classify_activity(entry, SessionEvidence.classify_compaction_entry(entry))
+    end)
+  end
+
+  defp classify_non_compaction(role, content, ts, trimmed) do
     cond do
       # The orchestrator relays the human's transport messages — that IS the user
       # (whatever the transport: Telegram, Discord, a web chat…).
@@ -1033,6 +1140,12 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
         noise_row(role, content, ts)
     end
   end
+
+  defp compaction_badge_class("applied"), do: "badge-neutral badge-outline"
+  defp compaction_badge_class("skipped"), do: "badge-ghost"
+  defp compaction_badge_class("rejected"), do: "badge-warning"
+  defp compaction_badge_class("failed"), do: "badge-error badge-outline"
+  defp compaction_event_label(event), do: event
 
   # An assistant message that is really a tool call rendered as text: explicit
   # <tool_call> wrapper, or a bare JSON object carrying cmd/command/action.
@@ -1093,6 +1206,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp redact_activity_rows(rows, true) do
     Enum.map(rows, fn row ->
       row
+      |> Map.put(:privacy_masked, true)
       |> redact_activity_key(:text)
       |> redact_activity_key(:preview)
       |> redact_activity_key(:content)
@@ -1110,6 +1224,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   defp activity_dot(:assistant), do: "bg-secondary"
   defp activity_dot(:sent), do: "bg-success"
   defp activity_dot(:tool_intent), do: "bg-warning"
+  defp activity_dot(:compaction), do: "bg-info"
+  defp activity_dot(:compaction_summary), do: "bg-neutral"
   defp activity_dot(_), do: "bg-base-content/20"
 
   # ── identity / formatting helpers ───────────────────────────────────────────
@@ -1148,7 +1264,10 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     do: :crypto.hash(:sha256, seed) |> Base.encode16(case: :lower)
 
   defp assign_avatar(assigns) do
-    raw_seed = avatar_seed(assigns.user, assigns.session_id, assigns[:avatar_label] || assigns.label) || "x"
+    raw_seed =
+      avatar_seed(assigns.user, assigns.session_id, assigns[:avatar_label] || assigns.label) ||
+        "x"
+
     display_seed = avatar_seed_for_display(raw_seed, assigns.privacy == true)
     size_px = avatar_size_px(assigns.size)
 

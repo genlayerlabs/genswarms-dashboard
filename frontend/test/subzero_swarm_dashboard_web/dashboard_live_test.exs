@@ -8,6 +8,13 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
   setup :set_mox_global
 
+  @parser_source %{
+    "format" => "subzeroclaw.jsonl.v2",
+    "parser" => "genswarms.subzeroclaw_log.v3",
+    "scope" => "log_file_snapshot",
+    "integrity" => "structured_v2"
+  }
+
   @snap %{
     "swarm" => "wingston",
     "dashboard_title" => "Wingston",
@@ -309,7 +316,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
        }}
     end)
 
-    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0?tab=activity")
     # activity is behind the transcript gate — reveal explicitly (like the
     # sibling tests) instead of depending on ambient gate state, which made
     # this test order-dependent across seeds
@@ -332,10 +339,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
        }}
     end)
 
-    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0?tab=context")
     html = render(view)
 
-    assert html =~ "System prompt · skills"
+    assert html =~ "Current skill files"
     assert html =~ "browse.md"
     assert html =~ "Render pages."
     # leased slot ⇒ no pool-fallback note
@@ -351,22 +358,22 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
        }}
     end)
 
-    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0?tab=context")
     html = render(view)
 
-    assert html =~ "System prompt · skills"
+    assert html =~ "Current skill files"
     assert html =~ "Render pages."
-    assert html =~ "isn&#39;t leased to a slot right now"
+    assert html =~ "not currently leased"
   end
 
   test "session detail says skills are unavailable when no live agent exists at all", %{
     conn: conn
   } do
     # default session_skills stub is source: unavailable
-    {:ok, view, _} = live(conn, "/sessions/tg:1:0")
+    {:ok, view, _} = live(conn, "/sessions/tg:1:0?tab=context")
     html = render(view)
 
-    assert html =~ "System prompt · skills"
+    assert html =~ "Current skill files"
     assert html =~ "Unavailable (no live agent"
   end
 
@@ -646,7 +653,9 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
     view |> element(~s(button[phx-value-tab="1"][phx-value-sec="0"])) |> render_click()
 
-    html = view |> element(~s(button[phx-value-sec="0/1"][phx-value-key="spent"])) |> render_click()
+    html =
+      view |> element(~s(button[phx-value-sec="0/1"][phx-value-key="spent"])) |> render_click()
+
     assert :binary.match(html, "low") |> elem(0) < :binary.match(html, "mid") |> elem(0)
     assert :binary.match(html, "mid") |> elem(0) < :binary.match(html, "high") |> elem(0)
     assert html =~ "\u2191"
@@ -706,10 +715,14 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
     {:ok, view, _} = live(conn, "/extensions/tab-cap")
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
-    html = render(view)
 
-    assert html =~ "T6"
-    refute html =~ "T7"
+    assert has_element?(
+             view,
+             ~s(button[phx-click="ext_tab"][phx-value-tab="5"]),
+             "T6"
+           )
+
+    refute has_element?(view, ~s(button[phx-click="ext_tab"]), "T7")
   end
 
   test "tab selector uses the Usage-page join/btn style, right of the section title", %{
@@ -788,7 +801,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
         "sections" => [
           %{
             "type" => "table",
-            "rows" => [%{"user" => "x", "_cid" => "tg:9:0"}, %{"user" => "y", "_cid" => "tg:unknown:0"}]
+            "rows" => [
+              %{"user" => "x", "_cid" => "tg:9:0"},
+              %{"user" => "y", "_cid" => "tg:unknown:0"}
+            ]
           }
         ]
       }
@@ -807,7 +823,8 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
         "sections" => [%{"type" => "table", "rows" => [%{"user" => "x", "_cid" => "tg:9:0"}]}]
       }
 
-      assert {_clean, %{{0, 0} => "tg:9:0"}} = ExtensionPages.extract_row_targets(page, false, %{})
+      assert {_clean, %{{0, 0} => "tg:9:0"}} =
+               ExtensionPages.extract_row_targets(page, false, %{})
     end
   end
 
@@ -963,6 +980,99 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
                })
     end
 
+    test "exact lean event rows expose only outcome metadata" do
+      applied =
+        lean_event("applied", 4, %{
+          "before_messages" => 10,
+          "after_messages" => 4,
+          "before_bytes" => 8_000,
+          "after_bytes" => 3_000
+        })
+        |> Map.put("content", "CANARY-RAW")
+
+      assert CoreComponents.classify_activity(applied) == %{
+               kind: :compaction,
+               ts: "display-time",
+               event: "applied",
+               source_record_index: 4,
+               integrity: :structured_v2,
+               before_messages: 10,
+               after_messages: 4,
+               before_bytes: 8_000,
+               after_bytes: 3_000
+             }
+
+      for event <- ~w(skipped rejected failed) do
+        reason = lean_reason(event)
+
+        assert %{
+                 kind: :compaction,
+                 event: ^event,
+                 reason: ^reason,
+                 source_record_index: 5
+               } = CoreComponents.classify_activity(lean_event(event, 5))
+      end
+
+      refute inspect(CoreComponents.classify_activity(applied)) =~ "CANARY"
+    end
+
+    test "future and old event payloads remain ordinary noise, never outcome rows" do
+      for event <- ~w(requested timed_out cancelled future) do
+        assert %{kind: :noise} = CoreComponents.classify_activity(lean_event(event, 4))
+      end
+
+      old =
+        lean_event("applied", 4, %{
+          "before_messages" => 10,
+          "after_messages" => 4,
+          "before_bytes" => 8_000,
+          "after_bytes" => 3_000,
+          "operation_id" => "old"
+        })
+
+      assert %{kind: :noise} = CoreComponents.classify_activity(old)
+    end
+
+    test "summary rows use only the parser-provided matched outcome" do
+      unmatched = lean_summary(false, 5)
+      matched = lean_summary(true, 5)
+
+      assert %{
+               kind: :compaction_summary,
+               matched_applied: false,
+               applied_source_record_index: nil,
+               content: "exact sensitive summary"
+             } = CoreComponents.classify_activity(unmatched)
+
+      assert %{
+               kind: :compaction_summary,
+               matched_applied: true,
+               applied_source_record_index: 4
+             } = CoreComponents.classify_activity(matched)
+
+      activity = {:ok, %{"source" => "slot", "logs" => [unmatched, matched]}}
+
+      assert [
+               %{kind: :compaction_summary, matched_applied: false},
+               %{kind: :compaction_summary, matched_applied: true}
+             ] = CoreComponents.activity_rows(activity, false)
+    end
+
+    test "legacy markers are noise rather than compaction evidence" do
+      assert %{kind: :noise} =
+               CoreComponents.classify_activity(%{
+                 "role" => "sys",
+                 "content" => "legacy context compacted marker",
+                 "timestamp" => "t"
+               })
+
+      assert %{kind: :assistant, text: "I think the context compacted correctly"} =
+               CoreComponents.classify_activity(%{
+                 "role" => "assistant",
+                 "content" => "I think the context compacted correctly"
+               })
+    end
+
     test "an assistant tool-call emitted as text is flagged not-delivered, not shown as a reply" do
       blob =
         ~s({"cmd": "cat > /workspace/reply.json <<JSON\\n{\\"action\\":\\"reply\\",\\"text\\":\\"Yo welcome\\"}\\nJSON\\nswarm-msg send sender -f /workspace/reply.json"})
@@ -1005,5 +1115,73 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     html = render(view)
     assert html =~ "hello there"
     assert html =~ "slot"
+  end
+
+  defp lean_event(event, source_record_index, fields \\ nil)
+
+  defp lean_event("applied", source_record_index, fields) when is_map(fields) do
+    lean_entry(source_record_index, Map.put(fields, "event", "applied"))
+  end
+
+  defp lean_event(event, source_record_index, nil) do
+    lean_entry(source_record_index, %{"event" => event, "reason" => lean_reason(event)})
+  end
+
+  defp lean_reason("skipped"), do: "router_declined"
+  defp lean_reason("rejected"), do: "invalid_response"
+  defp lean_reason("failed"), do: "http_failed"
+  defp lean_reason(_future_event), do: "router_declined"
+
+  defp lean_entry(source_record_index, payload) do
+    %{
+      "timestamp" => "display-time",
+      "role" => "compact",
+      "entry_type" => "compaction_event",
+      "integrity" => "structured_v2",
+      "sensitive" => false,
+      "source" => @parser_source,
+      "content_complete" => true,
+      "source_record_index" => source_record_index,
+      "source_record_id" => %{
+        "session_id" => "session.jsonl",
+        "record_index" => source_record_index
+      },
+      "sequence" => source_record_index * 10,
+      "compaction" => payload,
+      "content" => "event"
+    }
+  end
+
+  defp lean_summary(matched?, source_record_index) do
+    summary = %{
+      "timestamp" => "display-time",
+      "role" => "compact_summary",
+      "entry_type" => "compaction_summary",
+      "integrity" => "structured_v2",
+      "sensitive" => true,
+      "source" => @parser_source,
+      "content_complete" => true,
+      "source_record_index" => source_record_index,
+      "source_record_id" => %{
+        "session_id" => "session.jsonl",
+        "record_index" => source_record_index
+      },
+      "sequence" => if(matched?, do: 41, else: source_record_index * 10),
+      "content" => "exact sensitive summary",
+      "compaction_summary_matched_applied" => matched?
+    }
+
+    if matched? do
+      Map.merge(summary, %{
+        "compaction_applied_source_record_index" => 4,
+        "compaction_applied_sequence" => 40,
+        "compaction_applied_source_record_id" => %{
+          "session_id" => "session.jsonl",
+          "record_index" => 4
+        }
+      })
+    else
+      summary
+    end
   end
 end

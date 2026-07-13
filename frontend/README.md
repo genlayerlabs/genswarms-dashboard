@@ -84,8 +84,12 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
   eviction drops live sessions when full), consumers, usage, connection/co-location banners.
 - **Topology** — cytoscape graph; objects (rectangles) vs agents (ellipses), pool
   counter, "show idle" toggle, sortable table fallback.
-- **Sessions** + detail — table by session with search (chat/user/session id);
-  detail lazily fetches the durable transcript (bodies are never in the snapshot — privacy §8.4).
+- **Sessions** + detail — table by session with search (chat/user/session id). The
+  detail workspace has three URL-addressable tabs: **Conversation** (durable
+  user-facing thread), **Context evidence** (current skills, available component
+  counts, and observed compaction status), and **Activity** (request lifecycle plus
+  the current leased slot's ephemeral working log). Transcript/log bodies are fetched
+  only after the sensitive-content reveal gate opens; they are never in the snapshot.
 - **Events** — structured lifecycle events (filterable), from the swarm events endpoint.
 - **Usage** — router tokens/cost; degrades to "Usage unavailable" until the router
   exposes `/v1/usage` (spec §9).
@@ -101,6 +105,27 @@ A silent-empty guard warns when snapshots report agents but no WS events arrive
 
 `SwarmClient`/`RouterClient` are behaviour-backed (Mox in tests); the dashboard is
 a pure HTTP/WS client.
+
+### Session context evidence is not an LLM trace
+
+The session page uses only the existing history, logs, skills, display-event and
+dashboard-snapshot responses. It adds no persistence and no backend API. Current
+skill files are components, not an immutable record of a historical prompt; the
+durable conversation is not the agent's complete in-memory message array.
+
+When the leased-slot log contains framed SubZeroClaw records, the page accepts only
+the lean `applied`, `skipped`, `rejected`, and `failed` payloads projected by the
+server parser. It does not correlate by timestamps or reconstruct lifecycle IDs.
+Reason labels remain event-bound: skipped accepts `not_enough_groups`,
+`router_declined`, or `insufficient_reduction`; rejected accepts `invalid_layout`,
+`invalid_response`, `invalid_contract`, or `unsafe_summary`;
+failed accepts `allocation_failed` or `http_failed`.
+An applied outcome is neutral structural evidence, not a semantic-success claim.
+Activity calls a separate sensitive `compaction_summary` applied memory only when
+the parser explicitly marks it matched and supplies the applied source-record
+metadata. Its body remains behind the reveal gate. Malformed, legacy, unmatched,
+and future shapes never become outcome evidence. The dashboard never reconstructs
+or claims the complete LLM request.
 
 ## Adding a transport
 

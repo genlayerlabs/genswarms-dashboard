@@ -14,6 +14,14 @@ backend's golden contract test. The backend knows zero app/transport specifics: 
 implement `GenswarmsDashboard.DataSource` to feed it (see wingston's
 `objects/dashboard_source.ex` for the reference Telegram adapter).
 
+The frontend session workspace presents the existing contract in three views:
+Conversation, Context evidence, and Activity. Context evidence is deliberately not an
+LLM request trace: it inventories durable history, current skills and current-slot log
+evidence without adding storage or claiming access to SubZeroClaw's in-memory messages
+or complete LLM request. With a current framed runtime log, a compaction summary is
+called applied only when the server parser marks it matched to exact lean applied
+evidence; its body remains behind the sensitive-content reveal gate.
+
 ## Quick start
 
 **Frontend** (against a running orchestrator):

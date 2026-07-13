@@ -500,6 +500,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     assert html =~ "session 1"
 
     view |> element("form[phx-change='select']") |> render_change(%{"session_id" => "session:0"})
+    render_click(view, "transcripts_reveal", %{})
     assert_receive {:logs_loaded, @canary_cid}, 500
     html = render(view)
 
@@ -515,6 +516,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
 
     assert html =~ @canary_cid
     view |> element("form[phx-change='select']") |> render_change(%{"session_id" => @canary_cid})
+    render_click(view, "transcripts_reveal", %{})
     assert_receive {:logs_loaded, @canary_cid}, 500
     html = render(view)
 

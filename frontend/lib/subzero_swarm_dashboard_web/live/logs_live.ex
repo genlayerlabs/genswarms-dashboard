@@ -18,14 +18,33 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
         {:noreply, assign(socket, selected: nil, logs: nil)}
 
       sid ->
-        send(self(), {:load_logs, sid})
-        {:noreply, assign(socket, selected: sid, logs: :loading)}
+        if socket.assigns[:reveal_transcripts] do
+          send(self(), {:load_logs, sid})
+          {:noreply, assign(socket, selected: sid, logs: :loading)}
+        else
+          {:noreply, assign(socket, selected: sid, logs: :hidden)}
+        end
     end
   end
 
   @impl true
-  def handle_info({:load_logs, sid}, socket),
-    do: {:noreply, assign(socket, logs: SwarmClient.session_logs(socket.assigns.swarm, sid))}
+  def handle_info(:load, socket) do
+    if socket.assigns[:reveal_transcripts] && socket.assigns[:selected] do
+      send(self(), {:load_logs, socket.assigns.selected})
+      {:noreply, assign(socket, logs: :loading)}
+    else
+      logs = if socket.assigns[:selected], do: :hidden, else: nil
+      {:noreply, assign(socket, logs: logs)}
+    end
+  end
+
+  def handle_info({:load_logs, sid}, socket) do
+    if socket.assigns[:reveal_transcripts] && socket.assigns[:selected] == sid do
+      {:noreply, assign(socket, logs: SwarmClient.session_logs(socket.assigns.swarm, sid))}
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -60,8 +79,12 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
         </h1>
 
         <div class="flex flex-wrap gap-2 items-center rounded-box border border-base-300 bg-base-200/60 px-3 py-2.5 text-sm">
-          <form phx-change="select">
-            <select name="session_id" class="select select-bordered select-sm font-mono">
+          <form id="logs-session-select-form" phx-change="select">
+            <select
+              id="logs-session-select"
+              name="session_id"
+              class="select select-bordered select-sm font-mono"
+            >
               <option value="">select a session…</option>
               <option
                 :for={opt <- @session_options}
@@ -79,7 +102,12 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
           </span>
         </div>
 
-        <.logs logs={@logs} selected={@selected} privacy={@privacy} />
+        <.logs
+          logs={@logs}
+          selected={@selected}
+          privacy={@privacy}
+          revealed={@reveal_transcripts}
+        />
       </div>
     </Layouts.app>
     """
@@ -88,33 +116,70 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   attr :logs, :any, required: true
   attr :selected, :any, default: nil
   attr :privacy, :boolean, default: false
+  attr :revealed, :boolean, default: false
+
+  defp logs(%{revealed: false, selected: selected} = assigns) when not is_nil(selected) do
+    ~H"""
+    <div id="logs-sensitive-gate">
+      <.sensitive_reveal />
+    </div>
+    """
+  end
 
   defp logs(%{privacy: true, logs: {:ok, %{"logs" => entries}}} = assigns)
        when is_list(entries) do
     assigns = assign(assigns, :line_count, length(entries))
 
     ~H"""
-    <.panel title="Slot output">
-      <:meta>
-        <span class="font-mono">{line_count_label(@line_count)}</span>
-      </:meta>
-      <.empty_state
-        icon="hero-eye-slash"
-        msg="Raw slot output hidden in privacy mode."
-        hint={"#{line_count_label(@line_count)} suppressed."}
-      />
-    </.panel>
+    <div id="logs-slot-output">
+      <.panel title="Slot output">
+        <:meta>
+          <button
+            id="logs-hide-sensitive"
+            type="button"
+            phx-click="transcripts_hide"
+            class="btn btn-ghost btn-xs gap-1 opacity-60"
+          >
+            <.icon name="hero-eye-slash" class="size-3.5" /> hide sensitive evidence
+          </button>
+          <span class="font-mono">{line_count_label(@line_count)}</span>
+        </:meta>
+        <.empty_state
+          icon="hero-eye-slash"
+          msg="Raw slot output hidden in privacy mode."
+          hint={"#{line_count_label(@line_count)} suppressed."}
+        />
+      </.panel>
+    </div>
     """
   end
 
   defp logs(%{logs: {:ok, %{"logs" => [_ | _]}}} = assigns) do
     ~H"""
-    <.panel title="Slot output">
-      <:meta>
-        <span class="font-mono">{@selected}</span>
-      </:meta>
-      <.activity_timeline activity={@logs} />
-    </.panel>
+    <div id="logs-slot-output">
+      <.panel title="Slot output">
+        <:meta>
+          <button
+            id="logs-hide-sensitive"
+            type="button"
+            phx-click="transcripts_hide"
+            class="btn btn-ghost btn-xs gap-1 opacity-60"
+          >
+            <.icon name="hero-eye-slash" class="size-3.5" /> hide sensitive evidence
+          </button>
+          <span class="font-mono">{@selected}</span>
+        </:meta>
+        <.activity_timeline activity={@logs} />
+      </.panel>
+    </div>
+    """
+  end
+
+  defp logs(%{logs: :hidden} = assigns) do
+    ~H"""
+    <div id="logs-sensitive-gate">
+      <.sensitive_reveal />
+    </div>
     """
   end
 
@@ -130,7 +195,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   defp logs(%{logs: :loading} = assigns) do
     ~H"""
-    <div class="opacity-60 py-6 text-center text-sm">loading…</div>
+    <div id="logs-loading" class="opacity-60 py-6 text-center text-sm">loading…</div>
     """
   end
 
@@ -190,5 +255,4 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   defp line_count_label(1), do: "1 line"
   defp line_count_label(n), do: "#{n} lines"
-
 end

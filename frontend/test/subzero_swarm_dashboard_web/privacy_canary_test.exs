@@ -8,6 +8,13 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
 
   setup :set_mox_global
 
+  @parser_source %{
+    "format" => "subzeroclaw.jsonl.v2",
+    "parser" => "genswarms.subzeroclaw_log.v3",
+    "scope" => "log_file_snapshot",
+    "integrity" => "structured_v2"
+  }
+
   @handle "canary_h4ndle"
   @name "Canary Q. Name"
   @label "@canary_h4ndle"
@@ -320,11 +327,56 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
       ]
     },
     logs: %{
-      "source" => "agent_server",
+      "source" => "slot",
       "logs" => [
         %{
           "timestamp" => "2026-07-08T12:00:00Z",
           "role" => "user",
+          "content" => "#{@text} #{@cid} #{@group_cid}"
+        },
+        %{
+          "timestamp" => "2026-07-08T12:01:00Z",
+          "role" => "sys",
+          "content" => "context compacted #{@text} #{@cid}"
+        },
+        %{
+          "timestamp" => "2026-07-08T12:01:00Z",
+          "role" => "compact",
+          "entry_type" => "compaction_event",
+          "integrity" => "structured_v2",
+          "sensitive" => false,
+          "source" => @parser_source,
+          "content_complete" => true,
+          "source_record_index" => 2,
+          "source_record_id" => %{"session_id" => @label, "record_index" => 2},
+          "sequence" => 20,
+          "content" => "structured raw #{@text}",
+          "compaction" => %{
+            "event" => "applied",
+            "before_messages" => 12,
+            "after_messages" => 5,
+            "before_bytes" => 12_000,
+            "after_bytes" => 4_000
+          }
+        },
+        %{
+          "timestamp" => "2026-07-08T12:01:01Z",
+          "role" => "compact_summary",
+          "entry_type" => "compaction_summary",
+          "integrity" => "structured_v2",
+          "sensitive" => true,
+          "source" => @parser_source,
+          "content_complete" => true,
+          "source_record_index" => 3,
+          "source_record_id" => %{"session_id" => @label, "record_index" => 3},
+          "sequence" => 21,
+          "compaction_summary_matched_applied" => true,
+          "compaction_applied_source_record_index" => 2,
+          "compaction_applied_sequence" => 20,
+          "compaction_applied_source_record_id" => %{
+            "session_id" => @label,
+            "record_index" => 2
+          },
           "content" => "#{@text} #{@cid} #{@group_cid}"
         }
       ]
@@ -402,16 +454,19 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
   end
 
   test "session detail privacy on hides all canary strings and keeps the badge" do
-    html = session_detail_html(true)
+    for tab <- ["conversation", "context", "activity"] do
+      html = session_detail_html(true, tab)
 
-    assert_privacy_badge(html, "session detail")
-    refute_canary(html, "session detail")
+      assert_privacy_badge(html, "session detail #{tab}")
+      refute_canary(html, "session detail #{tab}")
+    end
   end
 
   test "session detail privacy off proves the canary fixture is wired" do
-    html = session_detail_html(false)
-
-    assert_canary_present(html, "session detail")
+    for tab <- ["conversation", "context", "activity"] do
+      html = session_detail_html(false, tab)
+      assert_canary_present(html, "session detail #{tab}")
+    end
   end
 
   test "events privacy on hides story and raw engine canaries and keeps the badge" do
@@ -552,8 +607,9 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
     render(view)
   end
 
-  defp session_detail_html(privacy?) do
-    {:ok, view, _html} = live(conn_with_privacy(privacy?), "/sessions/#{@cid_encoded}")
+  defp session_detail_html(privacy?, tab) do
+    {:ok, view, _html} =
+      live(conn_with_privacy(privacy?), "/sessions/#{@cid_encoded}?tab=#{tab}")
 
     push_snapshot(view)
     push_story(view)
@@ -582,6 +638,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
 
     selected = if privacy?, do: "session:0", else: @cid
     view |> element("form[phx-change='select']") |> render_change(%{"session_id" => selected})
+    render_click(view, "transcripts_reveal", %{})
     assert_receive {:logs_loaded, @cid}, 500
 
     render(view)

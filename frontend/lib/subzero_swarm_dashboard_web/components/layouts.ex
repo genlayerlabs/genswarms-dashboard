@@ -46,11 +46,18 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       |> assign(:dashboard_title, dashboard_title(assigns[:snapshot], assigns[:swarm]))
 
     ~H"""
-    <div class="flex min-h-screen" data-privacy={if @privacy, do: "on", else: "off"}>
+    <div
+      id="dashboard-shell"
+      class="flex min-h-screen flex-col md:flex-row"
+      data-privacy={if @privacy, do: "on", else: "off"}
+    >
       <%!-- replays the per-browser sensitive-content preference on every mount --%>
       <span id="transcript-gate" phx-hook="TranscriptGate" class="hidden"></span>
-      <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
-        <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
+      <aside
+        id="dashboard-rail"
+        class="console-rail w-full shrink-0 border-b border-base-300 px-3 py-3 flex flex-col md:w-60 md:border-b-0 md:border-r md:py-5"
+      >
+        <div class="px-2 mb-3 flex items-center gap-2.5 min-w-0 md:mb-7">
           <img src={~p"/images/logo.svg"} width="30" class="drop-shadow shrink-0" alt="" />
           <div class="leading-none min-w-0 flex-1">
             <div
@@ -63,10 +70,15 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
               swarm console
             </div>
           </div>
-          <.privacy_toggle privacy={@privacy} />
+          <div class="flex shrink-0 items-center gap-2">
+            <div id="dashboard-mobile-theme" class="md:hidden">
+              <.theme_toggle />
+            </div>
+            <.privacy_toggle privacy={@privacy} />
+          </div>
         </div>
 
-        <div class="px-2 mb-5 space-y-2">
+        <div class="hidden px-2 mb-5 space-y-2 md:block">
           <div class="rounded-lg bg-base-100/60 border border-base-300 px-2.5 py-1.5">
             <div class="flex items-center gap-2">
               <span class="signal-dot"></span>
@@ -82,7 +94,11 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
           <.feed_chip story={@story} />
         </div>
 
-        <ul class="menu w-full gap-0.5 px-0">
+        <ul
+          id="dashboard-nav"
+          aria-label="Dashboard navigation"
+          class="menu menu-horizontal flex-nowrap w-full max-w-full gap-0.5 overflow-x-auto px-0 pb-1 scroll-thin md:menu-vertical md:overflow-x-visible md:pb-0"
+        >
           <.nav_item
             active={@active}
             key={:overview}
@@ -141,10 +157,10 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             label="Config"
           />
         </ul>
-        <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
+        <div class="hidden mt-auto pt-6 px-2 md:block"><.theme_toggle /></div>
       </aside>
 
-      <main class="flex-1 p-6 lg:p-8 overflow-x-auto">
+      <main id="dashboard-main" class="min-w-0 flex-1 p-4 overflow-x-auto md:p-6 lg:p-8">
         {render_slot(@inner_block)}
       </main>
     </div>
@@ -212,7 +228,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       <.link
         navigate={@href}
         class={[
-          "font-medium gap-2.5 rounded-lg",
+          "font-medium gap-2.5 rounded-lg whitespace-nowrap",
           @active == @key && "bg-primary/15 text-primary border border-primary/25",
           @active != @key && "border border-transparent opacity-75 hover:opacity-100"
         ]}

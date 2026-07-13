@@ -6,6 +6,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
   import Mox
 
   alias SubzeroSwarmDashboard.{EventsFeed, SwarmClientMock, RouterClientMock}
+  alias SubzeroSwarmDashboard.Story.{Reducer, State}
 
   setup :set_mox_global
 
@@ -91,6 +92,20 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
 
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "events", {:story, summary})
     render(view)
+  end
+
+  defp isolate_events_feed do
+    old_interval = Application.get_env(:subzero_swarm_dashboard, :events_poll_ms)
+    Application.put_env(:subzero_swarm_dashboard, :events_poll_ms, 60_000)
+    File.rm(EventsFeed.snapshot_path())
+
+    on_exit(fn ->
+      if old_interval,
+        do: Application.put_env(:subzero_swarm_dashboard, :events_poll_ms, old_interval),
+        else: Application.delete_env(:subzero_swarm_dashboard, :events_poll_ms)
+
+      File.rm(EventsFeed.snapshot_path())
+    end)
   end
 
   describe "sessions" do
@@ -189,7 +204,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       send(feed, :poll)
       _ = :sys.get_state(feed)
 
-      {:ok, view, _} = live(conn, "/sessions/#{@cid}")
+      {:ok, view, _} = live(conn, "/sessions/#{@cid}?tab=activity")
       html = render(view)
 
       assert has_element?(view, "#session-requests")
@@ -198,6 +213,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       assert html =~ "claim 1.0s"
       assert html =~ "replied 9.0s"
       assert html =~ "requests observed since"
+      assert has_element?(view, "#requests-since[data-ts='100.0']")
     end
 
     test "shows the explicit empty state (same honesty label) when nothing was observed", %{
@@ -205,12 +221,158 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
     } do
       # the EventsFeed process isn't running at all (test default) — same face
       # as an empty feed
-      {:ok, view, _} = live(conn, "/sessions/#{@cid}")
+      {:ok, view, _} = live(conn, "/sessions/#{@cid}?tab=activity")
       html = render(view)
 
       assert has_element?(view, "#session-requests")
       assert has_element?(view, "#session-requests-empty")
       assert html =~ "requests observed since"
+    end
+
+    test "an already-open page refreshes a reply without a snapshot or reload", %{conn: conn} do
+      isolate_events_feed()
+
+      stub(SwarmClientMock, :events_feed, fn "wingston", since, _limit ->
+        case since do
+          0 ->
+            {:ok, %{"events" => [], "seq" => 10, "source" => "feed"}}
+
+          10 ->
+            {:ok,
+             %{
+               "events" => [
+                 %{"seq" => 11, "ts" => 100.0, "kind" => "request_open", "cid" => @cid},
+                 %{
+                   "seq" => 12,
+                   "ts" => 101.0,
+                   "kind" => "routed",
+                   "cid" => @cid,
+                   "slot" => "wingston_agent_0"
+                 }
+               ],
+               "seq" => 12,
+               "source" => "feed"
+             }}
+
+          12 ->
+            {:ok,
+             %{
+               "events" => [
+                 %{
+                   "seq" => 13,
+                   "ts" => 105.0,
+                   "kind" => "reply_sent",
+                   "cid" => @cid,
+                   "ok" => true
+                 }
+               ],
+               "seq" => 13,
+               "source" => "feed"
+             }}
+
+          13 ->
+            {:ok, %{"events" => [], "seq" => 13, "source" => "feed"}}
+        end
+      end)
+
+      feed = start_supervised!(EventsFeed)
+      _ = :sys.get_state(feed)
+      send(feed, :poll)
+      _ = :sys.get_state(feed)
+
+      {:ok, view, _} = live(conn, "/sessions/#{@cid}?tab=activity")
+      assert render(view) =~ "awaiting reply"
+
+      send(feed, :poll)
+      _ = :sys.get_state(feed)
+
+      html = render(view)
+      assert html =~ "replied 5.0s"
+      refute html =~ "awaiting reply"
+      assert has_element?(view, "#session-request-status", "Replied")
+    end
+
+    test "one lifecycle batch performs one request refresh", %{conn: conn} do
+      isolate_events_feed()
+
+      stub(SwarmClientMock, :events_feed, fn "wingston", _since, _limit ->
+        {:ok, %{"events" => [], "seq" => 10, "source" => "feed"}}
+      end)
+
+      feed = start_supervised!(EventsFeed)
+      _ = :sys.get_state(feed)
+      {:ok, view, _} = live(conn, "/sessions/#{@cid}?tab=activity")
+
+      :erlang.trace(feed, true, [:receive])
+
+      for kind <- ["request_open", "routed", "progress_sent", "reply_sent", "teardown"] do
+        send(view.pid, {:display_event, %{"cid" => @cid, "kind" => kind}})
+      end
+
+      send(view.pid, {:story, %{in_flight: []}})
+      render(view)
+
+      assert_receive {:trace, ^feed, :receive, {:"$gen_call", _from, :story_ring}}
+      assert_receive {:trace, ^feed, :receive, {:"$gen_call", _from, {:episodes, @cid}}}
+      refute_receive {:trace, ^feed, :receive, {:"$gen_call", _from, _request}}, 50
+
+      :erlang.trace(feed, false, [:receive])
+    end
+
+    test "an abandoned episode is never presented as replied", %{conn: conn} do
+      isolate_events_feed()
+
+      stub(SwarmClientMock, :events_feed, fn "wingston", _since, _limit ->
+        {:ok, %{"events" => [], "seq" => 10, "source" => "feed"}}
+      end)
+
+      feed = start_supervised!(EventsFeed)
+      _ = :sys.get_state(feed)
+
+      abandoned =
+        State.new(stall_after_ms: 10, now: 100.0)
+        |> Reducer.apply(%{"seq" => 11, "ts" => 100.0, "kind" => "request_open", "cid" => @cid})
+        |> Reducer.tick(100.2)
+
+      :sys.replace_state(feed, &%{&1 | story: abandoned})
+
+      {:ok, view, _} = live(conn, "/sessions/#{@cid}?tab=activity")
+      html = render(view)
+
+      assert has_element?(view, "#session-request-status", "Abandoned")
+      assert html =~ "abandoned — no reply"
+      refute html =~ "✓ replied"
+    end
+
+    test "a late reply reports its final outcome without hiding the earlier stall", %{conn: conn} do
+      isolate_events_feed()
+
+      stub(SwarmClientMock, :events_feed, fn "wingston", _since, _limit ->
+        {:ok, %{"events" => [], "seq" => 10, "source" => "feed"}}
+      end)
+
+      feed = start_supervised!(EventsFeed)
+      _ = :sys.get_state(feed)
+
+      replied_late =
+        State.new(stall_after_ms: 1_000, now: 100.0)
+        |> Reducer.apply(%{"seq" => 11, "ts" => 100.0, "kind" => "request_open", "cid" => @cid})
+        |> Reducer.tick(101.1)
+        |> Reducer.apply(%{
+          "seq" => 12,
+          "ts" => 102.0,
+          "kind" => "reply_sent",
+          "cid" => @cid,
+          "ok" => true
+        })
+
+      :sys.replace_state(feed, &%{&1 | story: replied_late})
+
+      {:ok, view, _} = live(conn, "/sessions/#{@cid}?tab=activity")
+      html = render(view)
+
+      assert has_element?(view, "#session-request-status", "Replied after stall")
+      assert html =~ "✓ replied 2.0s"
     end
   end
 
