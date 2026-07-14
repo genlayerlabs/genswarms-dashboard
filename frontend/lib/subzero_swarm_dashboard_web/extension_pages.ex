@@ -10,14 +10,15 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         "label" => "Custom report",
         "icon" => "hero-puzzle-piece",
         "sections" => [
-          %{"type" => "metrics", "title" => "Summary", "items" => [...]},
+          %{"type" => "metrics", "title" => "Summary", "columns" => 2, "items" => [...]},
           %{"type" => "table", "title" => "Items", "columns" => [...], "rows" => [...]}
         ]
       }
 
-  The renderer treats every value as display data. Unknown or malformed blocks are
-  ignored, and large collections are capped so an extension cannot overwhelm the
-  dashboard shell.
+  Metrics may request 2 or 4 responsive columns. Metric items may provide `title`
+  for exact hover detail and `wrap_sub: true` for explanatory notes. The renderer
+  treats every value as display data. Unknown or malformed blocks are ignored, and
+  large collections are capped so an extension cannot overwhelm the dashboard shell.
   """
   use SubzeroSwarmDashboardWeb, :html
 
@@ -121,17 +122,20 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       |> assign(:title, section["title"] || "Metrics")
       |> assign(:meta, display(section["meta"]))
       |> assign(:items, metric_items(section["items"]))
+      |> assign(:grid_class, metric_grid_class(section))
 
     ~H"""
     <.panel title={@title}>
       <:meta :if={@meta}>{@meta}</:meta>
-      <div :if={@items != []} class="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
+      <div :if={@items != []} class={["grid gap-x-4 gap-y-3", @grid_class]}>
         <.metric
           :for={item <- @items}
           label={item["label"]}
           value={display(item["value"])}
           sub={display(item["sub"])}
           tone={tone(item["tone"])}
+          title={display(item["title"])}
+          wrap_sub={item["wrap_sub"]}
         />
       </div>
       <div :if={@items == []} class="text-sm opacity-50 py-1">No data.</div>
@@ -145,7 +149,10 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       |> assign(:title, section["title"] || "Table")
       |> assign(:meta, display(section["meta"]))
       |> assign(:columns, columns(section["columns"]))
-      |> assign(:rows, section["rows"] |> rows() |> Enum.with_index() |> sort_rows(assigns[:sort]))
+      |> assign(
+        :rows,
+        section["rows"] |> rows() |> Enum.with_index() |> sort_rows(assigns[:sort])
+      )
 
     ~H"""
     <.panel title={@title} body_class="px-4 py-2">
@@ -184,6 +191,70 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       </div>
       <div :if={@columns == [] or @rows == []} class="text-sm opacity-50 py-1">No data.</div>
     </.panel>
+    """
+  end
+
+  # A segmented control over nested sections: each tab carries ONE inner
+  # metrics/table/text section; only the active tab's section is in the DOM.
+  # Inner sections get the composite index "<idx>/<tab>" so their sort state
+  # and row->inspector targets stay scoped to their own tab.
+  defp section(%{section: %{"type" => "tabs"} = section} = assigns) do
+    tabs = normalize_tabs(section["tabs"])
+    active = tab_active(assigns.tab, assigns.idx, tabs)
+    inner_idx = "#{assigns.idx}/#{active}"
+
+    assigns =
+      assigns
+      |> assign(:title, section["title"])
+      |> assign(:meta, display(section["meta"]))
+      |> assign(:tabs, tabs)
+      |> assign(:active, active)
+      |> assign(:inline_control?, assigns.hoisted_idx != assigns.idx)
+      |> assign(:inner, tabs != [] && Enum.at(tabs, active)["section"])
+      |> assign(:inner_idx, inner_idx)
+      |> assign(:inner_sort, Map.get(assigns.sort_map, inner_idx))
+
+    ~H"""
+    <div :if={@tabs != []} class="space-y-2">
+      <div
+        :if={@title || @meta || @inline_control?}
+        class="flex items-center justify-between gap-4 flex-wrap"
+      >
+        <div class="flex items-center gap-3">
+          <h2 :if={@title} class="text-sm opacity-60">{@title}</h2>
+          <span :if={@meta} class="text-xs opacity-50 font-mono">{@meta}</span>
+        </div>
+        <.tab_control :if={@inline_control?} idx={@idx} tabs={@tabs} active={@active} class={nil} />
+      </div>
+      <.section
+        :if={@inner}
+        section={@inner}
+        idx={@inner_idx}
+        sort={@inner_sort}
+        sort_map={@sort_map}
+        tab={@tab}
+        row_targets={@row_targets}
+      />
+    </div>
+    """
+  end
+
+  defp section(%{section: %{"type" => "text"} = section} = assigns) do
+    assigns =
+      assigns
+      |> assign(:title, section["title"] || "Note")
+      |> assign(:body, display(section["body"]))
+
+    ~H"""
+    <.panel title={@title}>
+      <p class="text-sm opacity-70">{@body}</p>
+    </.panel>
+    """
+  end
+
+  defp section(assigns) do
+    ~H"""
+    <div class="hidden"></div>
     """
   end
 
@@ -302,48 +373,6 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
   defp strip_row_meta(row), do: row
 
-  # A segmented control over nested sections: each tab carries ONE inner
-  # metrics/table/text section; only the active tab's section is in the DOM.
-  # Inner sections get the composite index "<idx>/<tab>" so their sort state
-  # and row->inspector targets stay scoped to their own tab.
-  defp section(%{section: %{"type" => "tabs"} = section} = assigns) do
-    tabs = normalize_tabs(section["tabs"])
-    active = tab_active(assigns.tab, assigns.idx, tabs)
-    inner_idx = "#{assigns.idx}/#{active}"
-
-    assigns =
-      assigns
-      |> assign(:title, section["title"])
-      |> assign(:meta, display(section["meta"]))
-      |> assign(:tabs, tabs)
-      |> assign(:active, active)
-      |> assign(:inline_control?, assigns.hoisted_idx != assigns.idx)
-      |> assign(:inner, tabs != [] && Enum.at(tabs, active)["section"])
-      |> assign(:inner_idx, inner_idx)
-      |> assign(:inner_sort, Map.get(assigns.sort_map, inner_idx))
-
-    ~H"""
-    <div :if={@tabs != []} class="space-y-2">
-      <div :if={@title || @meta || @inline_control?} class="flex items-center justify-between gap-4 flex-wrap">
-        <div class="flex items-center gap-3">
-          <h2 :if={@title} class="text-sm opacity-60">{@title}</h2>
-          <span :if={@meta} class="text-xs opacity-50 font-mono">{@meta}</span>
-        </div>
-        <.tab_control :if={@inline_control?} idx={@idx} tabs={@tabs} active={@active} class={nil} />
-      </div>
-      <.section
-        :if={@inner}
-        section={@inner}
-        idx={@inner_idx}
-        sort={@inner_sort}
-        sort_map={@sort_map}
-        tab={@tab}
-        row_targets={@row_targets}
-      />
-    </div>
-    """
-  end
-
   attr :idx, :any, required: true
   attr :tabs, :list, required: true
   attr :active, :integer, required: true
@@ -376,25 +405,6 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     end
   end
 
-  defp section(%{section: %{"type" => "text"} = section} = assigns) do
-    assigns =
-      assigns
-      |> assign(:title, section["title"] || "Note")
-      |> assign(:body, display(section["body"]))
-
-    ~H"""
-    <.panel title={@title}>
-      <p class="text-sm opacity-70">{@body}</p>
-    </.panel>
-    """
-  end
-
-  defp section(assigns) do
-    ~H"""
-    <div class="hidden"></div>
-    """
-  end
-
   defp normalize_pages(pages) when is_list(pages) do
     pages
     |> Stream.map(&normalize_page/1)
@@ -408,7 +418,6 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   # guessing. Absent schema ⇒ 1.
   @schema 1
   defp normalize_page(%{"schema" => s}) when is_integer(s) and s > @schema, do: nil
-
 
   defp normalize_page(%{"id" => id, "label" => label} = page)
        when is_binary(id) and is_binary(label) do
@@ -449,6 +458,18 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   defp span_class(%{"span" => "half"}), do: "ext-span-half lg:col-span-1"
   defp span_class(_), do: "ext-span-full lg:col-span-2"
 
+  # Financial reconciliations need more horizontal room than terse telemetry.
+  # Producers can opt into a stable two-column layout or a comfortable four-column
+  # layout that stays 2x2 through laptop widths and expands only at xl.
+  defp metric_grid_class(%{"columns" => 2}),
+    do: "ext-metrics-cols-2 grid-cols-1 sm:grid-cols-2"
+
+  defp metric_grid_class(%{"columns" => 4}),
+    do: "ext-metrics-cols-4 grid-cols-2 xl:grid-cols-4"
+
+  defp metric_grid_class(_),
+    do: "ext-metrics-cols-auto grid-cols-2 md:grid-cols-4"
+
   defp metric_items(items) when is_list(items) do
     items
     |> Stream.filter(&is_map/1)
@@ -464,7 +485,9 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       "label" => display_label(item["label"]),
       "value" => item["value"],
       "sub" => item["sub"],
-      "tone" => item["tone"]
+      "tone" => item["tone"],
+      "title" => item["title"],
+      "wrap_sub" => item["wrap_sub"] == true
     }
   end
 

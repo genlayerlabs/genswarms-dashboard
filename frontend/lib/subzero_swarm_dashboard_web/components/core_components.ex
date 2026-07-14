@@ -1148,7 +1148,10 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
     do: :crypto.hash(:sha256, seed) |> Base.encode16(case: :lower)
 
   defp assign_avatar(assigns) do
-    raw_seed = avatar_seed(assigns.user, assigns.session_id, assigns[:avatar_label] || assigns.label) || "x"
+    raw_seed =
+      avatar_seed(assigns.user, assigns.session_id, assigns[:avatar_label] || assigns.label) ||
+        "x"
+
     display_seed = avatar_seed_for_display(raw_seed, assigns.privacy == true)
     size_px = avatar_size_px(assigns.size)
 
@@ -1305,6 +1308,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   attr :sub, :string, default: nil
   attr :tone, :string, default: nil, values: [nil, "warn", "error", "primary"]
   attr :title, :string, default: nil
+  attr :wrap_sub, :boolean, default: false
 
   def metric(assigns) do
     ~H"""
@@ -1326,7 +1330,17 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
           class="ml-1.5 align-middle badge badge-primary badge-outline badge-xs font-mono lowercase"
         >{@badge}</span>
       </div>
-      <div :if={@sub} class="text-xs opacity-50 truncate">{@sub}</div>
+      <div
+        :if={@sub}
+        title={@sub}
+        class={[
+          "text-xs opacity-50",
+          @wrap_sub && "ext-metric-sub-wrap whitespace-normal leading-snug",
+          !@wrap_sub && "ext-metric-sub-truncate truncate"
+        ]}
+      >
+        {@sub}
+      </div>
     </div>
     """
   end
