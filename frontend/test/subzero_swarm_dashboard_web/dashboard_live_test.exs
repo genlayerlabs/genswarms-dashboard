@@ -646,7 +646,9 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
     view |> element(~s(button[phx-value-tab="1"][phx-value-sec="0"])) |> render_click()
 
-    html = view |> element(~s(button[phx-value-sec="0/1"][phx-value-key="spent"])) |> render_click()
+    html =
+      view |> element(~s(button[phx-value-sec="0/1"][phx-value-key="spent"])) |> render_click()
+
     assert :binary.match(html, "low") |> elem(0) < :binary.match(html, "mid") |> elem(0)
     assert :binary.match(html, "mid") |> elem(0) < :binary.match(html, "high") |> elem(0)
     assert html =~ "\u2191"
@@ -781,6 +783,49 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "ext-span-full"
   end
 
+  test "metric sections support comfortable columns and readable accounting notes", %{conn: conn} do
+    note = "legacy shared-key estimates · not comparable"
+
+    snap =
+      put_in(@snap, ["extensions", "dashboard_pages"], [
+        %{
+          "id" => "accounting-grid",
+          "label" => "AccountingGrid",
+          "sections" => [
+            %{
+              "type" => "metrics",
+              "title" => "Historical evidence",
+              "columns" => 2,
+              "items" => [
+                %{
+                  "label" => "Router evidence",
+                  "value" => "$71.54",
+                  "sub" => note,
+                  "title" => "Router total from historical evidence",
+                  "wrap_sub" => true
+                }
+              ]
+            },
+            %{
+              "type" => "metrics",
+              "title" => "Comparable accounting",
+              "columns" => 4,
+              "items" => [%{"label" => "Coverage", "value" => "Reconciled"}]
+            }
+          ]
+        }
+      ])
+
+    {:ok, view, _} = live(conn, "/extensions/accounting-grid")
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+    _ = render(view)
+
+    assert has_element?(view, ".ext-metrics-cols-2")
+    assert has_element?(view, ".ext-metrics-cols-4")
+    assert has_element?(view, ~s(.ext-metric-sub-wrap[title="#{note}"]), note)
+    assert has_element?(view, ~s([title="Router total from historical evidence"]))
+  end
+
   describe "ExtensionPages.extract_row_targets/3 (privacy seam)" do
     test "privacy resolves targets to opaque tokens and strips the raw cid" do
       page = %{
@@ -788,7 +833,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
         "sections" => [
           %{
             "type" => "table",
-            "rows" => [%{"user" => "x", "_cid" => "tg:9:0"}, %{"user" => "y", "_cid" => "tg:unknown:0"}]
+            "rows" => [
+              %{"user" => "x", "_cid" => "tg:9:0"},
+              %{"user" => "y", "_cid" => "tg:unknown:0"}
+            ]
           }
         ]
       }
@@ -807,7 +855,8 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
         "sections" => [%{"type" => "table", "rows" => [%{"user" => "x", "_cid" => "tg:9:0"}]}]
       }
 
-      assert {_clean, %{{0, 0} => "tg:9:0"}} = ExtensionPages.extract_row_targets(page, false, %{})
+      assert {_clean, %{{0, 0} => "tg:9:0"}} =
+               ExtensionPages.extract_row_targets(page, false, %{})
     end
   end
 
