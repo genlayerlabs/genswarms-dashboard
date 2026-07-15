@@ -155,6 +155,13 @@ defmodule GenswarmsDashboard.ConfigView do
 
   defp deep_scrub(v), do: v
 
+  # The key-name rule only redacts values that COULD carry a credential — a
+  # bare number/boolean/nil never can, so scalars pass even under a smelly key.
+  # This keeps `max_tokens: 512`, `token_bucket: 60`, `cookies_enabled: true`
+  # legible without weakening string redaction (@secret_key_re is a substring
+  # match; anchoring it risks under-redacting a real `bot_token`, so the
+  # value-type gate is the safe lever instead).
+  defp scrub_entry(_key, val) when is_number(val) or is_boolean(val) or is_nil(val), do: val
   defp scrub_entry(key, val), do: if(secret_key?(key), do: @redacted, else: deep_scrub(val))
 
   defp scrub_key(k) when is_binary(k), do: mask(k)

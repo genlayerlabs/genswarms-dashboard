@@ -206,6 +206,51 @@ defmodule GenswarmsDashboard.ConfigViewTest do
     assert row(rows, "bad").value == "•••"
   end
 
+  test "numeric/boolean config knobs survive a secret-substring key name" do
+    schema = %{
+      "properties" => %{
+        "opts" => %{"type" => "object"},
+        "max_tokens" => %{"type" => "integer"},
+        "cookies_enabled" => %{"type" => "boolean"}
+      }
+    }
+
+    rows =
+      ConfigView.redact(
+        %{
+          opts: %{max_tokens: 512, token_bucket: 60, keepalive: nil},
+          max_tokens: 4096,
+          cookies_enabled: true
+        },
+        schema
+      )
+
+    assert row(rows, "max_tokens").value == 4096
+    assert row(rows, "cookies_enabled").value == true
+    opts = row(rows, "opts").value
+    assert opts[":max_tokens"] == 512
+    assert opts[":token_bucket"] == 60
+    assert opts[":keepalive"] == nil
+  end
+
+  test "string and collection values under a NESTED secret key are still redacted (no leak)" do
+    # the key-name rule guards nested structures (top-level keys are the
+    # schema's job) — pin that the scalar exemption didn't open a string/list
+    # leak inside a map.
+    schema = %{"properties" => %{"opts" => %{"type" => "object"}}}
+
+    [row] =
+      ConfigView.redact(
+        %{opts: %{api_key: "sk-live-abc", api_keys: ["sk-one", "sk-two"], secret_blob: %{x: "opaque"}}},
+        schema
+      )
+
+    opts = row.value
+    assert opts[":api_key"] == "•••"
+    assert opts[":api_keys"] == "•••"
+    assert opts[":secret_blob"] == "•••"
+  end
+
   test "scrubbed output stays JSON-encodable" do
     schema = %{"properties" => %{"store" => %{}, "opts" => %{}}}
 
