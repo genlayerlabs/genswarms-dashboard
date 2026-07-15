@@ -83,7 +83,7 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
        when is_binary(cid) and is_binary(slot) do
     now = ts(ev, state)
     ag = get_agent(state, slot)
-    busy? = ag.state != :idle
+    busy? = ag.state in [:thinking, :waiting]
     ep = state.open[cid]
 
     state =
@@ -110,7 +110,6 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     if ep do
       note =
         cond do
-          ag.state == :spawning -> "queued while spawning"
           busy? -> "queued behind current turn"
           true -> "claims #{cid}"
         end
@@ -159,6 +158,14 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   end
 
   defp fold("inbox_full", state, ev) do
+    cid = ev["cid"]
+    ep = state.open[cid]
+
+    state =
+      if ep && ep.agent == nil,
+        do: settle_episode(state, cid, ts(ev, state), "rejected"),
+        else: state
+
     state = bump(state, :inbox_full)
     issue_row(state, ev, %{text: "⚠ rejected — inbox full"})
   end
@@ -221,7 +228,12 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     if ok?,
       do: row(state, ev, %{agent: name, text: text}),
-      else: issue_row(state, ev, %{agent: name, text: "⚠ #{text}"})
+      else:
+        issue_row(state, ev, %{
+          cid: open_cid_for_agent(state, name),
+          agent: name,
+          text: "⚠ #{text}"
+        })
   end
 
   # runtime allowlist grant (browser pkg 0.2.0 allow_sync): audit-surface row —
@@ -285,13 +297,35 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   # chose silence — informational row, not an issue (suppression is the guard
   # working, not a failure)
   defp fold("reply_suppressed", state, ev) do
+    now = ts(ev, state)
+    cid = ev["cid"]
+    ep = state.open[cid]
+
+    state =
+      if ep,
+        do: state |> settle_episode(cid, now, "suppressed") |> release_agent(ep.agent, now),
+        else: state
+
     row(state, ev, %{cid: ev["cid"], text: "🤫 reply suppressed (spam window)"})
   end
 
   # agent LLM failure, classified by LlmErrorNotifier (max_turns / api / …)
   defp fold("llm_error", state, ev) do
+    now = ts(ev, state)
+    cid = ev["cid"]
+    ep = state.open[cid]
+
+    state =
+      if ep,
+        do: state |> settle_episode(cid, now, "llm_error") |> release_agent(ep.agent, now),
+        else: state
+
     state = bump(state, :failures)
     issue_row(state, ev, %{cid: ev["cid"], text: "⚠ LLM error (#{ev["class"] || "?"})"})
+  end
+
+  defp fold("proc_crash", state, ev) do
+    issue_row(state, ev, %{text: "⚠ process crashed (#{ev["module"] || "?"})"})
   end
 
   # llm-proxy quota block: a user (or the whole service) hit a spending wall —
@@ -427,6 +461,9 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
         ag.state == :waiting and quiet_s > state.wait_decay_ms / 1000 ->
           put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act, queue: 0})
 
+        ag.state == :spawning and quiet_s > state.wait_decay_ms / 1000 ->
+          put_agent(acc, %{ag | state: :idle, wait_on: nil, since: ag.last_act, queue: 0})
+
         true ->
           acc
       end
@@ -522,6 +559,26 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     end
   end
 
+  defp settle_episode(state, cid, now, status) do
+    ep = state.open[cid]
+    closed = %{ep | done: true, done_at: now, status: status, duration: now - ep.opened_at}
+
+    if ep.count > 1 and ep.last_open do
+      rearmed = %{
+        ep
+        | count: ep.count - 1,
+          opened_at: ep.last_open,
+          first_sent: nil,
+          last_sent: nil,
+          stalled: false
+      }
+
+      state |> push_closed(closed) |> put_open(rearmed)
+    else
+      state |> push_closed(closed) |> drop_open(cid)
+    end
+  end
+
   defp reply_kpi(state, dur) do
     state
     |> bump(:replies)
@@ -544,6 +601,13 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
             last_act: now
         }),
       else: put_agent(state, %{ag | state: :idle, wait_on: nil, last_act: now})
+  end
+
+  defp open_cid_for_agent(state, name) do
+    case for({cid, %{agent: ^name}} <- state.open, do: cid) do
+      [cid] -> cid
+      _ -> nil
+    end
   end
 
   # ── state plumbing ────────────────────────────────────────────────────────────
