@@ -138,11 +138,18 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
     {:noreply, state}
   end
 
-  # /dashboard snapshot (from SwarmFeed): refresh the story's cid → @handle map so
-  # event rows render the user, not the raw chat id. Snapshots arrive every few
-  # seconds; storing the map is cheap and doesn't touch the cursor or the fold.
-  def handle_info({:snapshot, snap}, state),
-    do: {:noreply, %{state | story: Reducer.put_users(state.story, handles(snap))}}
+  # /dashboard snapshot (from SwarmFeed): refresh the cid → @handle map and
+  # reconcile persisted live state against the current swarm boot. Display-feed
+  # seqs survive a host restart, so cursor regression alone cannot prove that an
+  # old open episode is dead; generated_at - uptime_s can.
+  def handle_info({:snapshot, snap}, state) do
+    story =
+      state.story
+      |> Reducer.put_users(handles(snap))
+      |> Reducer.reconcile_boot(swarm_boot_at(snap))
+
+    {:noreply, %{state | story: story}}
+  end
 
   # other "feed" traffic (live WS events, disconnects, warnings) isn't ours to fold.
   def handle_info(_other, state), do: {:noreply, state}
@@ -371,4 +378,14 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
 
   defp sessions(%{"sessions" => list}) when is_list(list), do: list
   defp sessions(_), do: []
+
+  defp swarm_boot_at(%{"generated_at" => generated_at, "uptime_s" => uptime_s})
+       when is_binary(generated_at) and is_number(uptime_s) do
+    case DateTime.from_iso8601(generated_at) do
+      {:ok, datetime, _offset} -> DateTime.to_unix(datetime, :millisecond) / 1_000 - uptime_s
+      _ -> nil
+    end
+  end
+
+  defp swarm_boot_at(_snap), do: nil
 end

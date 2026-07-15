@@ -161,6 +161,35 @@ defmodule SubzeroSwarmDashboard.EventsFeedTest do
     assert state.story.users == %{"tg:5681202:0" => "kstellana"}
   end
 
+  test "a snapshot clears restored live state that predates the swarm boot" do
+    now = System.os_time(:millisecond) / 1_000
+    cid = "tg:1:0"
+
+    script(%{
+      0 => feed([], 10),
+      10 => feed([evt(11, "request_open", %{"cid" => cid, "ts" => now - 600})], 11),
+      11 => feed([], 11)
+    })
+
+    EventsFeed.subscribe()
+    pid = start_supervised!(EventsFeed)
+    assert_receive {:story, %{in_flight: [%{cid: ^cid}]}}
+
+    Phoenix.PubSub.broadcast(
+      SubzeroSwarmDashboard.PubSub,
+      "feed",
+      {:snapshot,
+       %{
+         "generated_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+         "uptime_s" => 60,
+         "sessions" => []
+       }}
+    )
+
+    _ = :sys.get_state(pid)
+    assert EventsFeed.current_story().in_flight == []
+  end
+
   test "other feed-topic traffic (live events, disconnects) is ignored, not crashed on" do
     script(%{0 => feed([], 0)})
 
