@@ -70,7 +70,10 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
     %{
       state
-      | open: Map.reject(state.open, fn {_cid, ep} -> older_than?(ep.opened_at, cutoff) end),
+      | open:
+          Map.reject(state.open, fn {_cid, ep} ->
+            older_than?(ep.last_open || ep.opened_at, cutoff)
+          end),
         agents:
           Map.reject(state.agents, fn {_name, ag} ->
             older_than?(ag.last_act || ag.since, cutoff)

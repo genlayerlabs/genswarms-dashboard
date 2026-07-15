@@ -88,6 +88,18 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       state = fold([ev("request_open", 1, 199.5, %{"cid" => @cid})])
       assert Map.has_key?(Reducer.reconcile_boot(state, 200.0).open, @cid)
     end
+
+    test "keeps a restored episode when the same cid opened again after boot" do
+      state =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => @cid}),
+          ev("request_open", 2, 201.0, %{"cid" => @cid})
+        ])
+
+      assert state.open[@cid].opened_at == 100.0
+      assert state.open[@cid].last_open == 201.0
+      assert Map.has_key?(Reducer.reconcile_boot(state, 200.0).open, @cid)
+    end
   end
 
   describe "single request lifecycle" do
