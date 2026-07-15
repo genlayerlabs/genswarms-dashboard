@@ -156,6 +156,56 @@ defmodule GenswarmsDashboard.ConfigViewTest do
     assert row(rows, "client").value == "Genswarms.Telegram.Client.Curl"
   end
 
+  test "secret smuggled as an atom, a charlist, or a map KEY is still masked" do
+    schema = %{
+      "properties" => %{
+        "a" => %{"type" => "string"},
+        "c" => %{"type" => "string"},
+        "m" => %{"type" => "object"}
+      }
+    }
+
+    rows =
+      ConfigView.redact(
+        %{
+          a: String.to_atom(@bot_token),
+          c: String.to_charlist(@bot_token),
+          m: %{@bot_token => true}
+        },
+        schema
+      )
+
+    refute inspect(row(rows, "a").value) =~ "AAGsvh1gVl"
+    refute inspect(row(rows, "c").value) =~ "AAGsvh1gVl"
+    refute inspect(row(rows, "m").value) =~ "AAGsvh1gVl"
+  end
+
+  test "ordinary integer lists are left as lists, not stringified" do
+    schema = %{"properties" => %{"nums" => %{"type" => "array"}}}
+    [row] = ConfigView.redact(%{nums: [104, 105, 33]}, schema)
+    assert row.value == [104, 105, 33]
+  end
+
+  test "empty-user URL userinfo (redis://:pass@) is masked" do
+    schema = %{"properties" => %{"redis" => %{"type" => "string"}}}
+    [row] = ConfigView.redact(%{redis: "redis://:hunter2@cache:6379/0"}, schema)
+    refute row.value =~ "hunter2"
+    assert row.value =~ "cache:6379"
+  end
+
+  test "a misconfigured *_env holding the literal token does not render it" do
+    schema = %{"properties" => %{"bot_token_env" => %{"type" => "string", "x-secret" => true}}}
+    [row] = ConfigView.redact(%{bot_token_env: @bot_token}, schema)
+    refute row.value =~ "AAGsvh1gVl"
+  end
+
+  test "an unrenderable value fails closed to a mask, not a crash" do
+    schema = %{"properties" => %{"bad" => %{"type" => "array"}}}
+    # improper list — Enum.map raises; the page must survive
+    rows = ConfigView.redact(%{bad: [1 | 2]}, schema)
+    assert row(rows, "bad").value == "•••"
+  end
+
   test "scrubbed output stays JSON-encodable" do
     schema = %{"properties" => %{"store" => %{}, "opts" => %{}}}
 
