@@ -60,6 +60,48 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     end
   end
 
+  describe "swarm boot reconciliation" do
+    test "drops only live state from before the current boot" do
+      old_cid = "tg:1:0"
+      new_cid = "tg:2:0"
+
+      state =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => old_cid}),
+          ev("routed", 2, 101.0, %{"cid" => old_cid, "slot" => "wingston_agent_1"}),
+          ev("llm_proxy_block", 3, 150.0, %{"cid" => "tg:3:0", "reason" => "budget"}),
+          ev("request_open", 4, 201.0, %{"cid" => new_cid}),
+          ev("routed", 5, 202.0, %{"cid" => new_cid, "slot" => "wingston_agent_2"})
+        ])
+
+      state = Reducer.reconcile_boot(state, 200.0)
+
+      refute Map.has_key?(state.open, old_cid)
+      refute Map.has_key?(state.agents, "wingston_agent_1")
+      assert Map.has_key?(state.open, new_cid)
+      assert Map.has_key?(state.agents, "wingston_agent_2")
+      assert [%{kind: "llm_proxy_block"}] = state.issues
+      assert state.counters.stalled == 0
+    end
+
+    test "keeps evidence within the boot-time rounding tolerance" do
+      state = fold([ev("request_open", 1, 199.5, %{"cid" => @cid})])
+      assert Map.has_key?(Reducer.reconcile_boot(state, 200.0).open, @cid)
+    end
+
+    test "keeps a restored episode when the same cid opened again after boot" do
+      state =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => @cid}),
+          ev("request_open", 2, 201.0, %{"cid" => @cid})
+        ])
+
+      assert state.open[@cid].opened_at == 100.0
+      assert state.open[@cid].last_open == 201.0
+      assert Map.has_key?(Reducer.reconcile_boot(state, 200.0).open, @cid)
+    end
+  end
+
   describe "single request lifecycle" do
     test "a failed delivery (ok: false) never stamps first-feedback — the user saw nothing" do
       state =

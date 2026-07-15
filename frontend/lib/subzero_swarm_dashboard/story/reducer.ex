@@ -58,6 +58,31 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
     }
   end
 
+  @doc """
+  Drop live state whose last evidence predates the current swarm boot.
+
+  Story/issues/counters remain historical; only `open` episodes and agent
+  activity can become impossible after the swarm process restarts. The one
+  second tolerance absorbs uptime rounding at the boot boundary.
+  """
+  def reconcile_boot(%State{} = state, boot_at) when is_number(boot_at) do
+    cutoff = boot_at - 1.0
+
+    %{
+      state
+      | open:
+          Map.reject(state.open, fn {_cid, ep} ->
+            older_than?(ep.last_open || ep.opened_at, cutoff)
+          end),
+        agents:
+          Map.reject(state.agents, fn {_name, ag} ->
+            older_than?(ag.last_act || ag.since, cutoff)
+          end)
+    }
+  end
+
+  def reconcile_boot(%State{} = state, _boot_at), do: state
+
   # ── kind → fold (lifecycle vocabulary identical to the prototype) ────────────
 
   defp fold("request_open", state, %{"cid" => cid} = ev) when is_binary(cid) do
@@ -620,6 +645,9 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   defp put_agent(state, ag), do: %{state | agents: Map.put(state.agents, ag.name, ag)}
   defp put_open(state, ep), do: %{state | open: Map.put(state.open, ep.cid, ep)}
   defp drop_open(state, cid), do: %{state | open: Map.delete(state.open, cid)}
+
+  defp older_than?(ts, cutoff) when is_number(ts), do: ts < cutoff
+  defp older_than?(_ts, _cutoff), do: true
 
   defp push_closed(state, ep),
     do: %{state | closed: Enum.take([ep | state.closed], state.closed_max)}
