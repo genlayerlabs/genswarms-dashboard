@@ -193,6 +193,26 @@ defmodule SubzeroSwarmDashboardWeb.OverviewEventsLiveTest do
       assert has_element?(view, "#serving-tg-1-0", "idle")
     end
 
+    test "orders serving conversations by latest last interaction", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      older = hd(@snap["sessions"])
+
+      newer = %{
+        older
+        | "session_id" => "tg:2:0",
+          "agent" => "wingston_agent_2",
+          "last_activity" => "2026-06-12T09:05:00Z",
+          "user" => %{"handle" => "newer", "name" => "Newer"}
+      }
+
+      push_snap(view, put_in(@snap, ["sessions"], [older, newer]))
+      push_story(view)
+
+      assert has_element?(view, "#agents-strip a:nth-child(1)#serving-tg-2-0")
+      assert has_element?(view, "#agents-strip a:nth-child(2)#serving-tg-1-0")
+    end
+
     test "an in-flight conversation not yet on the roster still gets a serving chip",
          %{conn: conn} do
       {:ok, view, _} = live(conn, "/")
