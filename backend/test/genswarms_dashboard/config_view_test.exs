@@ -74,7 +74,7 @@ defmodule GenswarmsDashboard.ConfigViewTest do
   # The schema layer decides WHAT appears; these pin that a secret can't ride
   # inside an allowed value even when the schema misdeclares the field.
 
-  @bot_token "8327779075:AAGsvh1gVl0T102YbyRT2gx51C3s3HeRUkc"
+  @bot_token "1234500000:AAFAKEfixtureFAKEfixtureFAKEfixtureXYZ"
 
   test "prod leak shape: in-schema tuple carrying a nested bot_token is scrubbed" do
     # `store` declared "string" but actually {Module, opts} — the 2026-07-15
@@ -91,7 +91,7 @@ defmodule GenswarmsDashboard.ConfigViewTest do
     assert row.value =~ "Some.Store"
     assert row.value =~ "offset_file"
     refute row.value =~ @bot_token
-    refute row.value =~ "AAGsvh1gVl"
+    refute row.value =~ "AAFAKEfixture"
     assert row.value =~ "•••"
   end
 
@@ -175,9 +175,9 @@ defmodule GenswarmsDashboard.ConfigViewTest do
         schema
       )
 
-    refute inspect(row(rows, "a").value) =~ "AAGsvh1gVl"
-    refute inspect(row(rows, "c").value) =~ "AAGsvh1gVl"
-    refute inspect(row(rows, "m").value) =~ "AAGsvh1gVl"
+    refute inspect(row(rows, "a").value) =~ "AAFAKEfixture"
+    refute inspect(row(rows, "c").value) =~ "AAFAKEfixture"
+    refute inspect(row(rows, "m").value) =~ "AAFAKEfixture"
   end
 
   test "ordinary integer lists are left as lists, not stringified" do
@@ -196,7 +196,7 @@ defmodule GenswarmsDashboard.ConfigViewTest do
   test "a misconfigured *_env holding the literal token does not render it" do
     schema = %{"properties" => %{"bot_token_env" => %{"type" => "string", "x-secret" => true}}}
     [row] = ConfigView.redact(%{bot_token_env: @bot_token}, schema)
-    refute row.value =~ "AAGsvh1gVl"
+    refute row.value =~ "AAFAKEfixture"
   end
 
   test "an unrenderable value fails closed to a mask, not a crash" do
@@ -216,7 +216,7 @@ defmodule GenswarmsDashboard.ConfigViewTest do
       )
 
     assert {:ok, encoded} = Jason.encode(rows)
-    refute encoded =~ "AAGsvh1gVl"
+    refute encoded =~ "AAFAKEfixture"
   end
 
   test "build/2 assembles per-object views with handler name and has_schema flag" do
