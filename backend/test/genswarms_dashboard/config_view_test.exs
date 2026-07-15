@@ -70,6 +70,105 @@ defmodule GenswarmsDashboard.ConfigViewTest do
     assert {:ok, _} = Jason.encode(rows)
   end
 
+  # ── universal secret scrub ─────────────────────────────────────────────────
+  # The schema layer decides WHAT appears; these pin that a secret can't ride
+  # inside an allowed value even when the schema misdeclares the field.
+
+  @bot_token "8327779075:AAGsvh1gVl0T102YbyRT2gx51C3s3HeRUkc"
+
+  test "prod leak shape: in-schema tuple carrying a nested bot_token is scrubbed" do
+    # `store` declared "string" but actually {Module, opts} — the 2026-07-15
+    # prod leak. The module and benign opts stay visible; the token does not.
+    schema = %{"properties" => %{"store" => %{"type" => "string"}}}
+
+    [row] =
+      ConfigView.redact(
+        %{store: {Some.Store, %{offset_file: "/data/getUpdates.offset", bot_token: @bot_token}}},
+        schema
+      )
+
+    assert is_binary(row.value)
+    assert row.value =~ "Some.Store"
+    assert row.value =~ "offset_file"
+    refute row.value =~ @bot_token
+    refute row.value =~ "AAGsvh1gVl"
+    assert row.value =~ "•••"
+  end
+
+  test "secret-smelling keys are scrubbed at any nesting depth, in maps and keyword lists" do
+    schema = %{"properties" => %{"opts" => %{"type" => "object"}, "kw" => %{"type" => "array"}}}
+
+    rows =
+      ConfigView.redact(
+        %{
+          opts: %{outer: %{api_key: "sk-live-whatever", plain: "ok"}},
+          kw: [bot_token: "raw-secret", pool_size: 9]
+        },
+        schema
+      )
+
+    # rendered maps stringify atom keys via inspect (":outer")
+    opts = row(rows, "opts").value
+    assert opts[":outer"][":api_key"] == "•••"
+    assert opts[":outer"][":plain"] == "ok"
+
+    kw = inspect(row(rows, "kw").value)
+    refute kw =~ "raw-secret"
+    assert kw =~ "pool_size"
+  end
+
+  test "credential-shaped values are masked even under innocent keys (URL-embedded token)" do
+    schema = %{"properties" => %{"endpoint" => %{"type" => "string"}}}
+
+    [row] =
+      ConfigView.redact(
+        %{endpoint: "https://api.telegram.org/bot#{@bot_token}/getUpdates"},
+        schema
+      )
+
+    refute row.value =~ @bot_token
+    assert row.value =~ "api.telegram.org"
+    assert row.value =~ "getUpdates"
+  end
+
+  test "url userinfo is masked; *_env names and non-secret module atoms survive the scrub" do
+    schema = %{
+      "properties" => %{
+        "dsn" => %{"type" => "string"},
+        "bot_token_env" => %{"type" => "string", "x-secret" => true},
+        "client" => %{"type" => "string"}
+      }
+    }
+
+    rows =
+      ConfigView.redact(
+        %{
+          dsn: "postgres://wingston:hunter2@db:5432/prod",
+          bot_token_env: "WINGSTON_TELEGRAM_BOT_TOKEN",
+          client: Genswarms.Telegram.Client.Curl
+        },
+        schema
+      )
+
+    refute row(rows, "dsn").value =~ "hunter2"
+    assert row(rows, "dsn").value =~ "db:5432/prod"
+    assert row(rows, "bot_token_env").value == "WINGSTON_TELEGRAM_BOT_TOKEN"
+    assert row(rows, "client").value == "Genswarms.Telegram.Client.Curl"
+  end
+
+  test "scrubbed output stays JSON-encodable" do
+    schema = %{"properties" => %{"store" => %{}, "opts" => %{}}}
+
+    rows =
+      ConfigView.redact(
+        %{store: {Mod, %{bot_token: @bot_token}}, opts: %{secret_sauce: [{:a, 1}]}},
+        schema
+      )
+
+    assert {:ok, encoded} = Jason.encode(rows)
+    refute encoded =~ "AAGsvh1gVl"
+  end
+
   test "build/2 assembles per-object views with handler name and has_schema flag" do
     config = %{
       objects: [

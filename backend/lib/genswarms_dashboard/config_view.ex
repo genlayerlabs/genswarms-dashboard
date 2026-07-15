@@ -14,6 +14,15 @@ defmodule GenswarmsDashboard.ConfigView do
       treated as sensitive)
     * object with NO schema              → every value elided, names only
 
+  On top of the schema decision, EVERY shown value passes through a secret
+  scrub (`deep_scrub/1`) before serialization: nested map/keyword keys that
+  smell like credentials have their values replaced with `•••`, and
+  credential-shaped substrings inside any binary are masked. The schema layer
+  decides WHAT appears; the scrub guarantees a secret can't ride inside an
+  allowed value — a schema can misdeclare a field (a `store` declared
+  "string" that actually carries `{Module, %{bot_token: ...}}`), and the
+  page must stay safe anyway.
+
   Schema discovery: the package's `swarm-object.json` sits next to the
   handler's source (same notarized dir the loader trusts) — resolved from
   `module_info(:compile)[:source]` and walked upward a bounded number of
@@ -27,6 +36,20 @@ defmodule GenswarmsDashboard.ConfigView do
   # deepest known layout: <pkg root>/lib/a/b/objects/handler.ex → 5 hops to root
   @max_walk_up 6
   @max_value_chars 400
+
+  @redacted "•••"
+
+  # Key names that smell like credentials, matched case-insensitively against
+  # map keys and keyword-tuple keys at ANY nesting depth. `*_env` names are
+  # exempt — by contract they carry the env var NAME, never the secret.
+  @secret_key_re ~r/token|secret|passw|api_?key|credential|private_key|cookie/i
+
+  # Credential-shaped substrings caught even under an innocent key: Telegram
+  # bot tokens, sk- style API keys, GitHub/Slack token prefixes, bearer
+  # headers, AWS access key ids, and URL userinfo (https://user:pass@host).
+  # (no leading \b on the Telegram pattern: ".../bot<digits>:..." embeds the
+  # token right after a word char, where \b never fires)
+  @secret_value_re ~r"\d{8,11}:[A-Za-z0-9_-]{30,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b|Bearer\s+\S{12,}|\bAKIA[0-9A-Z]{16}\b|(?<=://)[^/\s:@]+:[^/\s@]+(?=@)"
 
   @doc """
   Build the wire view from a full swarm config map (`SwarmManager.get_full_config/1`
@@ -87,26 +110,57 @@ defmodule GenswarmsDashboard.ConfigView do
 
   defp displayable_value(_row, value), do: safe_render(value)
 
-  # ── JSON-safe rendering (configs carry atoms, modules, funs, tuples) ────────
+  # ── secret scrub (runs on EVERY shown value, before serialization) ──────────
 
-  defp safe_render(v) when is_binary(v), do: String.slice(v, 0, @max_value_chars)
-  defp safe_render(v) when is_number(v) or is_boolean(v) or is_nil(v), do: v
-  defp safe_render(v) when is_atom(v), do: inspect(v)
+  # Scrubs the Elixir TERM, not the rendered string: the secret is gone before
+  # inspect/1 can print it, and the binary regex pass is the second net rather
+  # than the only one.
+  defp deep_scrub(v) when is_binary(v), do: String.replace(v, @secret_value_re, @redacted)
 
-  defp safe_render(v) when is_list(v) do
-    if length(v) <= 50, do: Enum.map(v, &safe_render/1), else: inspect_bounded(v)
+  defp deep_scrub(v) when is_struct(v), do: v |> Map.from_struct() |> deep_scrub()
+
+  defp deep_scrub(v) when is_map(v),
+    do: Map.new(v, fn {k, val} -> {k, scrub_entry(k, val)} end)
+
+  defp deep_scrub(v) when is_list(v), do: Enum.map(v, &deep_scrub/1)
+
+  # keyword-list entries follow the same key rule as map keys
+  defp deep_scrub({k, val}) when is_atom(k), do: {k, scrub_entry(k, val)}
+
+  defp deep_scrub(v) when is_tuple(v),
+    do: v |> Tuple.to_list() |> Enum.map(&deep_scrub/1) |> List.to_tuple()
+
+  defp deep_scrub(v), do: v
+
+  defp scrub_entry(key, val), do: if(secret_key?(key), do: @redacted, else: deep_scrub(val))
+
+  defp secret_key?(key) do
+    name = if is_binary(key), do: key, else: to_string_key(key)
+    Regex.match?(@secret_key_re, name) and not String.ends_with?(name, "_env")
   end
 
-  defp safe_render(v) when is_map(v) do
+  # ── JSON-safe rendering (configs carry atoms, modules, funs, tuples) ────────
+
+  defp safe_render(v), do: v |> deep_scrub() |> render()
+
+  defp render(v) when is_binary(v), do: String.slice(v, 0, @max_value_chars)
+  defp render(v) when is_number(v) or is_boolean(v) or is_nil(v), do: v
+  defp render(v) when is_atom(v), do: inspect(v)
+
+  defp render(v) when is_list(v) do
+    if length(v) <= 50, do: Enum.map(v, &render/1), else: inspect_bounded(v)
+  end
+
+  defp render(v) when is_map(v) do
     if map_size(v) <= 50 do
-      Map.new(v, fn {k, val} -> {to_string_key(k), safe_render(val)} end)
+      Map.new(v, fn {k, val} -> {to_string_key(k), render(val)} end)
     else
       inspect_bounded(v)
     end
   end
 
   # functions, pids, tuples, refs — opaque but identifiable
-  defp safe_render(v), do: inspect_bounded(v)
+  defp render(v), do: inspect_bounded(v)
 
   defp to_string_key(k) when is_binary(k), do: k
   defp to_string_key(k), do: inspect(k)
