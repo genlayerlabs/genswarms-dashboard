@@ -139,7 +139,7 @@ defmodule SubzeroSwarmDashboard.Story.State do
       compactions: c.compactions,
       inbox_full: c.inbox_full,
       failures: c.failures,
-      stalled: c.stalled,
+      stalled: Enum.count(state.open, fn {_cid, ep} -> ep.stalled end),
       feed_gaps: c.feed_gaps
     }
   end

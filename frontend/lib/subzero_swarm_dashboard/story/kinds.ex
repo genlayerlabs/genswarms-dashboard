@@ -72,6 +72,7 @@ defmodule SubzeroSwarmDashboard.Story.Kinds do
      %{sample: %{"cid" => "tg:1:0", "reason" => "budget"}, story: true, canvas: true}},
     # no llm node in the pipeline layout → nothing honest to animate
     {"llm_proxy_degraded", %{sample: %{"path" => "/v1/messages"}, story: true, canvas: false}},
+    {"proc_crash", %{sample: %{"module" => "Wingston.Worker"}, story: true, canvas: false}},
     # sample uses a FAILED run: ok runs are story-silent by design (they fire
     # every few minutes) but still reach the canvas (cron ✓ float)
     {"job_run", %{sample: %{"name" => "daily_tip", "status" => "error"}, story: true, canvas: true}},

@@ -200,13 +200,16 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     test "a failure verdict is an issue (and counts against the ok-rate)" do
       state =
         fold([
-          ev("browse_dispatch", 1, 100.0, %{"agent" => @agent}),
-          ev("browse_done", 2, 101.0, %{"agent" => @agent, "verdict" => "not_allowed"})
+          ev("request_open", 1, 99.0, %{"cid" => @cid}),
+          ev("routed", 2, 99.5, %{"cid" => @cid, "slot" => @agent}),
+          ev("browse_dispatch", 3, 100.0, %{"agent" => @agent}),
+          ev("browse_done", 4, 101.0, %{"agent" => @agent, "verdict" => "not_allowed"})
         ])
 
       assert state.counters.browse_ok == 0
       assert state.counters.browse_total == 1
       assert [issue] = state.issues
+      assert issue.cid == @cid
       assert issue.text =~ "not_allowed"
       assert hd(state.story).issue
     end
@@ -339,6 +342,47 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       # a failed delivery does NOT close the episode
       assert state.open[@cid]
       assert [%{kind: "reply_failed"}, %{kind: "reply_sent"}] = state.issues
+    end
+
+    test "an unrouted inbox rejection closes only that rejected request" do
+      rejected =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => @cid}),
+          ev("inbox_full", 2, 101.0, %{"cid" => @cid, "slot" => @agent})
+        ])
+
+      assert rejected.open == %{}
+      assert [%{status: "rejected"}] = State.episodes(rejected, @cid)
+      assert Reducer.tick(rejected, 1_000.0).counters.stalled == 0
+
+      active =
+        fold([
+          ev("request_open", 1, 100.0, %{"cid" => @cid}),
+          ev("routed", 2, 100.5, %{"cid" => @cid, "slot" => @agent}),
+          ev("request_open", 3, 101.0, %{"cid" => @cid}),
+          ev("inbox_full", 4, 101.1, %{"cid" => @cid, "slot" => @agent})
+        ])
+
+      assert active.open[@cid].agent == @agent
+    end
+
+    test "suppression and LLM failure settle their open turns" do
+      for {kind, fields, status} <- [
+            {"reply_suppressed", %{}, "suppressed"},
+            {"llm_error", %{"class" => "api"}, "llm_error"}
+          ] do
+        state =
+          fold([
+            ev("request_open", 1, 100.0, %{"cid" => @cid}),
+            ev("routed", 2, 100.5, %{"cid" => @cid, "slot" => @agent}),
+            ev(kind, 3, 101.0, Map.put(fields, "cid", @cid))
+          ])
+
+        assert state.open == %{}
+        assert [%{status: ^status}] = State.episodes(state, @cid)
+        assert state.agents[@agent].state == :idle
+        assert Reducer.tick(state, 1_000.0).counters.stalled == 0
+      end
     end
 
     test "push_failed is a failure issue naming the campaign; campaignless still folds" do
@@ -568,6 +612,22 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       assert State.percentile([5.0], 0.95) == 5.0
       assert State.percentile([4.0, 2.0, 3.0, 1.0], 0.5) == 2.0
     end
+
+    test "stalled KPI is live while the durable counter remains cumulative" do
+      state =
+        fold(
+          [ev("request_open", 1, 100.0, %{"cid" => @cid})],
+          State.new(stall_after_ms: 5_000)
+        )
+        |> Reducer.tick(106.0)
+
+      assert State.summary(state).kpis.stalled == 1
+      assert state.counters.stalled == 1
+
+      state = fold([ev("reply_sent", 2, 107.0, %{"cid" => @cid, "ok" => true})], state)
+      assert State.summary(state).kpis.stalled == 0
+      assert state.counters.stalled == 1
+    end
   end
 
   describe "ring bounds" do
@@ -619,6 +679,13 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
       state = Reducer.tick(state, 401.0)
       assert state.agents[@agent].state == :idle
     end
+
+    test "spawning also decays after the longer silence window" do
+      state = fold([ev("spawn_start", 1, 100.0, %{"slot" => @agent})])
+
+      assert Reducer.tick(state, 350.0).agents[@agent].state == :spawning
+      assert Reducer.tick(state, 401.0).agents[@agent].state == :idle
+    end
   end
 
   describe "chatter" do
@@ -630,7 +697,7 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
   end
 
   describe "spawning claims" do
-    test "a claim routed to a spawning slot reads 'queued while spawning'" do
+    test "a successful route moves a spawning slot into its first turn" do
       state =
         fold([
           ev("request_open", 1, 100.0, %{"cid" => @cid}),
@@ -638,7 +705,9 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
           ev("routed", 3, 101.0, %{"cid" => @cid, "slot" => @agent})
         ])
 
-      assert Enum.any?(state.story, &(&1.text =~ "queued while spawning"))
+      assert state.agents[@agent].state == :thinking
+      assert state.agents[@agent].queue == 0
+      assert Enum.any?(state.story, &(&1.text =~ "claims #{@cid}"))
       refute Enum.any?(state.story, &(&1.text =~ "queued behind current turn"))
     end
   end
@@ -675,6 +744,12 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
   end
 
   describe "package incident kinds (registry parity)" do
+    test "proc_crash renders an issue naming the crashed module" do
+      state = fold([ev("proc_crash", 1, 100.0, %{"module" => "Wingston.Worker"})])
+      assert [%{kind: "proc_crash", issue: true, text: text}] = state.issues
+      assert text =~ "Wingston.Worker"
+    end
+
     test "llm_proxy_block renders an issue row naming the cap" do
       state = fold([ev("llm_proxy_block", 1, 100.0, %{"cid" => @cid, "reason" => "budget"})])
       assert [row] = state.story

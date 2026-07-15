@@ -539,7 +539,8 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     <.panel id="issues-panel" title="Issues">
       <:meta>
         <span class="font-mono">
-          last 24h · observed since <.local_time id="issues-since" ts={@story[:baseline_at]} />
+          latest issues · within 24h · observed since
+          <.local_time id="issues-since" ts={@story[:baseline_at]} />
         </span>
       </:meta>
       <div :if={@issues == []} class="text-sm opacity-60 py-1">
