@@ -316,8 +316,8 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   # Leased sessions (snapshot truth: who holds an agent) joined with the feed's
   # per-slot state, plus in-flight episodes whose conversation hasn't reached
-  # the snapshot roster yet (first turn) — active first, then queued, then by
-  # slot recency.
+  # the snapshot roster yet (first turn). Most recently active conversation
+  # first; cid is the deterministic tie-break.
   defp serving_rows(snapshot, story) do
     slot_state = Map.new(story[:agents] || [], &{&1.name, &1})
     sessions = (is_map(snapshot) && snapshot["sessions"]) || []
@@ -335,7 +335,8 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           state: (ag && ag.state) || :idle,
           wait_on: ag && ag.wait_on,
           queue: (ag && ag.queue) || 0,
-          elapsed_s: ag && ag.elapsed_s
+          elapsed_s: ag && ag.elapsed_s,
+          last_activity: activity_time(s["last_activity"])
         }
       end
 
@@ -356,17 +357,20 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
           state: (ag && ag.state) || :thinking,
           wait_on: ag && ag.wait_on,
           queue: (ag && ag.queue) || 0,
-          elapsed_s: ep.elapsed_s
+          elapsed_s: ep.elapsed_s,
+          last_activity: ep.opened_at
         }
       end
 
-    Enum.sort_by(leased ++ in_flight, &{serving_rank(&1.state), -&1.queue, -(&1.elapsed_s || 0)})
+    Enum.sort_by(leased ++ in_flight, &{-(&1.last_activity || 0), &1.cid})
   end
 
-  defp serving_rank(:thinking), do: 0
-  defp serving_rank(:waiting), do: 1
-  defp serving_rank(:spawning), do: 2
-  defp serving_rank(_state), do: 3
+  defp activity_time(iso) do
+    case parse_dt(iso) do
+      {:ok, dt} -> DateTime.to_unix(dt, :millisecond) / 1_000
+      _ -> nil
+    end
+  end
 
   # @handle when the roster knows it, else the session label, else the raw chat
   # part of the cid — same fallback ladder the story fold uses.
