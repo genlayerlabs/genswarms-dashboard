@@ -159,6 +159,21 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             />
           </.nav_group>
         </ul>
+        <%!-- Applies the remembered collapsed state DURING parse, before
+              first paint — without this, a full page load flashes every
+              section open until the LiveView hook mounts (the NavGroups
+              hook still owns the state from then on). Same trick as a
+              dark-mode flash fix; keep the key in sync with nav_groups.js. --%>
+        <script phx-no-curly-interpolation>
+          (() => {
+            let closed
+            try { closed = new Set(JSON.parse(localStorage.getItem("dash-nav-groups-closed") || "[]")) }
+            catch { closed = new Set() }
+            document.querySelectorAll("details.nav-group").forEach((d) => {
+              if (closed.has(d.dataset.group)) d.open = false
+            })
+          })()
+        </script>
         <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
       </aside>
 
