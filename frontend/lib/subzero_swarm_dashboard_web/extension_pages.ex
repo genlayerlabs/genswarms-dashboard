@@ -427,12 +427,42 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         "label" => String.slice(label, 0, 40),
         "icon" => normalize_icon(page["icon"]),
         "meta" => display(page["meta"]),
+        "group" => normalize_group(page["group"]),
         "sections" => sections(page)
       }
     end
   end
 
   defp normalize_page(_), do: nil
+
+  @doc """
+  Sidebar grouping: `{ungrouped_pages, [{group_label, pages}]}`, groups in
+  first-seen order. A page opts in with `"group" => "LLM"` (declared by the
+  producer, or stamped by the host onto pages it aggregates — hosts own their
+  sidebar taxonomy, so already-published packages never need a re-release to
+  be grouped). Ungrouped pages render exactly as before.
+  """
+  def grouped(pages) do
+    {ungrouped, grouped} = Enum.split_with(pages, &is_nil(&1["group"]))
+
+    groups =
+      grouped
+      |> Enum.group_by(& &1["group"])
+      |> Enum.sort_by(fn {group, _} ->
+        Enum.find_index(grouped, &(&1["group"] == group))
+      end)
+
+    {ungrouped, groups}
+  end
+
+  defp normalize_group(group) when is_binary(group) do
+    case String.trim(group) do
+      "" -> nil
+      trimmed -> String.slice(trimmed, 0, 24)
+    end
+  end
+
+  defp normalize_group(_), do: nil
 
   defp normalize_icon(icon) when is_binary(icon) do
     if String.starts_with?(icon, "hero-"), do: icon, else: "hero-puzzle-piece"

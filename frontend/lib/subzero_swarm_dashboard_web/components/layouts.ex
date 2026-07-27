@@ -37,12 +37,15 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   slot :inner_block, required: true
 
   def app(assigns) do
+    {ungrouped_pages, page_groups} =
+      assigns[:snapshot]
+      |> SubzeroSwarmDashboardWeb.ExtensionPages.pages()
+      |> SubzeroSwarmDashboardWeb.ExtensionPages.grouped()
+
     assigns =
       assigns
-      |> assign(
-        :extension_pages,
-        SubzeroSwarmDashboardWeb.ExtensionPages.pages(assigns[:snapshot])
-      )
+      |> assign(:extension_pages, ungrouped_pages)
+      |> assign(:extension_page_groups, page_groups)
       |> assign(:dashboard_title, dashboard_title(assigns[:snapshot], assigns[:swarm]))
 
     ~H"""
@@ -126,6 +129,25 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             icon={page["icon"]}
             label={page["label"]}
           />
+          <%!-- Grouped extension pages: a quiet header per group, pages
+                indented under it. Groups come from page["group"] — declared
+                by the producer or stamped by the host (its sidebar, its
+                taxonomy). --%>
+          <li :for={{group, pages} <- @extension_page_groups} class="mt-1">
+            <div class="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider opacity-40">
+              {group}
+            </div>
+            <ul class="space-y-0.5">
+              <.nav_item
+                :for={page <- pages}
+                active={@active}
+                key={SubzeroSwarmDashboardWeb.ExtensionPages.active_key(page)}
+                href={"/extensions/#{page["id"]}"}
+                icon={page["icon"]}
+                label={page["label"]}
+              />
+            </ul>
+          </li>
           <.nav_item
             active={@active}
             key={:logs}
