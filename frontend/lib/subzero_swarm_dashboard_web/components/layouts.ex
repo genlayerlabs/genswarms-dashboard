@@ -141,13 +141,19 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
                 <.icon name="hero-chevron-right" class="size-3 shrink-0 nav-group-chevron transition-transform" />
                 {group}
               </summary>
+              <%!-- No per-item icons inside a group — heroicon classes are
+                    generated from static source scans, so runtime-supplied
+                    extension icons mostly don't exist and render as blank
+                    gaps (a pre-existing gap this made obvious). Text labels
+                    aligned under the core items' labels read cleaner than a
+                    mixed icon/no-icon column ever did. --%>
               <ul class="space-y-0.5">
                 <.nav_item
                   :for={page <- pages}
                   active={@active}
                   key={SubzeroSwarmDashboardWeb.ExtensionPages.active_key(page)}
                   href={"/extensions/#{page["id"]}"}
-                  icon={page["icon"]}
+                  icon={nil}
                   label={page["label"]}
                 />
               </ul>
