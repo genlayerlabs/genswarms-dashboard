@@ -43,6 +43,46 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageGroupsTest do
            ]
   end
 
+  test "sidebar_plan slots builtin groups (case-insensitive), keeps extra sections in order" do
+    plan =
+      ExtensionPages.sidebar_plan(
+        snap([
+          page("telegram", %{"group" => "swarm"}),
+          page("proxy-router", %{"group" => "LLM"}),
+          page("topups", %{"group" => "Money"}),
+          page("plain"),
+          page("cron-jobs", %{"group" => "System"}),
+          page("growth", %{"group" => "Engagement"})
+        ])
+      )
+
+    assert Enum.map(plan.builtin["swarm"], & &1["id"]) == ["telegram"]
+    assert Enum.map(plan.builtin["llm"], & &1["id"]) == ["proxy-router"]
+    assert Enum.map(plan.builtin["system"], & &1["id"]) == ["cron-jobs"]
+
+    assert Enum.map(plan.extra, fn {g, ps} -> {g, Enum.map(ps, & &1["id"])} end) == [
+             {"Money", ["topups"]},
+             {"Engagement", ["growth"]}
+           ]
+
+    assert Enum.map(plan.ungrouped, & &1["id"]) == ["plain"]
+  end
+
+  test "icons: known names pass, unknown/runtime-only names get the visible fallback" do
+    [known, unknown] =
+      ExtensionPages.pages(
+        snap([
+          page("a", %{"icon" => "hero-credit-card"}),
+          page("b", %{"icon" => "hero-made-up-at-runtime"})
+        ])
+      )
+
+    assert known["icon"] == "hero-credit-card"
+    # a name Tailwind never generated a class for must NOT reach the DOM —
+    # it renders as an invisible blank (the 2026-07-27 mixed-column sidebar)
+    assert unknown["icon"] == "hero-puzzle-piece"
+  end
+
   test "a junk group is dropped, never a crash or an empty header" do
     pages =
       ExtensionPages.pages(
