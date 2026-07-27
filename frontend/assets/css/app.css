@@ -309,3 +309,32 @@ h1, h2 { font-family: var(--font-display); letter-spacing: -0.02em; }
   background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
   opacity: 0.8;
 }
+
+/* Collapsible sidebar groups: the summary row IS the header — one small
+   chevron, nothing else. Suppress BOTH native markers (browser disclosure
+   triangle + DaisyUI's own menu caret ::after) and DaisyUI's nested-list
+   tree (the inline-start margin/padding and the vertical rule), so grouped
+   pages align exactly like every other nav item. DaisyUI 5 styles menus
+   through :where(...) — zero specificity — so plain class selectors win. */
+.nav-group > summary {
+  list-style: none;
+}
+.nav-group > summary::-webkit-details-marker {
+  display: none;
+}
+.nav-group > summary::after {
+  display: none;
+}
+.nav-group[open] > summary .nav-group-chevron {
+  transform: rotate(90deg);
+}
+.nav-group > ul {
+  margin-inline-start: 0;
+  padding-inline-start: 0;
+}
+.nav-group > ul::before {
+  display: none;
+}
+.nav-group > ul :where(li > *) {
+  padding-inline-start: 0.5rem;
+}

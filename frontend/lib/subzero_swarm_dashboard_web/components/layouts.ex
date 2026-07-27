@@ -129,24 +129,29 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             icon={page["icon"]}
             label={page["label"]}
           />
-          <%!-- Grouped extension pages: a quiet header per group, pages
-                indented under it. Groups come from page["group"] — declared
-                by the producer or stamped by the host (its sidebar, its
-                taxonomy). --%>
-          <li :for={{group, pages} <- @extension_page_groups} class="mt-1">
-            <div class="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider opacity-40">
-              {group}
-            </div>
-            <ul class="space-y-0.5">
-              <.nav_item
-                :for={page <- pages}
-                active={@active}
-                key={SubzeroSwarmDashboardWeb.ExtensionPages.active_key(page)}
-                href={"/extensions/#{page["id"]}"}
-                icon={page["icon"]}
-                label={page["label"]}
-              />
-            </ul>
+          <%!-- Grouped extension pages: one native <details> per group — the
+                header IS the toggle row, no extra chrome. Open/closed is a
+                per-browser preference (NavGroups hook, localStorage),
+                reapplied on every patch because the snapshot feed re-renders
+                the sidebar every second. Groups come from page["group"] —
+                declared by the producer or stamped by the host. --%>
+          <li :for={{group, pages} <- @extension_page_groups}>
+            <details class="nav-group" id={"nav-group-#{nav_group_dom_id(group)}"} phx-hook="NavGroups" data-group={group} open>
+              <summary class="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wider opacity-45 hover:opacity-80">
+                <.icon name="hero-chevron-right" class="size-3 shrink-0 nav-group-chevron transition-transform" />
+                {group}
+              </summary>
+              <ul class="space-y-0.5">
+                <.nav_item
+                  :for={page <- pages}
+                  active={@active}
+                  key={SubzeroSwarmDashboardWeb.ExtensionPages.active_key(page)}
+                  href={"/extensions/#{page["id"]}"}
+                  icon={page["icon"]}
+                  label={page["label"]}
+                />
+              </ul>
+            </details>
           </li>
           <.nav_item
             active={@active}
@@ -215,6 +220,12 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   defp feed_label(_story), do: "feed unavailable"
 
   # one title rule for the sidebar and the <title> assign alike
+  # Group labels are free text (host taxonomy); DOM ids are not. Downcase +
+  # strip to a stable, collision-safe-enough id for the hook element.
+  defp nav_group_dom_id(group) do
+    group |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+  end
+
   defp dashboard_title(snapshot, swarm),
     do: SubzeroSwarmDashboardWeb.DashHooks.dashboard_title(snapshot, swarm)
 
