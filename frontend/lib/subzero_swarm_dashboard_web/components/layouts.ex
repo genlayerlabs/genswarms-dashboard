@@ -40,8 +40,8 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
     assigns =
       assigns
       |> assign(
-        :extension_pages,
-        SubzeroSwarmDashboardWeb.ExtensionPages.pages(assigns[:snapshot])
+        :page_plan,
+        SubzeroSwarmDashboardWeb.ExtensionPages.sidebar_plan(assigns[:snapshot])
       )
       |> assign(:dashboard_title, dashboard_title(assigns[:snapshot], assigns[:swarm]))
 
@@ -82,6 +82,11 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
           <.feed_chip story={@story} />
         </div>
 
+        <%!-- ONE system: every row but Overview lives under a collapsible
+              section header; core pages and extension pages share sections
+              (Swarm/LLM/System are the sidebar's own; a page joins one by
+              group name, or brings its own section). Every row has an icon —
+              ExtensionPages guarantees a visible one. --%>
         <ul class="menu w-full gap-0.5 px-0">
           <.nav_item
             active={@active}
@@ -90,57 +95,85 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
             icon="hero-squares-2x2"
             label="Overview"
           />
-          <.nav_item
+          <.nav_group label="Swarm" pages={@page_plan.builtin["swarm"] || []} active={@active}>
+            <.nav_item
+              active={@active}
+              key={:topology}
+              href={~p"/topology"}
+              icon="hero-cpu-chip"
+              label="Topology"
+            />
+            <.nav_item
+              active={@active}
+              key={:sessions}
+              href={~p"/sessions"}
+              icon="hero-chat-bubble-left-right"
+              label="Sessions"
+            />
+            <.nav_item
+              active={@active}
+              key={:events}
+              href={~p"/events"}
+              icon="hero-bolt"
+              label="Events"
+            />
+          </.nav_group>
+          <.nav_group label="LLM" pages={@page_plan.builtin["llm"] || []} active={@active}>
+            <.nav_item
+              active={@active}
+              key={:usage}
+              href={~p"/usage"}
+              icon="hero-chart-bar"
+              label="Usage"
+            />
+          </.nav_group>
+          <.nav_group
+            :for={{group, pages} <- @page_plan.extra}
+            label={group}
+            pages={pages}
             active={@active}
-            key={:topology}
-            href={~p"/topology"}
-            icon="hero-cpu-chip"
-            label="Topology"
-          />
+          >
+          </.nav_group>
           <.nav_item
-            active={@active}
-            key={:sessions}
-            href={~p"/sessions"}
-            icon="hero-chat-bubble-left-right"
-            label="Sessions"
-          />
-          <.nav_item
-            active={@active}
-            key={:events}
-            href={~p"/events"}
-            icon="hero-bolt"
-            label="Events"
-          />
-          <.nav_item
-            active={@active}
-            key={:usage}
-            href={~p"/usage"}
-            icon="hero-chart-bar"
-            label="Usage"
-          />
-          <.nav_item
-            :for={page <- @extension_pages}
+            :for={page <- @page_plan.ungrouped}
             active={@active}
             key={SubzeroSwarmDashboardWeb.ExtensionPages.active_key(page)}
             href={"/extensions/#{page["id"]}"}
             icon={page["icon"]}
             label={page["label"]}
           />
-          <.nav_item
-            active={@active}
-            key={:logs}
-            href={~p"/logs"}
-            icon="hero-document-text"
-            label="Logs"
-          />
-          <.nav_item
-            active={@active}
-            key={:config}
-            href={~p"/config"}
-            icon="hero-adjustments-horizontal"
-            label="Config"
-          />
+          <.nav_group label="System" pages={@page_plan.builtin["system"] || []} active={@active}>
+            <.nav_item
+              active={@active}
+              key={:logs}
+              href={~p"/logs"}
+              icon="hero-document-text"
+              label="Logs"
+            />
+            <.nav_item
+              active={@active}
+              key={:config}
+              href={~p"/config"}
+              icon="hero-adjustments-horizontal"
+              label="Config"
+            />
+          </.nav_group>
         </ul>
+        <%!-- Applies the remembered collapsed state DURING parse, before
+              first paint — without this, a full page load flashes every
+              section open until the LiveView hook mounts (the NavGroups
+              hook still owns the state from then on). Same trick as a
+              dark-mode flash fix; keep the key in sync with nav_groups.js. --%>
+        <script phx-no-curly-interpolation>
+          (() => {
+            let closed
+            try { closed = new Set(JSON.parse(localStorage.getItem("dash-nav-groups-closed") || "[]")) }
+            catch { closed = new Set() }
+            document.querySelectorAll("details.nav-group").forEach((d) => {
+              if (closed.has(d.dataset.group)) d.open = false
+            })
+          })()
+        </script>
         <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
       </aside>
 
@@ -193,6 +226,47 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   defp feed_label(_story), do: "feed unavailable"
 
   # one title rule for the sidebar and the <title> assign alike
+  # One collapsible sidebar section: native <details>, the header IS the
+  # toggle row. Open/closed is a per-browser preference (NavGroups hook,
+  # localStorage) reapplied on every patch — the snapshot feed re-renders
+  # the sidebar every second. Core items ride the slot; extension pages the
+  # `pages` attr; both render identically inside.
+  defp nav_group(assigns) do
+    ~H"""
+    <li>
+      <details
+        class="nav-group"
+        id={"nav-group-#{nav_group_dom_id(@label)}"}
+        phx-hook="NavGroups"
+        data-group={@label}
+        open
+      >
+        <summary class="flex items-center gap-1.5 px-2 py-1 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wider opacity-45 hover:opacity-80">
+          <.icon name="hero-chevron-right" class="size-3 shrink-0 nav-group-chevron transition-transform" />
+          {@label}
+        </summary>
+        <ul class="space-y-0.5">
+          {render_slot(@inner_block)}
+          <.nav_item
+            :for={page <- @pages}
+            active={@active}
+            key={SubzeroSwarmDashboardWeb.ExtensionPages.active_key(page)}
+            href={"/extensions/#{page["id"]}"}
+            icon={page["icon"]}
+            label={page["label"]}
+          />
+        </ul>
+      </details>
+    </li>
+    """
+  end
+
+  # Group labels are free text (host taxonomy); DOM ids are not. Downcase +
+  # strip to a stable, collision-safe-enough id for the hook element.
+  defp nav_group_dom_id(group) do
+    group |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+  end
+
   defp dashboard_title(snapshot, swarm),
     do: SubzeroSwarmDashboardWeb.DashHooks.dashboard_title(snapshot, swarm)
 
