@@ -21,6 +21,15 @@ defmodule GenswarmsDashboard.Plug do
   plug(:match)
   plug(:dispatch)
 
+  # A single listener can expose every swarm in a co-located engine BEAM. This
+  # is the embedded-fleet shape used by Strategivm.
+  get "/api/swarms" do
+    case live_swarms() do
+      {:ok, swarms} -> json(conn, 200, %{swarms: swarms, count: length(swarms)})
+      {:error, _} -> json(conn, 503, %{error: "swarm_list_unavailable"})
+    end
+  end
+
   # GET /api/swarms/:name/dashboard  → the aggregate envelope
   get "/api/swarms/:name/dashboard" do
     case Aggregate.build(name) do
@@ -128,6 +137,36 @@ defmodule GenswarmsDashboard.Plug do
     end
   end
 
+  # Persistent coding agents are not transport sessions. Keep their diagnostic
+  # reads on this token-gated, read-only surface so observers do not need the
+  # engine's full mutation credential.
+  get "/api/swarms/:name/agents" do
+    case swarm_agents(name) do
+      {:ok, agents} -> json(conn, 200, %{swarm: name, agents: agents})
+      {:error, :not_found} -> json(conn, 404, %{error: "swarm_not_found"})
+      {:error, _} -> json(conn, 503, %{error: "agent_status_unavailable"})
+    end
+  end
+
+  get "/api/swarms/:name/agents/:agent/history" do
+    limit =
+      conn |> fetch_query_params() |> Map.get(:query_params) |> Map.get("limit") |> to_int(100)
+
+    case agent_history(name, agent, limit) do
+      {:ok, history} -> json(conn, 200, %{swarm: name, agent: agent, history: history})
+      {:error, :not_found} -> json(conn, 404, %{error: "agent_not_found"})
+      {:error, _} -> json(conn, 503, %{error: "agent_history_unavailable"})
+    end
+  end
+
+  get "/api/swarms/:name/agents/:agent/logs" do
+    case agent_logs(name, agent) do
+      {:ok, logs} -> json(conn, 200, %{swarm: name, agent: agent, logs: logs})
+      {:error, :not_found} -> json(conn, 404, %{error: "agent_not_found"})
+      {:error, _} -> json(conn, 503, %{error: "agent_logs_unavailable"})
+    end
+  end
+
   # CORS preflight for the browser UI (read-only GETs from another origin/port).
   # NOTE: this sits AFTER :auth, so preflight is token-gated too. Intentional: the real
   # frontend is a server-side Phoenix app sending the header — no browser preflight path.
@@ -189,6 +228,144 @@ defmodule GenswarmsDashboard.Plug do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(status, Jason.encode!(body))
+  end
+
+  # ── embedded-fleet + persistent-agent reads ─────────────────────────────────
+  defp live_swarms do
+    swarms =
+      Genswarms.SwarmManager.list()
+      |> Enum.map(fn
+        %{name: name} = swarm ->
+          %{
+            name: to_string(name),
+            status: to_string(Map.get(swarm, :status, :unknown)),
+            agents: Map.get(swarm, :agent_count, 0),
+            objects: Map.get(swarm, :object_count, 0)
+          }
+
+        name ->
+          %{name: to_string(name), status: "unknown", agents: 0, objects: 0}
+      end)
+      |> Enum.sort_by(& &1.name)
+
+    {:ok, swarms}
+  rescue
+    _ -> {:error, :unavailable}
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
+
+  defp swarm_agents(swarm) do
+    case Genswarms.SwarmManager.status(swarm) do
+      {:ok, status} -> {:ok, Enum.map(status.agents || [], &safe_agent_status/1)}
+      {:error, :not_found} -> {:error, :not_found}
+      _ -> {:error, :unavailable}
+    end
+  rescue
+    _ -> {:error, :unavailable}
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
+
+  # Tmux session metadata also contains host workspaces and executable paths;
+  # only the attach identity/lifecycle fields cross the dashboard boundary.
+  defp safe_agent_status(%{} = status) do
+    %{
+      name: string_field(status, :name, "unknown"),
+      state: string_field(status, :state, "unknown"),
+      backend: status |> get_any(:backend) |> safe_scalar(),
+      inbox_size: status |> get_any(:inbox_size) |> safe_number(),
+      message_count: status |> get_any(:message_count) |> safe_number(),
+      last_activity: get_any(status, :last_activity),
+      turn_id: status |> get_any(:turn_id) |> safe_scalar(),
+      attention_reason: status |> get_any(:attention_reason) |> safe_scalar(),
+      session: safe_session(get_any(status, :session))
+    }
+  end
+
+  defp safe_agent_status(other), do: %{name: to_string(other), state: "unknown"}
+
+  defp safe_session(%{} = session) do
+    terminal =
+      session
+      |> Map.take([
+        :transport,
+        :client,
+        :session,
+        :window,
+        :pane_id,
+        :phase,
+        :submission_pending,
+        :submission_attempts
+      ])
+      |> Map.new(fn {key, value} -> {key, safe_scalar(value)} end)
+
+    runner =
+      case get_any(session, :runner) do
+        %{} = value ->
+          value
+          |> Map.take([
+            :kind,
+            :network,
+            :filesystem_isolation,
+            :process_isolation,
+            :privilege_mode
+          ])
+          |> Map.new(fn {key, item} -> {key, safe_scalar(item)} end)
+
+        _ ->
+          nil
+      end
+
+    if runner, do: Map.put(terminal, :runner, runner), else: terminal
+  end
+
+  defp safe_session(_), do: nil
+
+  defp safe_scalar(value) when is_atom(value) and value not in [nil, true, false],
+    do: to_string(value)
+
+  defp safe_scalar(value) when is_binary(value) or is_boolean(value) or is_number(value),
+    do: value
+
+  defp safe_scalar(_), do: nil
+
+  defp safe_number(value) when is_number(value), do: value
+  defp safe_number(_), do: 0
+
+  defp string_field(map, key, default) do
+    case get_any(map, key) do
+      nil -> default
+      value -> to_string(value)
+    end
+  end
+
+  defp get_any(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
+
+  defp agent_history(swarm, agent, limit) do
+    with {:ok, agent_name} <- existing_agent(agent) do
+      {:ok, Genswarms.Agents.AgentServer.get_history(swarm, agent_name, limit) || []}
+    end
+  rescue
+    _ -> {:error, :not_found}
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  defp agent_logs(swarm, agent) do
+    with {:ok, agent_name} <- existing_agent(agent) do
+      {:ok, Genswarms.Agents.AgentServer.get_logs(swarm, agent_name) || []}
+    end
+  rescue
+    _ -> {:error, :not_found}
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
+  defp existing_agent(name) do
+    {:ok, String.to_existing_atom(name)}
+  rescue
+    ArgumentError -> {:error, :not_found}
   end
 
   # Positive-int parse with a generous cap: query params size result sets / time windows

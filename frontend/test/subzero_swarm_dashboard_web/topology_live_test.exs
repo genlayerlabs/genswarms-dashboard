@@ -9,7 +9,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
 
     assert has_element?(view, ~s(#pipeline[phx-hook="Pipeline"][phx-update="ignore"]))
     refute has_element?(view, ~s(#pipeline[data-debug]))
-    assert_push_event(view, "pipeline:init", %{nodes: [_ | _], chatter: [_ | _]})
+    assert_push_event(view, "pipeline:init", %{nodes: [], edges: [], chatter: []})
   end
 
   test "?debug=1 sets data-debug on the hook el (read by the hook at mount)", %{conn: conn} do
@@ -34,20 +34,97 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert_push_event(view, "pipeline:event", %{"kind" => "routed", "slot" => "wingston_agent_0"})
   end
 
-  test "pipeline:agents carries pool slots only (agent_pattern filters samples)", %{conn: conn} do
+  test "a snapshot replaces the canvas topology and carries every real agent", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/topology")
+    assert_push_event(view, "pipeline:init", %{nodes: []})
 
     snap = %{
       "nodes" => [
-        %{"type" => "agent", "name" => "wingston_agent_0"},
-        %{"type" => "agent", "name" => "conversation_sample"},
-        %{"type" => "object", "name" => "ingress"}
+        %{"type" => "agent", "name" => "engendrador"},
+        %{"type" => "agent", "name" => "conservator"},
+        %{"type" => "agent", "name" => "adjudicador"}
+      ],
+      "edges" => [
+        %{"from" => "engendrador", "to" => "adjudicador"},
+        %{"from" => "conservator", "to" => "adjudicador"}
       ]
     }
 
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
 
-    assert_push_event(view, "pipeline:agents", %{agents: ["wingston_agent_0"]})
+    assert_push_event(view, "pipeline:init", layout)
+
+    assert Enum.map(layout.nodes, & &1.name) == ["adjudicador", "conservator", "engendrador"]
+
+    assert layout.edges == [
+             %{from: "conservator", to: "adjudicador"},
+             %{from: "engendrador", to: "adjudicador"}
+           ]
+
+    refute Enum.any?(layout.nodes, &(&1.name == "rally"))
+    assert_push_event(view, "pipeline:agents", %{agents: agents})
+    assert agents == ["adjudicador", "conservator", "engendrador"]
+  end
+
+  describe "pipeline_layout/1" do
+    alias SubzeroSwarmDashboardWeb.TopologyLive
+
+    test "uses only snapshot nodes and edges and layers sources before their target" do
+      snapshot = %{
+        "nodes" => [
+          %{"name" => "engendrador", "type" => "agent"},
+          %{"name" => "conservator", "type" => "agent"},
+          %{"name" => "adjudicador", "type" => "agent"}
+        ],
+        "edges" => [
+          %{"from" => "engendrador", "to" => "adjudicador"},
+          %{"from" => "conservator", "to" => "adjudicador"},
+          %{"from" => "missing", "to" => "adjudicador"}
+        ]
+      }
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+
+      assert Map.keys(by_name) |> Enum.sort() == ["adjudicador", "conservator", "engendrador"]
+
+      assert layout.edges == [
+               %{from: "conservator", to: "adjudicador"},
+               %{from: "engendrador", to: "adjudicador"}
+             ]
+
+      assert by_name["engendrador"].x < by_name["adjudicador"].x
+      assert by_name["conservator"].x < by_name["adjudicador"].x
+      assert Enum.all?(layout.nodes, &(&1.kind == "agent"))
+    end
+
+    test "an edgeless swarm gets a compact grid without invented nodes" do
+      snapshot = %{
+        "nodes" =>
+          for name <- ~w(fleet watch fundare sender tracker ingress dashboard seed) do
+            %{"name" => name, "type" => if(name == "seed", do: "agent", else: "object")}
+          end,
+        "edges" => []
+      }
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+
+      assert Enum.map(layout.nodes, & &1.name) |> Enum.sort() ==
+               ~w(dashboard fleet fundare ingress seed sender tracker watch)
+
+      assert layout.edges == []
+      refute Enum.any?(layout.nodes, &(&1.name == "rally"))
+      assert layout.nodes |> Enum.map(& &1.x) |> Enum.uniq() |> length() > 1
+    end
+
+    test "nil and malformed topology data fail closed to an empty layout" do
+      assert TopologyLive.pipeline_layout(nil).nodes == []
+
+      assert TopologyLive.pipeline_layout(%{
+               "nodes" => [%{"name" => nil}, "bad"],
+               "edges" => [%{"from" => "bad", "to" => "missing"}]
+             }).edges == []
+    end
   end
 
   test "the in-flight strip renders TRUE state from the story summary", %{conn: conn} do
@@ -82,6 +159,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert html =~ "12.4s"
     refute html =~ "feed unavailable"
   end
+
   describe "agent_handles/1 (canvas avatar seed: slot => seed)" do
     alias SubzeroSwarmDashboardWeb.TopologyLive
 
@@ -94,8 +172,17 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
             "state" => "active",
             "user" => %{"handle" => "kongtouquan"}
           },
-          %{"agent" => "wingston_agent_2", "state" => "active", "user" => %{}, "label" => "@CUPZ_0x"},
-          %{"agent" => "wingston_agent_3", "state" => "active", "user" => %{"name" => "Crypto Li"}},
+          %{
+            "agent" => "wingston_agent_2",
+            "state" => "active",
+            "user" => %{},
+            "label" => "@CUPZ_0x"
+          },
+          %{
+            "agent" => "wingston_agent_3",
+            "state" => "active",
+            "user" => %{"name" => "Crypto Li"}
+          },
           # no handle/label/name, no session id → nothing to seed → dropped
           %{"agent" => "wingston_agent_4", "state" => "active", "user" => %{}}
         ]
@@ -112,7 +199,12 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     test "a session id alone (no handle) still seeds a distinct avatar off the cid" do
       snap = %{
         "sessions" => [
-          %{"agent" => "wingston_agent_1", "session_id" => "telegram:222", "state" => "active", "user" => %{}}
+          %{
+            "agent" => "wingston_agent_1",
+            "session_id" => "telegram:222",
+            "state" => "active",
+            "user" => %{}
+          }
         ]
       }
 
@@ -122,8 +214,18 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     test "an ACTIVE session beats an idle leftover on a recycled slot" do
       snap = %{
         "sessions" => [
-          %{"agent" => "wingston_agent_1", "session_id" => "telegram:new", "state" => "active", "user" => %{"handle" => "now"}},
-          %{"agent" => "wingston_agent_1", "session_id" => "telegram:old", "state" => "idle", "user" => %{"handle" => "before"}}
+          %{
+            "agent" => "wingston_agent_1",
+            "session_id" => "telegram:new",
+            "state" => "active",
+            "user" => %{"handle" => "now"}
+          },
+          %{
+            "agent" => "wingston_agent_1",
+            "session_id" => "telegram:old",
+            "state" => "idle",
+            "user" => %{"handle" => "before"}
+          }
         ]
       }
 
@@ -143,10 +245,25 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       snap = %{
         "sessions" => [
           # label-less session: agent_handles drops it, agent_sessions MUST keep it
-          %{"agent" => "wingston_agent_1", "session_id" => "tg:1:0", "state" => "idle", "user" => %{}},
+          %{
+            "agent" => "wingston_agent_1",
+            "session_id" => "tg:1:0",
+            "state" => "idle",
+            "user" => %{}
+          },
           # recycled slot: active session wins the overwrite
-          %{"agent" => "wingston_agent_2", "session_id" => "tg:2:0", "state" => "idle", "user" => %{}},
-          %{"agent" => "wingston_agent_2", "session_id" => "tg:3:0", "state" => "active", "user" => %{}},
+          %{
+            "agent" => "wingston_agent_2",
+            "session_id" => "tg:2:0",
+            "state" => "idle",
+            "user" => %{}
+          },
+          %{
+            "agent" => "wingston_agent_2",
+            "session_id" => "tg:3:0",
+            "state" => "active",
+            "user" => %{}
+          },
           # no slot → not in the map
           %{"agent" => nil, "session_id" => "tg:4:0", "state" => "idle", "user" => %{}}
         ]

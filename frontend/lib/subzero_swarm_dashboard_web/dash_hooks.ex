@@ -13,28 +13,41 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   import Phoenix.Component
 
   alias SubzeroSwarmDashboard.EventsFeed
+  alias SubzeroSwarmDashboard.FleetCatalog
   alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.SwarmFeed
   alias SubzeroSwarmDashboard.SwarmClient
 
   @privacy_session_key :privacy
+  @selected_poll_ms 3_000
 
   def on_mount(:default, _params, session, socket) do
-    swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
+    default_swarm = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
+    swarms = FleetCatalog.current()
+    requested_swarm = session_swarm(session)
+    swarm = if requested_swarm in swarms, do: requested_swarm, else: default_swarm
+    default? = swarm == default_swarm
     privacy? = privacy_enabled?(session)
 
     if connected?(socket) do
-      SwarmFeed.subscribe()
-      EventsFeed.subscribe()
+      FleetCatalog.subscribe()
+
+      if default? do
+        SwarmFeed.subscribe()
+        EventsFeed.subscribe()
+      else
+        send(self(), :poll_selected_swarm)
+      end
     end
 
     # Seed from the feeds' caches so a fresh mount (page load, refresh, live nav)
     # renders the full menu + page immediately — without this, every view opened
     # with nil assigns and flashed the empty state ("Extension unavailable",
     # incomplete menu) for up to one poll interval (3s).
-    cached_snapshot = SwarmFeed.current()
+    cached_snapshot = if default?, do: SwarmFeed.current(), else: nil
     cached_inspect_lookup = inspect_lookup(cached_snapshot)
     dashboard_title = dashboard_title(cached_snapshot, swarm)
+    cached_story = if default?, do: EventsFeed.current_story(), else: nil
 
     socket =
       socket
@@ -42,13 +55,14 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
       |> assign_new(:conn_status, fn -> if(cached_snapshot, do: :connected, else: :connecting) end)
       |> assign_new(:feed_warning, fn -> nil end)
       |> assign_new(:dashboard_title, fn -> dashboard_title end)
-      |> assign_new(:story, fn -> EventsFeed.current_story() end)
+      |> assign_new(:story, fn -> cached_story end)
       # the shared slide-over inspector (any page can open it via phx-click="inspect")
       |> assign_new(:inspect, fn -> nil end)
       |> assign_new(:inspect_transcript, fn -> nil end)
       |> assign_new(:inspect_activity, fn -> nil end)
       |> assign_new(:inspect_lookup, fn -> cached_inspect_lookup end)
       |> assign_new(:privacy, fn -> privacy? end)
+      |> assign_new(:swarms, fn -> swarms end)
       # Sensitive-content gate: user conversations are NOT fetched (not merely
       # hidden) until revealed. Default comes from config; the TranscriptGate
       # JS hook replays a per-browser localStorage preference on every mount.
@@ -62,6 +76,12 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
     {:cont, socket}
   end
+
+  defp session_swarm(session) when is_map(session) do
+    Map.get(session, "selected_swarm", Map.get(session, :selected_swarm))
+  end
+
+  defp session_swarm(_session), do: nil
 
   defp privacy_enabled?(session) when is_map(session) do
     session
@@ -188,7 +208,11 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
        when is_map(masked) and is_list(original_pages) do
     case get_in(masked, ["extensions", "dashboard_pages"]) do
       masked_pages when is_list(masked_pages) ->
-        put_in(masked, ["extensions", "dashboard_pages"], restore_page_labels(masked_pages, original_pages))
+        put_in(
+          masked,
+          ["extensions", "dashboard_pages"],
+          restore_page_labels(masked_pages, original_pages)
+        )
 
       _ ->
         masked
@@ -205,7 +229,9 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
     masked_pages
     |> Enum.with_index()
-    |> Enum.map(fn {page, index} -> restore_page_label(page, Map.get(original_by_index, index)) end)
+    |> Enum.map(fn {page, index} ->
+      restore_page_label(page, Map.get(original_by_index, index))
+    end)
   end
 
   # Restored verbatim EXCEPT for cid-shaped substrings — a page label is
@@ -264,6 +290,20 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
   # {:cont} so pages that need a side-effect on new snapshots (e.g. Topology pushing
   # the graph to its JS hook) can also react; @snapshot is assigned here regardless.
+  defp handle_feed(:poll_selected_swarm, socket) do
+    Process.send_after(self(), :poll_selected_swarm, @selected_poll_ms)
+
+    case SwarmClient.dashboard(socket.assigns.swarm) do
+      {:ok, snapshot} -> send(self(), {:snapshot, snapshot})
+      {:error, reason} -> send(self(), {:disconnected, reason})
+    end
+
+    {:halt, socket}
+  end
+
+  defp handle_feed({:swarms, swarms}, socket),
+    do: {:halt, assign(socket, :swarms, swarms)}
+
   defp handle_feed({:snapshot, snap}, socket) do
     socket =
       assign(socket,

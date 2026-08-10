@@ -4,7 +4,8 @@
 > the in-BEAM read-API it consumes is [`backend/`](../backend/README.md).
 > (Formerly the standalone `subzero-swarm-dashboard` repo.)
 
-A reusable, **read-only** web dashboard for observing a single swarm built on the
+A reusable, **read-only** web dashboard for observing one or more co-located
+swarms built on the
 [`genswarms`](https://github.com/genlayerlabs/genswarms) runtime. It shows swarm
 health, the live agent/object **topology** (agents vs objects), **sessions** and
 their transcripts, events, logs, and LLM usage.
@@ -70,7 +71,8 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
 |---|---|---|
 | `SWARM_API_URL` | `http://127.0.0.1:4000` | Swarm read API base (the in-BEAM endpoint) |
 | `SWARM_WS_URL` | derived from `SWARM_API_URL` | WS base for the live event tail |
-| `SWARM_NAME` | `wingston` | Which swarm to view |
+| `SWARM_NAME` | `wingston` | Initial swarm; other co-located swarms are discovered at runtime |
+| `DASHBOARD_FORCE_SSL` | `true` | Compile with `false` only when plain HTTP is intentional (for example, a private Tailscale address) |
 | `SWARM_API_TOKEN` | — | Read-only bearer/WS token (the swarm's `DASHBOARD_API_TOKEN`) |
 | `ROUTER_USAGE_URL` | — | LLM router usage endpoint (e.g. `https://router.ygr.ai/v1/usage`) |
 | `ROUTER_API_KEY` | — | Router key (server-side only) |
@@ -93,7 +95,8 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
 
 ## How it works
 
-`SwarmFeed` polls `/api/swarms/:name/dashboard` every `DASHBOARD_POLL_MS` and
+`FleetCatalog` polls `/api/swarms` and keeps the sidebar selector current without a
+restart. `SwarmFeed` polls `/api/swarms/:name/dashboard` every `DASHBOARD_POLL_MS` and
 `SwarmFeed.Socket` (Slipstream) joins the swarm's `swarm:<name>` WS channel; both
 republish onto one `Phoenix.PubSub` topic (`"feed"`) that LiveViews subscribe to.
 A silent-empty guard warns when snapshots report agents but no WS events arrive

@@ -193,7 +193,11 @@ These MUST NOT change — the frontend (`subzero-swarm-dashboard`) reads them. P
 
 ### HTTP routes (served by `GenswarmsDashboard.Plug`)
 
+- `GET /api/swarms` → all swarms owned by the co-located engine BEAM
 - `GET /api/swarms/:name/dashboard` → the envelope (see below)
+- `GET /api/swarms/:name/agents` → safe live status for persistent/static agents
+- `GET /api/swarms/:name/agents/:agent/history` → bounded message history
+- `GET /api/swarms/:name/agents/:agent/logs` → runtime conversation logs
 - `GET /api/swarms/:name/sessions/:session_id/history` → `%{session_id, turns, source}`
 - `GET /api/swarms/:name/sessions/:session_id/logs` → `%{session_id, logs, source}`
 - `GET /api/swarms/:name/events` → `%{events, count, swarm}`

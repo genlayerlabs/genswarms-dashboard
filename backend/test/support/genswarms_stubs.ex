@@ -5,6 +5,10 @@
 # NOTE: steering state is global (Application env), and LogStore.query/1 WRITES on every
 # call — any test touching these stubs must be `async: false`.
 defmodule Genswarms.SwarmManager do
+  def list do
+    Application.get_env(:genswarms_dashboard, :stub_swarms, [])
+  end
+
   def status(name) do
     case Application.get_env(:genswarms_dashboard, :stub_status) do
       nil -> {:error, :not_found}
@@ -38,6 +42,14 @@ defmodule Genswarms.Observability.LogStore do
 end
 
 defmodule Genswarms.Agents.AgentServer do
+  def get_history(_swarm, slot, limit) do
+    case Application.get_env(:genswarms_dashboard, :stub_history) do
+      nil -> []
+      fun when is_function(fun, 2) -> fun.(slot, limit)
+      other -> Enum.take(other, limit)
+    end
+  end
+
   def get_logs(_swarm, slot) do
     case Application.get_env(:genswarms_dashboard, :stub_logs) do
       nil -> []

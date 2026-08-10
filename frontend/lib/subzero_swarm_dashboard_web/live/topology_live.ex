@@ -7,21 +7,12 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    layout = Application.get_env(:subzero_swarm_dashboard, :pipeline_layout, %{})
+    layout = pipeline_layout(socket.assigns[:snapshot])
 
     {:ok,
      socket
-     |> assign(page_title: "Topology", debug: false, agent_re: compile_agent_pattern(layout))
+     |> assign(page_title: "Topology", debug: false, pipeline_layout: layout)
      |> push_event("pipeline:init", layout)}
-  end
-
-  # the pool-slot pattern is config — compile it once at mount, not on every
-  # 3s snapshot tick
-  defp compile_agent_pattern(layout) do
-    case layout[:agent_pattern] do
-      nil -> nil
-      pattern -> Regex.compile!(pattern)
-    end
   end
 
   # ?debug=1 shows the hook's trace rig. The hook el is phx-update="ignore", so
@@ -50,10 +41,11 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   def handle_info({:snapshot, snap}, socket) do
     privacy? = socket.assigns[:privacy] == true
     inspect_lookup = DashHooks.inspect_lookup(snap)
+    layout = pipeline_layout(snap)
 
     payload =
       %{
-        agents: agent_names(snap, socket.assigns.agent_re),
+        agents: agent_names(snap),
         handles: agent_handles(snap, privacy?),
         sessions: agent_session_targets(snap, privacy?, inspect_lookup)
       }
@@ -62,6 +54,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     socket =
       socket
       |> assign(:inspect_lookup, inspect_lookup)
+      |> maybe_push_layout(layout)
       |> push_event("pipeline:agents", payload)
 
     {:noreply, socket}
@@ -278,14 +271,212 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   defp pool_tone(pct) when pct >= 70, do: "var(--color-warning)"
   defp pool_tone(_pct), do: "var(--color-success)"
 
-  # Pool slots only (config :pipeline_layout agent_pattern) — sample/template
-  # agents are swarm members but not part of the user-request pipeline.
-  defp agent_names(snap, re) do
-    for n <- snap["nodes"] || [],
-        n["type"] == "agent",
-        re == nil or Regex.match?(re, n["name"]),
-        do: n["name"]
+  defp maybe_push_layout(socket, layout) do
+    if socket.assigns[:pipeline_layout] == layout do
+      socket
+    else
+      socket
+      |> assign(:pipeline_layout, layout)
+      |> push_event("pipeline:init", layout)
+    end
   end
+
+  defp agent_names(snap) do
+    (snap["nodes"] || [])
+    |> Enum.flat_map(fn
+      %{"type" => "agent", "name" => name} when is_binary(name) and name != "" -> [name]
+      _ -> []
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  @doc """
+  Builds the canvas topology directly from a swarm dashboard snapshot.
+
+  Snapshot nodes are the only fixed nodes and snapshot edges are the only
+  durable rails. Directed acyclic graphs are arranged in layers; an edgeless
+  swarm uses a compact grid. Cycles are kept together in a final layer so a
+  malformed or cyclic topology remains visible instead of breaking the page.
+  """
+  def pipeline_layout(snapshot) do
+    nodes = normalize_nodes(snapshot)
+    edges = normalize_edges(snapshot, nodes)
+    positions = node_positions(nodes, edges)
+
+    %{
+      nodes:
+        Enum.map(nodes, fn node ->
+          {x, y} = Map.fetch!(positions, node.name)
+
+          %{
+            name: node.name,
+            x: x,
+            y: y,
+            kind: canvas_kind(node.type),
+            r: canvas_radius(node.type)
+          }
+        end),
+      edges: Enum.map(edges, fn {from, to} -> %{from: from, to: to} end),
+      chatter: [],
+      return_arcs: []
+    }
+  end
+
+  defp normalize_nodes(%{"nodes" => raw_nodes}) when is_list(raw_nodes) do
+    raw_nodes
+    |> Enum.reduce(%{}, fn
+      node, acc when is_map(node) ->
+        name = field(node, "name", :name)
+        type = field(node, "type", :type)
+
+        if is_binary(name) and name != "" do
+          Map.put_new(acc, name, %{name: name, type: type})
+        else
+          acc
+        end
+
+      _, acc ->
+        acc
+    end)
+    |> Map.values()
+    |> Enum.sort_by(& &1.name)
+  end
+
+  defp normalize_nodes(%{nodes: raw_nodes}) when is_list(raw_nodes),
+    do: normalize_nodes(%{"nodes" => raw_nodes})
+
+  defp normalize_nodes(_snapshot), do: []
+
+  defp normalize_edges(snapshot, nodes) do
+    names = nodes |> Enum.map(& &1.name) |> MapSet.new()
+
+    snapshot
+    |> raw_edges()
+    |> Enum.reduce(MapSet.new(), fn
+      edge, acc when is_map(edge) ->
+        from = field(edge, "from", :from)
+        to = field(edge, "to", :to)
+
+        if is_binary(from) and is_binary(to) and from != to and
+             MapSet.member?(names, from) and MapSet.member?(names, to) do
+          MapSet.put(acc, {from, to})
+        else
+          acc
+        end
+
+      _, acc ->
+        acc
+    end)
+    |> Enum.sort()
+  end
+
+  defp raw_edges(%{"edges" => edges}) when is_list(edges), do: edges
+  defp raw_edges(%{edges: edges}) when is_list(edges), do: edges
+  defp raw_edges(_snapshot), do: []
+
+  defp field(map, string_key, atom_key), do: Map.get(map, string_key, Map.get(map, atom_key))
+
+  defp canvas_kind("agent"), do: "agent"
+  defp canvas_kind(type) when type in ["external", "endpoint", "transport"], do: "ext"
+  defp canvas_kind(_type), do: "obj"
+
+  defp canvas_radius("agent"), do: 16
+  defp canvas_radius(type) when type in ["external", "endpoint", "transport"], do: 15
+  defp canvas_radius(_type), do: 18
+
+  defp node_positions([], _edges), do: %{}
+  defp node_positions(nodes, []), do: grid_positions(nodes)
+
+  defp node_positions(nodes, edges) do
+    names = Enum.map(nodes, & &1.name)
+    depths = graph_depths(names, edges)
+    levels = depths |> Map.values() |> Enum.uniq() |> Enum.sort()
+    level_indexes = levels |> Enum.with_index() |> Map.new()
+
+    nodes
+    |> Enum.group_by(&Map.fetch!(depths, &1.name))
+    |> Enum.flat_map(fn {depth, level_nodes} ->
+      level_index = Map.fetch!(level_indexes, depth)
+      x = spread(level_index, length(levels), 0.14, 0.86)
+      ordered = Enum.sort_by(level_nodes, & &1.name)
+
+      ordered
+      |> Enum.with_index()
+      |> Enum.map(fn {node, row} ->
+        {node.name, {x, spread(row, length(ordered), 0.16, 0.84)}}
+      end)
+    end)
+    |> Map.new()
+  end
+
+  defp grid_positions(nodes) do
+    count = length(nodes)
+    columns = count |> Kernel.*(2) |> :math.sqrt() |> Float.ceil() |> trunc() |> max(1)
+    rows = ceil_div(count, columns)
+
+    nodes
+    |> Enum.with_index()
+    |> Map.new(fn {node, index} ->
+      column = rem(index, columns)
+      row = div(index, columns)
+
+      {node.name, {spread(column, columns, 0.14, 0.86), spread(row, rows, 0.2, 0.8)}}
+    end)
+  end
+
+  defp graph_depths(names, edges) do
+    indegrees = Map.new(names, &{&1, 0})
+    outgoing = Map.new(names, &{&1, []})
+
+    {indegrees, outgoing} =
+      Enum.reduce(edges, {indegrees, outgoing}, fn {from, to}, {ins, outs} ->
+        {Map.update!(ins, to, &(&1 + 1)), Map.update!(outs, from, &[to | &1])}
+      end)
+
+    queue = names |> Enum.filter(&(Map.fetch!(indegrees, &1) == 0)) |> Enum.sort()
+    depths = Map.new(names, &{&1, 0})
+    {depths, visited} = walk_layers(queue, indegrees, outgoing, depths, MapSet.new())
+
+    unresolved = Enum.reject(names, &MapSet.member?(visited, &1))
+
+    if unresolved == [] do
+      depths
+    else
+      unresolved_depth =
+        visited
+        |> Enum.map(&Map.fetch!(depths, &1))
+        |> case do
+          [] -> 0
+          resolved_depths -> Enum.max(resolved_depths) + 1
+        end
+
+      Enum.reduce(unresolved, depths, &Map.put(&2, &1, unresolved_depth))
+    end
+  end
+
+  defp walk_layers([], _indegrees, _outgoing, depths, visited), do: {depths, visited}
+
+  defp walk_layers([name | rest], indegrees, outgoing, depths, visited) do
+    {indegrees, depths, ready} =
+      outgoing
+      |> Map.fetch!(name)
+      |> Enum.sort()
+      |> Enum.reduce({indegrees, depths, []}, fn target, {ins, ds, became_ready} ->
+        remaining = Map.fetch!(ins, target) - 1
+        ins = Map.put(ins, target, remaining)
+        ds = Map.update!(ds, target, &max(&1, Map.fetch!(ds, name) + 1))
+        became_ready = if remaining == 0, do: [target | became_ready], else: became_ready
+        {ins, ds, became_ready}
+      end)
+
+    queue = (rest ++ ready) |> Enum.uniq() |> Enum.sort()
+    walk_layers(queue, indegrees, outgoing, depths, MapSet.put(visited, name))
+  end
+
+  defp spread(_index, 1, low, high), do: (low + high) / 2
+  defp spread(index, count, low, high), do: low + index / (count - 1) * (high - low)
+  defp ceil_div(value, divisor), do: div(value + divisor - 1, divisor)
 
   @doc """
   agent slot => avatar seed for the canvas. The seed is the telegram handle,
@@ -375,7 +566,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     do: DashHooks.inspect_value(lookup, privacy? == true, sid)
 
   defp short(nil), do: nil
-  defp short(name), do: String.replace(name, "wingston_agent_", "agent_")
+  defp short(name), do: String.replace(name, ~r/^.+_agent_/, "agent_")
 
   # thinking = primary everywhere (Overview strip, the legend dot above) —
   # green is reserved for success/replied
