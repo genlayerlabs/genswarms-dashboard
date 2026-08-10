@@ -214,17 +214,17 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
     end
   end
 
-  describe "usage WINGSTON card" do
+  describe "swarm activity card" do
     test "renders the bot counters from the story, labeled since-baseline", %{conn: conn} do
       {:ok, view, _} = live(conn, "/usage")
-      refute has_element?(view, "#wingston-usage")
+      refute has_element?(view, "#swarm-activity")
 
       html =
         push_story(view, %{
           kpis: %{replies: 41, browse_ok: 21, browse_total: 25, asks: 7, compactions: 3}
         })
 
-      assert has_element?(view, "#wingston-usage")
+      assert has_element?(view, "#swarm-activity")
       assert html =~ "Replies"
       assert html =~ "41"
       # 21/25 ok
@@ -239,7 +239,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       push_snap(view, snap)
       html = push_story(view, %{kpis: %{replies: 41}})
 
-      assert has_element?(view, "#wingston-usage")
+      assert has_element?(view, "#swarm-activity")
       assert html =~ "120"
       assert html =~ "today"
       refute html =~ ">41<"
@@ -257,7 +257,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       push_snap(view, snap)
       html = push_story(view, %{})
 
-      assert has_element?(view, "#wingston-usage")
+      assert has_element?(view, "#swarm-activity")
       assert html =~ "90%"
       assert html =~ "9/10"
     end
@@ -275,7 +275,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
 
       html = push_snap(view, snap)
 
-      assert has_element?(view, "#wingston-usage")
+      assert has_element?(view, "#swarm-activity")
       assert html =~ "Queue"
       assert html =~ "12"
       assert html =~ "3 blocked"

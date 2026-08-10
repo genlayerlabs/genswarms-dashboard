@@ -57,7 +57,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   @impl true
   def render(assigns) do
     privacy? = assigns[:privacy] == true
-    assigns = assign(assigns, :layout_snapshot, DashHooks.layout_snapshot(assigns[:snapshot], privacy?))
+
+    assigns =
+      assign(assigns, :layout_snapshot, DashHooks.layout_snapshot(assigns[:snapshot], privacy?))
 
     ~H"""
     <Layouts.app
@@ -90,14 +92,14 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             </button>
           </div>
         </div>
-        <.wingston story={@story} snapshot={@snapshot} privacy={@privacy} />
+        <.swarm_activity story={@story} snapshot={@snapshot} privacy={@privacy} />
         <.usage usage={@usage} privacy={@privacy} />
       </div>
     </Layouts.app>
     """
   end
 
-  # ── wingston (bot) counters ─────────────────────────────────────────────────
+  # ── host-provided swarm activity counters ───────────────────────────────────
   attr :story, :any, default: nil
   attr :snapshot, :any, default: nil
   attr :privacy, :boolean, default: false
@@ -105,10 +107,32 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   # The bot's own activity (spec §5.6 Usage): since-baseline story KPIs, upgraded
   # per-counter to the host's durable daily values when the snapshot publishes
   # extensions["metrics_today"] (§6.3). The router/LLM panels below are untouched.
-  defp wingston(assigns) do
+  defp swarm_activity(assigns) do
     kpis = (assigns.story || %{})[:kpis] || %{}
     today = metrics_today(assigns.snapshot)
     {browse_ok, browse_total, _src} = browse_counts(today, kpis)
+    activity? = today || (assigns.story && assigns.story[:baseline_at])
+    host_tiles = extension_tiles(assigns.snapshot, assigns.privacy)
+
+    activity_stats =
+      if activity? do
+        [
+          %{label: "Replies", value: num(counter(today, "replies", kpis[:replies])), sub: nil},
+          %{
+            label: "Browser ok",
+            value: ok_rate(browse_ok, browse_total),
+            sub: "#{num(browse_ok)}/#{num(browse_total)}"
+          },
+          %{label: "Asks", value: num(counter(today, "asks", kpis[:asks])), sub: nil},
+          %{
+            label: "Compactions",
+            value: num(counter(today, "compactions", kpis[:compactions])),
+            sub: nil
+          }
+        ]
+      else
+        []
+      end
 
     # ONE window for the whole card — durable "today" when the store publishes
     # metrics_today (all four counters are durable now), else the story's
@@ -118,29 +142,16 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       assign(assigns,
         today: today,
         window: window_label(today, assigns.story),
-        stats:
-          [
-            %{label: "Replies", value: num(counter(today, "replies", kpis[:replies])), sub: nil},
-            %{
-              label: "Browser ok",
-              value: ok_rate(browse_ok, browse_total),
-              sub: "#{num(browse_ok)}/#{num(browse_total)}"
-            },
-            %{label: "Asks", value: num(counter(today, "asks", kpis[:asks])), sub: nil},
-            %{
-              label: "Compactions",
-              value: num(counter(today, "compactions", kpis[:compactions])),
-              sub: nil
-            }
-          ] ++ extension_tiles(assigns.snapshot, assigns.privacy)
+        stats: activity_stats ++ host_tiles,
+        host_tiles: host_tiles
       )
 
     ~H"""
-    <.panel :if={@story || @today} id="wingston-usage" title="Wingston">
+    <.panel :if={@story || @today || @host_tiles != []} id="swarm-activity" title="Swarm activity">
       <:meta>
         <span class="font-mono">{@window}</span>
       </:meta>
-      <%= if @today || (@story && @story[:baseline_at]) do %>
+      <%= if @stats != [] do %>
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-3">
           <.metric :for={s <- @stats} label={s.label} value={s.value} sub={s.sub} />
         </div>
@@ -311,13 +322,21 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     </div>
 
     <.panel title="Totals">
-      <div class="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-3">
+      <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-x-4 gap-y-3">
         <.metric label="Requests" value={num(@totals["requests"])} />
         <.metric
           label="Tokens"
           value={num(@totals["tokens_total"])}
           sub={"#{num(@totals["tokens_in"])} in · #{num(@totals["tokens_out"])} out"}
         />
+        <div id="usage-cached-input">
+          <.metric
+            label="Cached input"
+            value={optional_num(@totals["tokens_cached"])}
+            sub={cache_ratio(@totals["tokens_cached"], @totals["tokens_in"])}
+            title="Prompt-cache tokens reported by the router"
+          />
+        </div>
         <.metric
           label="Error rate"
           value={pct(@totals["error_rate"])}
@@ -435,6 +454,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             <th>{@head}</th>
             <th class="text-right">req</th>
             <th class="text-right">tokens</th>
+            <th class="text-right">cached</th>
             <th class="text-right">err</th>
             <th class="text-right">lat avg/max</th>
           </tr>
@@ -444,6 +464,7 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             <td class="font-mono text-xs break-all">{name}</td>
             <td class="text-right tnum">{num(s["requests"])}</td>
             <td class="text-right tnum">{num(s["tokens_total"])}</td>
+            <td class="text-right tnum">{optional_num(s["tokens_cached"])}</td>
             <td class="text-right tnum">{pct(s["error_rate"])}</td>
             <td class="text-right tnum text-xs">
               {ms(s["latency_ms_avg"])} / {ms(s["latency_ms_max"])}
@@ -516,7 +537,12 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
       <td class="font-mono text-xs">{@r["served_model_id"] || @r["requested_model"] || "—"}</td>
       <td class="font-mono text-xs opacity-70">{recent_path(@r["path"], @privacy)}</td>
       <td class="text-right tnum text-xs">{ms(@r["latency_ms"])}</td>
-      <td class="text-right tnum text-xs">{num(@r["tokens_total"])}</td>
+      <td class="text-right tnum text-xs">
+        <div>{num(@r["tokens_total"])}</div>
+        <div :if={is_number(@r["tokens_cached"])} class="usage-recent-cached opacity-50">
+          {num(@r["tokens_cached"])} cached
+        </div>
+      </td>
       <td class="text-xs opacity-70 max-w-xs truncate">{recent_detail(@r, @privacy)}</td>
     </tr>
     """
@@ -573,6 +599,15 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp pct(r) when is_number(r), do: "#{Float.round(r * 100.0, 2)}%"
   defp pct(_), do: "0%"
 
+  defp cache_ratio(cached, input)
+       when is_number(cached) and is_number(input) and input > 0,
+       do: "#{pct(cached / input)} of input"
+
+  defp cache_ratio(_cached, _input), do: "cache telemetry unavailable"
+
+  defp optional_num(value) when is_number(value), do: num(value)
+  defp optional_num(_value), do: "—"
+
   defp ms(v) when is_number(v), do: "#{round(v)} ms"
   defp ms(_), do: "—"
 
@@ -615,5 +650,4 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   defp redact_string(value, false), do: value
   defp redact_string(value, true) when is_binary(value), do: PrivacyRedactor.mask_cid(value)
   defp redact_string(value, true), do: value
-
 end

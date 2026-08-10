@@ -28,6 +28,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
   attr :flash, :map, required: true, doc: "the map of flash messages"
   attr :active, :atom, default: nil, doc: "the active nav key"
   attr :swarm, :string, default: nil, doc: "the swarm name shown in the sidebar"
+  attr :swarms, :list, default: nil, doc: "the swarms available through the shared endpoint"
   attr :snapshot, :any, default: nil, doc: "the latest dashboard snapshot"
   attr :story, :any, default: nil, doc: "the folded story summary (feeds the liveness chip)"
   attr :inspect, :any, default: nil, doc: "the session currently open in the inspector"
@@ -44,6 +45,8 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         SubzeroSwarmDashboardWeb.ExtensionPages.sidebar_plan(assigns[:snapshot])
       )
       |> assign(:dashboard_title, dashboard_title(assigns[:snapshot], assigns[:swarm]))
+      |> assign(:swarms, assigns[:swarms] || SubzeroSwarmDashboard.FleetCatalog.current())
+      |> assign(:swarm_selector_form, to_form(%{"swarm" => assigns[:swarm] || ""}))
 
     ~H"""
     <div class="flex min-h-screen" data-privacy={if @privacy, do: "on", else: "off"}>
@@ -67,6 +70,22 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         </div>
 
         <div class="px-2 mb-5 space-y-2">
+          <.form
+            for={@swarm_selector_form}
+            id="swarm-selector"
+            action={~p"/swarm/select"}
+            method="post"
+          >
+            <.input
+              field={@swarm_selector_form[:swarm]}
+              type="select"
+              id="selected-swarm"
+              options={Enum.map(@swarms, &{&1, &1})}
+              class="select select-bordered select-xs w-full font-mono"
+              onchange="this.form.submit()"
+              aria-label="Selected swarm"
+            />
+          </.form>
           <div class="rounded-lg bg-base-100/60 border border-base-300 px-2.5 py-1.5">
             <div class="flex items-center gap-2">
               <span class="signal-dot"></span>
@@ -242,7 +261,10 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         open
       >
         <summary class="flex items-center gap-1.5 px-2 py-1 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wider opacity-45 hover:opacity-80">
-          <.icon name="hero-chevron-right" class="size-3 shrink-0 nav-group-chevron transition-transform" />
+          <.icon
+            name="hero-chevron-right"
+            class="size-3 shrink-0 nav-group-chevron transition-transform"
+          />
           {@label}
         </summary>
         <ul class="space-y-0.5">

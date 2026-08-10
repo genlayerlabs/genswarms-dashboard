@@ -3,6 +3,15 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
   @behaviour SubzeroSwarmDashboard.SwarmClient
 
   @impl true
+  def swarms do
+    case get("/api/swarms") do
+      {:ok, %{"swarms" => swarms}} when is_list(swarms) -> {:ok, swarms}
+      {:ok, _other} -> {:ok, []}
+      error -> error
+    end
+  end
+
+  @impl true
   def dashboard(swarm), do: get("/api/swarms/#{swarm}/dashboard")
 
   @impl true
@@ -37,9 +46,7 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
     # This poll runs on a ~700ms cadence INSIDE the EventsFeed GenServer, which
     # also answers story_ring/episodes/current_story calls — an 8s hang here
     # starves every caller. A missed tick just retries, so time out fast.
-    get("/api/swarms/#{swarm}/events/feed", %{since: since, limit: limit},
-      receive_timeout: 2_000
-    )
+    get("/api/swarms/#{swarm}/events/feed", %{since: since, limit: limit}, receive_timeout: 2_000)
   end
 
   defp get(path, params \\ %{}, extra_opts \\ []) do

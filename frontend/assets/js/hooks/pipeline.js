@@ -1,7 +1,6 @@
-// Pipeline canvas — the events-driven topology (spec §5.5), a port of the
-// parity-proven prototype canvas (wingstonrallybot prototype/dashboard/broker.py,
-// kind→op mapping from broker_events.py reduce()). The LiveView pushes the lane
-// layout once ("pipeline:init"), the snapshot's agent slots ("pipeline:agents"),
+// Pipeline canvas — an events-driven view over the selected swarm's snapshot.
+// The LiveView pushes the current nodes and edges ("pipeline:init"), the
+// snapshot's agent slots ("pipeline:agents"),
 // and every raw display event ("pipeline:event"); this hook owns ALL display state
 // and timing: the kind → packet/state mapping, causal playback (ON by default —
 // node state changes apply when their packet LANDS, so the picture never shows an
@@ -106,11 +105,15 @@ export const Pipeline = {
       this.LAYOUT = layout
       this.FIXED = new Set((layout.nodes || []).map((n) => n.name))
       this.BG = new Set(layout.chatter || [])
+      // A snapshot replaces durable topology. Event-discovered endpoints may
+      // reappear later, but must not leak from a previously selected swarm.
+      this.AGENTS = new Set()
+      this.EXTRAS = new Set()
       this.refreshTheme()
       this.layout()
     })
-    // snapshot wins existence: slots appear before their first event (additive —
-    // a torn-down slot stays drawn idle rather than flickering between snapshots).
+    // Snapshot wins existence: slots appear before their first event and removed
+    // slots disappear on the next snapshot.
     // `handles` maps a leased slot to its avatar seed (the telegram handle) —
     // the node is labelled "agent_15" + the session id it serves and wears a
     // generated avatar. `sessions` maps the slot to the session id it serves
@@ -121,14 +124,8 @@ export const Pipeline = {
       this.HANDLES = handles || {}
       this.SESSIONS = sessions || {}
       this.SESSION_LABELS = session_labels || sessions || {}
-      let changed = false
-      for (const name of agents || []) {
-        if (!this.FIXED.has(name) && !this.AGENTS.has(name)) {
-          this.AGENTS.add(name)
-          changed = true
-        }
-      }
-      if (changed) this.layout()
+      this.AGENTS = new Set((agents || []).filter((name) => !this.FIXED.has(name)))
+      this.layout()
     })
     this.handleEvent("pipeline:event", (ev) => this.intake(ev))
 
@@ -481,7 +478,7 @@ export const Pipeline = {
           : [{flash: "cron"}, {badge: "cron", glyph: "⚠"}]
 
       case "chatter": {
-        // background bookkeeping traffic (rally↔policy sync, metrics bumps) —
+        // background bookkeeping traffic (policy sync, metrics bumps) —
         // the host emits these precisely so the chatter toggle has data; forced
         // bg regardless of endpoint sets, never part of user-flow causality
         if (!ev.from || !ev.to) return []
@@ -596,7 +593,7 @@ export const Pipeline = {
   },
 
   // event endpoints: agent-looking names join the column, anything else stacks
-  // on the right edge (a new wingston object shows up without a layout change)
+  // on the right edge (a newly observed object appears without a layout change)
   ensureNode(name) {
     if (this.FIXED.has(name) || this.AGENTS.has(name) || this.EXTRAS.has(name)) return
     if (/agent/.test(name)) {
@@ -718,25 +715,33 @@ export const Pipeline = {
     // causal contract: a state change becomes visible when its packet lands
     this.LANDS = this.LANDS.filter((l) => (l.at <= pnow ? (l.fn(), false) : true))
 
-    // the static spine: telegram → … → sender (+ the return arc) as faint rails,
-    // so the pipeline shape reads even when nothing is moving
-    const railA = this.POS["telegram"]
-    const railB = this.POS["sender"]
-    if (railA && railB) {
+    // Durable topology from the selected swarm's snapshot. These rails are
+    // intentionally separate from EDGES, which only represents recent traffic.
+    for (const edge of (this.LAYOUT && this.LAYOUT.edges) || []) {
+      const railA = this.POS[edge.from]
+      const railB = this.POS[edge.to]
+      if (!railA || !railB) continue
+      const gm = this.geom(edge.from, edge.to)
       g.strokeStyle = C.ink
-      g.globalAlpha = 0.08
-      g.lineWidth = 2
+      g.globalAlpha = 0.16
+      g.lineWidth = 1.5
       g.beginPath()
       g.moveTo(railA.x, railA.y)
-      g.lineTo(railB.x, railB.y)
+      gm.q ? g.quadraticCurveTo(gm.cx, gm.cy, railB.x, railB.y) : g.lineTo(railB.x, railB.y)
       g.stroke()
-      const rgm = this.geom("sender", "telegram")
-      if (rgm.q) {
-        g.beginPath()
-        g.moveTo(railB.x, railB.y)
-        g.quadraticCurveTo(rgm.cx, rgm.cy, railA.x, railA.y)
-        g.stroke()
-      }
+
+      const ang = gm.q
+        ? Math.atan2(railB.y - gm.cy, railB.x - gm.cx)
+        : Math.atan2(railB.y - railA.y, railB.x - railA.x)
+      const inset = railB.r + 4
+      const ex = railB.x - Math.cos(ang) * inset
+      const ey = railB.y - Math.sin(ang) * inset
+      g.fillStyle = C.ink
+      g.beginPath()
+      g.moveTo(ex, ey)
+      g.lineTo(ex - Math.cos(ang - 0.4) * 6, ey - Math.sin(ang - 0.4) * 6)
+      g.lineTo(ex - Math.cos(ang + 0.4) * 6, ey - Math.sin(ang + 0.4) * 6)
+      g.fill()
       g.globalAlpha = 1
     }
 
@@ -1094,7 +1099,7 @@ export const Pipeline = {
   },
 
   short(n) {
-    return String(n).replace("wingston_agent_", "agent_").replace("conversation_sample", "convo")
+    return String(n).replace(/^.+_agent_/, "agent_").replace("conversation_sample", "convo")
   },
 
   // canvas labels share tight columns — long handles get an ellipsis
