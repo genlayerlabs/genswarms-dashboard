@@ -4,7 +4,7 @@ defmodule GenswarmsDashboard.MixProject do
   def project do
     [
       app: :genswarms_dashboard,
-      version: "0.3.5",
+      version: "0.4.0",
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: false,
