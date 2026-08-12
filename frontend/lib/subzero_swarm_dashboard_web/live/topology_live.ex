@@ -296,8 +296,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   Snapshot nodes are the only fixed nodes and snapshot edges are the only
   durable rails. Directed acyclic graphs are arranged in layers; an edgeless
-  swarm uses a compact grid. Cycles are kept together in a final layer so a
-  malformed or cyclic topology remains visible instead of breaking the page.
+  swarm or cyclic graph uses a compact grid so malformed topology remains
+  visible instead of breaking the page.
   """
   def pipeline_layout(snapshot) do
     nodes = normalize_nodes(snapshot)
@@ -390,7 +390,14 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   defp node_positions(nodes, edges) do
     names = Enum.map(nodes, & &1.name)
-    depths = graph_depths(names, edges)
+
+    case graph_depths(names, edges) do
+      {:ok, depths} -> layered_positions(nodes, depths)
+      :cyclic -> grid_positions(nodes)
+    end
+  end
+
+  defp layered_positions(nodes, depths) do
     levels = depths |> Map.values() |> Enum.uniq() |> Enum.sort()
     level_indexes = levels |> Enum.with_index() |> Map.new()
 
@@ -438,21 +445,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     depths = Map.new(names, &{&1, 0})
     {depths, visited} = walk_layers(queue, indegrees, outgoing, depths, MapSet.new())
 
-    unresolved = Enum.reject(names, &MapSet.member?(visited, &1))
-
-    if unresolved == [] do
-      depths
-    else
-      unresolved_depth =
-        visited
-        |> Enum.map(&Map.fetch!(depths, &1))
-        |> case do
-          [] -> 0
-          resolved_depths -> Enum.max(resolved_depths) + 1
-        end
-
-      Enum.reduce(unresolved, depths, &Map.put(&2, &1, unresolved_depth))
-    end
+    if MapSet.size(visited) == length(names), do: {:ok, depths}, else: :cyclic
   end
 
   defp walk_layers([], _indegrees, _outgoing, depths, visited), do: {depths, visited}
