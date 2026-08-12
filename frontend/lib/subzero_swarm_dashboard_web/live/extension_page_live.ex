@@ -31,11 +31,19 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
     {:noreply, assign(socket, ext_sort: sort)}
   end
 
+  @doc """
+  Handles tab selection events for extension page sections.
+
+  Validates that `tab` is a numeric string before converting to integer,
+  defaulting to 0 for invalid input to prevent ArgumentError crashes.
+  """
   @impl true
   def handle_event("ext_tab", %{"sec" => sec, "tab" => tab}, socket) do
+    tab_index = if Regex.match?(~r/^\d+$/, tab), do: String.to_integer(tab), else: 0
+
     {:noreply,
      assign(socket,
-       ext_tab: Map.put(socket.assigns.ext_tab, section_key(sec), String.to_integer(tab))
+       ext_tab: Map.put(socket.assigns.ext_tab, section_key(sec), tab_index)
      )}
   end
 
