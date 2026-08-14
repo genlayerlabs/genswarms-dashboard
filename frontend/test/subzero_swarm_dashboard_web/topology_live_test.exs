@@ -67,6 +67,121 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert agents == ["conservator", "engendrador"]
   end
 
+  test "sample agents are scaffolding — filtered from the grid, real slots kept", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/topology")
+
+    snap = %{
+      "nodes" => [
+        %{"type" => "agent", "name" => "wingston_agent_0"},
+        %{"type" => "agent", "name" => "conversation_sample"},
+        %{"type" => "object", "name" => "policy"}
+      ],
+      "edges" => []
+    }
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+
+    assert_push_event(view, "pipeline:agents", %{agents: ["wingston_agent_0"]})
+  end
+
+  test "a leased slot's canvas label is the human it serves", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/topology")
+
+    snap = %{
+      "nodes" => [%{"type" => "agent", "name" => "wingston_agent_5"}],
+      "edges" => [],
+      "sessions" => [
+        %{
+          "agent" => "wingston_agent_5",
+          "session_id" => "tg:5681202:0",
+          "state" => "active",
+          "user" => %{"handle" => "ayanb09"}
+        }
+      ]
+    }
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+
+    assert_push_event(view, "pipeline:agents", %{names: names})
+    assert names == %{"wingston_agent_5" => "@ayanb09"}
+  end
+
+  test "a story summary pushes the true busy set for canvas reconciliation", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/topology")
+
+    ep = %{
+      cid: "tg:1:0",
+      user: "1",
+      agent: "wingston_agent_5",
+      count: 1,
+      opened_at: 1.0,
+      elapsed_s: 5.0,
+      stalled: false,
+      activity: "thinking"
+    }
+
+    summary = %{
+      feed_status: :ok,
+      feed_age_s: 0,
+      in_flight: [ep, %{ep | cid: "tg:2:0", user: "2", agent: nil, activity: "routing"}],
+      agents: [],
+      kpis: %{},
+      issues: [],
+      story: []
+    }
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "events", {:story, summary})
+
+    assert_push_event(view, "pipeline:truth", %{busy: ["wingston_agent_5"]})
+  end
+
+  describe "agent_display_names/1 (canvas label: slot => the human it serves)" do
+    alias SubzeroSwarmDashboardWeb.TopologyLive
+
+    test "handle wins, then user name, then label; active beats idle leftovers" do
+      snap = %{
+        "sessions" => [
+          %{
+            "agent" => "wingston_agent_1",
+            "state" => "active",
+            "user" => %{"handle" => "kongtouquan", "name" => "Kong"}
+          },
+          %{
+            "agent" => "wingston_agent_2",
+            "state" => "active",
+            "user" => %{"name" => "Crypto Li"}
+          },
+          %{
+            "agent" => "wingston_agent_3",
+            "state" => "active",
+            "user" => %{},
+            "label" => "@CUPZ_0x"
+          },
+          # recycled slot: the active session's identity wins
+          %{
+            "agent" => "wingston_agent_4",
+            "state" => "idle",
+            "user" => %{"handle" => "before"}
+          },
+          %{
+            "agent" => "wingston_agent_4",
+            "state" => "active",
+            "user" => %{"handle" => "now"}
+          },
+          # nothing to show → no entry (canvas falls back to the slot id)
+          %{"agent" => "wingston_agent_9", "state" => "active", "user" => %{}}
+        ]
+      }
+
+      assert TopologyLive.agent_display_names(snap) == %{
+               "wingston_agent_1" => "@kongtouquan",
+               "wingston_agent_2" => "Crypto Li",
+               "wingston_agent_3" => "@CUPZ_0x",
+               "wingston_agent_4" => "@now"
+             }
+    end
+  end
+
   test "an atom-keyed snapshot still routes agents to the grid", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/topology")
 

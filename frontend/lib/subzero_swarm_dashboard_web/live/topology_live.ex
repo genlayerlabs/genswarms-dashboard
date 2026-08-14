@@ -73,6 +73,16 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     {:noreply, socket}
   end
 
+  # The TRUE in-flight set (what the strip shows) → hook reconciliation: once
+  # the causal animation drains, busy rings the truth doesn't back are lost
+  # events and get released instead of waiting out the decay timeout.
+  def handle_info({:story, summary}, socket) do
+    busy =
+      for ep <- summary[:in_flight] || [], is_binary(ep[:agent]), do: ep.agent
+
+    {:noreply, push_event(socket, "pipeline:truth", %{busy: Enum.uniq(busy)})}
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
@@ -290,7 +300,46 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       handles: agent_handles(snap, privacy?),
       sessions: agent_session_targets(snap, privacy?, inspect_lookup)
     }
+    |> maybe_add_display_names(snap, privacy?)
     |> maybe_add_session_labels(snap, privacy?)
+  end
+
+  # slot => the human the slot serves, as its canvas label: @handle first, then
+  # the user's display name, then the session label. Privacy mode omits the map
+  # entirely — the canvas falls back to identity-free slot ids.
+  defp maybe_add_display_names(payload, _snap, true), do: payload
+
+  defp maybe_add_display_names(payload, snap, false),
+    do: Map.put(payload, :names, agent_display_names(snap))
+
+  @doc """
+  slot => display name for the canvas label. Same active-wins precedence as
+  `agent_handles/1`. Public for unit tests.
+  """
+  def agent_display_names(snap) do
+    (snap["sessions"] || [])
+    |> Enum.filter(&is_binary(&1["agent"]))
+    # actives sort LAST so they win the Map.new overwrite
+    |> Enum.sort_by(&(&1["state"] == "active"))
+    |> Enum.reduce(%{}, fn s, acc ->
+      case display_name(s) do
+        nil -> acc
+        name -> Map.put(acc, s["agent"], name)
+      end
+    end)
+  end
+
+  defp display_name(s) do
+    handle = get_in(s, ["user", "handle"])
+    name = get_in(s, ["user", "name"])
+    label = s["label"]
+
+    cond do
+      is_binary(handle) and handle != "" -> "@" <> handle
+      is_binary(name) and name != "" -> name
+      is_binary(label) and label != "" -> label
+      true -> nil
+    end
   end
 
   defp maybe_push_layout(socket, layout) do
@@ -303,6 +352,11 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     end
   end
 
+  # Sample/template swarm members (conversation_sample) are scaffolding, not
+  # user-request pipeline — the pre-0.4.0 lane map filtered them via
+  # agent_pattern config; name-based is the generic equivalent.
+  @sample_agent ~r/sample|template/
+
   # Through normalize_nodes/1 so atom-keyed snapshots reach the grid too —
   # this is the ONLY route an agent takes to the canvas.
   defp agent_names(snap) do
@@ -312,6 +366,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       %{type: "agent", name: name} -> [name]
       _ -> []
     end)
+    |> Enum.reject(&Regex.match?(@sample_agent, &1))
   end
 
   @doc """
