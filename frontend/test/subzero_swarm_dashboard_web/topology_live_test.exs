@@ -252,6 +252,32 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       assert layout.nodes |> Enum.map(& &1.x) |> Enum.uniq() |> length() > 1
     end
 
+    test "a directed cycle uses multiple columns instead of collapsing into one layer" do
+      snapshot = %{
+        "nodes" =>
+          Enum.map(~w(commands metrics policy roster), &%{"name" => &1, "type" => "object"}),
+        "edges" => [
+          %{"from" => "commands", "to" => "policy"},
+          %{"from" => "policy", "to" => "roster"},
+          %{"from" => "roster", "to" => "commands"}
+        ]
+      }
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+      cycle_columns = Enum.map(~w(commands policy roster), &by_name[&1].x)
+
+      assert Map.keys(by_name) |> Enum.sort() == ~w(commands metrics policy roster)
+      assert cycle_columns |> Enum.uniq() |> length() > 1
+      assert layout.nodes |> Enum.map(&{&1.x, &1.y}) |> Enum.uniq() |> length() == 4
+
+      assert layout.edges == [
+               %{from: "commands", to: "policy"},
+               %{from: "policy", to: "roster"},
+               %{from: "roster", to: "commands"}
+             ]
+    end
+
     test "nil and malformed topology data fail closed to an empty layout" do
       assert TopologyLive.pipeline_layout(nil).nodes == []
 

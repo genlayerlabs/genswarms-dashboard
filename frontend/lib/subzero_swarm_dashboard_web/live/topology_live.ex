@@ -327,8 +327,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   hook the vertical corridor left between the innermost occupied rows, so the
   grid moves toward the emptier side instead of colliding with a band. Durable
   rails only connect fixed nodes; agent legs animate as live traffic.
-  Agent-less snapshots keep the layered DAG arrangement (compact grid when
-  edgeless).
+  Agent-less snapshots keep the layered DAG arrangement, falling back to a
+  compact grid when edgeless or cyclic.
   """
   def pipeline_layout(snapshot) do
     nodes = normalize_nodes(snapshot)
@@ -505,7 +505,14 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   defp node_positions(nodes, edges) do
     names = Enum.map(nodes, & &1.name)
-    depths = graph_depths(names, edges)
+
+    case graph_depths(names, edges) do
+      {:ok, depths} -> layered_positions(nodes, depths)
+      :cyclic -> grid_positions(nodes)
+    end
+  end
+
+  defp layered_positions(nodes, depths) do
     levels = depths |> Map.values() |> Enum.uniq() |> Enum.sort()
     level_indexes = levels |> Enum.with_index() |> Map.new()
 
@@ -553,21 +560,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     depths = Map.new(names, &{&1, 0})
     {depths, visited} = walk_layers(queue, indegrees, outgoing, depths, MapSet.new())
 
-    unresolved = Enum.reject(names, &MapSet.member?(visited, &1))
-
-    if unresolved == [] do
-      depths
-    else
-      unresolved_depth =
-        visited
-        |> Enum.map(&Map.fetch!(depths, &1))
-        |> case do
-          [] -> 0
-          resolved_depths -> Enum.max(resolved_depths) + 1
-        end
-
-      Enum.reduce(unresolved, depths, &Map.put(&2, &1, unresolved_depth))
-    end
+    if MapSet.size(visited) == length(names), do: {:ok, depths}, else: :cyclic
   end
 
   defp walk_layers([], _indegrees, _outgoing, depths, visited), do: {depths, visited}
