@@ -96,10 +96,13 @@ export const Pipeline = {
       const hit = this.agentAt(e.offsetX, e.offsetY)
       if (hit && this.SESSIONS[hit]) this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
     })
+    this.HOVER = null // node under the pointer — its durable rails light up
     this.cv.addEventListener("mousemove", (e) => {
+      this.HOVER = this.nodeAt(e.offsetX, e.offsetY)
       const hit = this.agentAt(e.offsetX, e.offsetY)
       this.cv.style.cursor = hit && this.SESSIONS[hit] ? "pointer" : ""
     })
+    this.cv.addEventListener("mouseleave", () => (this.HOVER = null))
 
     this.handleEvent("pipeline:init", (layout) => {
       this.LAYOUT = layout
@@ -618,6 +621,25 @@ export const Pipeline = {
     return null
   },
 
+  // any node under the pointer — agents are dots, ext small circles, object
+  // chips are sized to their label (mirror the draw-time extents)
+  nodeAt(x, y) {
+    for (const [name, p] of Object.entries(this.POS || {})) {
+      let hw, hh
+      if (p.kind === "agent") {
+        hw = hh = (p.r || 10) + 6
+      } else if (p.kind === "ext") {
+        hw = hh = 18
+      } else {
+        this.g.font = `600 12px ${MONO}`
+        hw = this.g.measureText(this.short(name)).width / 2 + 12
+        hh = 16
+      }
+      if (Math.abs(x - p.x) <= hw && Math.abs(y - p.y) <= hh) return name
+    }
+    return null
+  },
+
   layout() {
     if (!this.LAYOUT) return
     const W = (this.cv.width = this.cv.clientWidth || this.el.clientWidth)
@@ -725,15 +747,18 @@ export const Pipeline = {
     // causal contract: a state change becomes visible when its packet lands
     this.LANDS = this.LANDS.filter((l) => (l.at <= pnow ? (l.fn(), false) : true))
 
-    // Durable topology from the selected swarm's snapshot. These rails are
-    // intentionally separate from EDGES, which only represents recent traffic.
+    // Durable topology from the selected swarm's snapshot — revealed on HOVER
+    // only: always-on rails turn a dense message graph into spaghetti, and
+    // live traffic (EDGES) already shows who is actually talking. Hovering a
+    // node lights up its rails for discoverability.
     for (const edge of (this.LAYOUT && this.LAYOUT.edges) || []) {
+      if (!this.HOVER || (edge.from !== this.HOVER && edge.to !== this.HOVER)) continue
       const railA = this.POS[edge.from]
       const railB = this.POS[edge.to]
       if (!railA || !railB) continue
       const gm = this.geom(edge.from, edge.to)
       g.strokeStyle = C.ink
-      g.globalAlpha = 0.16
+      g.globalAlpha = 0.3
       g.lineWidth = 1.5
       g.beginPath()
       g.moveTo(railA.x, railA.y)

@@ -178,6 +178,33 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       assert layout.agent_y_min < layout.agent_y_max
     end
 
+    test "band order follows connectivity, not the alphabet (crossing reduction)" do
+      # Alphabetical order would put aa_book on the left and zz_book on the
+      # right — the exact opposite of who they talk to. The barycentric sweep
+      # must flip them so rails run vertically instead of crossing the canvas.
+      snapshot = %{
+        "nodes" => [
+          %{"name" => "agent_0", "type" => "agent"},
+          %{"name" => "alpha_svc", "type" => "object"},
+          %{"name" => "beta_svc", "type" => "object"},
+          %{"name" => "aa_book", "type" => "object"},
+          %{"name" => "zz_book", "type" => "object"}
+        ],
+        "edges" => [
+          %{"from" => "alpha_svc", "to" => "agent_0"},
+          %{"from" => "beta_svc", "to" => "agent_0"},
+          %{"from" => "aa_book", "to" => "beta_svc"},
+          %{"from" => "zz_book", "to" => "alpha_svc"}
+        ]
+      }
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+
+      assert by_name["alpha_svc"].x < by_name["beta_svc"].x
+      assert by_name["zz_book"].x < by_name["aa_book"].x
+    end
+
     test "a fully cyclic agents<->services graph never collapses into one column" do
       agents = for i <- 0..19, do: "agent_#{i}"
       services = ~w(policy tips browser sender)
