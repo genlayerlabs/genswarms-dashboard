@@ -442,6 +442,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       end)
 
     {top, bottom} = Enum.split_with(objects, &MapSet.member?(services, &1.name))
+    {top, bottom} = barycentric_sweep(top, bottom, object_neighbors(edges, agent_names))
     top_rows = band_rows(top)
     bottom_rows = band_rows(bottom)
 
@@ -475,16 +476,79 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     {mid - 0.025, mid + 0.025}
   end
 
-  # Balanced rows: 9 nodes over a 7-per-row cap become 5+4, not 7+2.
+  # Undirected object<->object adjacency (agent legs excluded) — the input to
+  # the ordering sweep below.
+  defp object_neighbors(edges, agent_names) do
+    edges
+    |> Enum.reject(fn {from, to} ->
+      MapSet.member?(agent_names, from) or MapSet.member?(agent_names, to)
+    end)
+    |> Enum.reduce(%{}, fn {from, to}, acc ->
+      acc
+      |> Map.update(from, [to], &[to | &1])
+      |> Map.update(to, [from], &[from | &1])
+    end)
+  end
+
+  # Crossing reduction: order each band by the barycenter of its neighbours'
+  # current x instead of the alphabet, so rails run roughly vertically between
+  # the bands rather than criss-crossing the whole canvas. A few alternating
+  # sweeps of the classic layered heuristic; nodes without object neighbours
+  # hold their current slot.
+  defp barycentric_sweep(top, bottom, neighbors) do
+    top = Enum.sort_by(top, & &1.name)
+    bottom = Enum.sort_by(bottom, & &1.name)
+
+    Enum.reduce(1..3, {top, bottom}, fn _, {t, b} ->
+      xs = Map.merge(band_xs(t), band_xs(b))
+      b = reorder_by_barycenter(b, xs, neighbors)
+      xs = Map.merge(band_xs(t), band_xs(b))
+      {reorder_by_barycenter(t, xs, neighbors), b}
+    end)
+  end
+
+  defp band_xs(nodes) do
+    count = length(nodes)
+
+    nodes
+    |> Enum.with_index()
+    |> Map.new(fn {node, index} -> {node.name, spread(index, count, 0.08, 0.92)} end)
+  end
+
+  defp reorder_by_barycenter(nodes, xs, neighbors) do
+    Enum.sort_by(nodes, fn node ->
+      own_x = Map.fetch!(xs, node.name)
+
+      barycenter =
+        case Map.get(neighbors, node.name, []) do
+          [] ->
+            own_x
+
+          names ->
+            case names |> Enum.map(&Map.get(xs, &1)) |> Enum.reject(&is_nil/1) do
+              [] -> own_x
+              neighbor_xs -> Enum.sum(neighbor_xs) / length(neighbor_xs)
+            end
+        end
+
+      {barycenter, node.name}
+    end)
+  end
+
+  # Balanced rows: 9 nodes over a 7-per-row cap become 5+4, not 7+2. Nodes are
+  # dealt round-robin so the sweep's left-to-right order survives in EVERY row
+  # (a straight chunk would put the left half in one row and the right half in
+  # the other, undoing the crossing reduction).
   defp band_rows([]), do: []
 
   defp band_rows(nodes) do
     rows = ceil_div(length(nodes), @band_row_max)
-    per_row = ceil_div(length(nodes), rows)
 
     nodes
-    |> Enum.sort_by(& &1.name)
-    |> Enum.chunk_every(per_row)
+    |> Enum.with_index()
+    |> Enum.group_by(fn {_node, index} -> rem(index, rows) end)
+    |> Enum.sort_by(fn {row, _pairs} -> row end)
+    |> Enum.map(fn {_row, pairs} -> Enum.map(pairs, &elem(&1, 0)) end)
   end
 
   defp band_positions(rows, row_y) do
