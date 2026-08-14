@@ -108,10 +108,12 @@ export const Pipeline = {
       this.LAYOUT = layout
       this.FIXED = new Set((layout.nodes || []).map((n) => n.name))
       this.BG = new Set(layout.chatter || [])
-      // A snapshot replaces durable topology. Event-discovered endpoints may
-      // reappear later, but must not leak from a previously selected swarm.
+      // A snapshot replaces durable topology. Event-discovered endpoints and
+      // cid ownership may reappear later, but must not leak from a previously
+      // selected swarm.
       this.AGENTS = new Set()
       this.EXTRAS = new Set()
+      this.CID = {}
       this.refreshTheme()
       this.layout()
     })
@@ -123,14 +125,31 @@ export const Pipeline = {
     // (canvas click→inspect target); `session_labels` is the drawn sub-line and
     // may be redacted independently. All maps are replaced wholesale so a
     // released slot drops its avatar + session on the next snapshot.
-    this.handleEvent("pipeline:agents", ({agents, handles, sessions, session_labels}) => {
+    this.handleEvent("pipeline:agents", ({agents, handles, sessions, session_labels, names}) => {
       this.HANDLES = handles || {}
       this.SESSIONS = sessions || {}
       this.SESSION_LABELS = session_labels || sessions || {}
+      this.NAMES = names || {} // slot → "@handle"/user name; absent under privacy
       this.AGENTS = new Set((agents || []).filter((name) => !this.FIXED.has(name)))
+      this.seedCids()
       this.layout()
     })
     this.handleEvent("pipeline:event", (ev) => this.intake(ev))
+    // TRUE in-flight state from @story (what the strip below shows). When the
+    // causal animation has fully drained, any busy claim the truth doesn't
+    // back is a lost event (feed WS gap) — release it instead of holding the
+    // ring until the decay timeout.
+    this.handleEvent("pipeline:truth", ({busy}) => {
+      this.TRUTH = new Set(busy || [])
+      this.reconcile()
+    })
+
+    // a backgrounded tab throttles the pump to ~1 packet/s — catch the picture
+    // up the moment the user actually looks at it
+    this.visHandler = () => {
+      if (!document.hidden && !this.paused && (this.PENDING.length || this.OPQ.length)) this.flushQueue()
+    }
+    document.addEventListener("visibilitychange", this.visHandler)
 
     this.ro = new ResizeObserver(() => this.layout())
     this.ro.observe(this.el)
@@ -164,6 +183,7 @@ export const Pipeline = {
     clearInterval(this.decayTimer)
     if (this.dbgTimer) clearInterval(this.dbgTimer)
     if (this.ro) this.ro.disconnect()
+    if (this.visHandler) document.removeEventListener("visibilitychange", this.visHandler)
   },
 
   q(role) {
@@ -231,6 +251,34 @@ export const Pipeline = {
         // (ingress fanning out, an agent's action batch) — launch them together
         const nx = this.nextOrigin()
         if (!(nx && this.lastPkt && nx === this.lastPkt.a)) break
+      }
+    }
+  },
+
+  // Seed cid → slot ownership from the snapshot's lease map. CID is normally
+  // written by the "routed" event, but a turn that started BEFORE this hook
+  // mounted (mid-turn page load, LiveView reconnect) never showed us its
+  // routed — without this, the eventual reply_sent can't find the owner and
+  // the thinking ring sticks until the decay timeout. Event-derived entries
+  // are fresher and win; privacy-mode tokens never match event cids and
+  // seed harmlessly. Stale seeds clear on the ok reply like live ones.
+  seedCids() {
+    for (const [slot, sid] of Object.entries(this.SESSIONS || {})) {
+      if (sid && !this.CID[sid]) this.CID[sid] = slot
+    }
+  },
+
+  // Truth wins over a fully-drained animation: while packets are still in
+  // flight the causal picture owns the canvas (an idle claim may simply not
+  // have landed yet), but once the queue is dry, a thinking/waiting ring the
+  // in-flight truth doesn't back means we lost its reply — drop it.
+  reconcile() {
+    if (!this.TRUTH || this.PENDING.length || this.OPQ.length || this.LANDS.length) return
+    const ts = this.feedNow()
+    for (const ag of Object.values(this.AG)) {
+      if ((ag.state === "thinking" || ag.state === "waiting") && !this.TRUTH.has(ag.name)) {
+        this.setState(ag.name, "idle", ts)
+        ag.queue = 0
       }
     }
   },
@@ -350,8 +398,9 @@ export const Pipeline = {
             b: agent,
             kind: "reply",
             st: () => {
-              const ag = this.AG[agent]
-              if (!ag) return
+              // ag() creates: an ask proves the slot is mid-turn even when this
+              // hook mounted after the routed event (mid-turn page load)
+              const ag = this.ag(agent)
               // already thinking: hold `since` (elapsed = whole turn) but refresh
               // the decay clock; otherwise a fresh thinking start
               if (ag.state === "thinking") this.touchAct(agent, ts)
@@ -596,8 +645,11 @@ export const Pipeline = {
   },
 
   // event endpoints: agent-looking names join the column, anything else stacks
-  // on the right edge (a newly observed object appears without a layout change)
+  // on the right edge (a newly observed object appears without a layout change).
+  // Sample/template members are scaffolding, not user-request pipeline — the
+  // server filters them from pipeline:agents; mirror that for event arrivals.
   ensureNode(name) {
+    if (/sample|template/.test(name)) return
     if (this.FIXED.has(name) || this.AGENTS.has(name) || this.EXTRAS.has(name)) return
     if (/agent/.test(name)) {
       this.ensureAgent(name)
@@ -895,7 +947,10 @@ export const Pipeline = {
       const seed = P.kind === "agent" ? (this.HANDLES || {})[n] : null
       const sess = P.kind === "agent" ? (this.SESSIONS || {})[n] : null
       const sessLabel = P.kind === "agent" ? (this.SESSION_LABELS || {})[n] : null
-      const label = this.short(n)
+      // a leased slot wears WHO it serves (@handle / user name); the slot id
+      // stays as the fallback for unleased slots and under privacy (the server
+      // omits `names` there)
+      const label = (P.kind === "agent" && (this.NAMES || {})[n]) || this.short(n)
       // chatter nodes recede so the user-request lane owns the eye
       const dim = P.kind !== "agent" && this.BG.has(n) && !objBusy ? 0.5 : 1
 
