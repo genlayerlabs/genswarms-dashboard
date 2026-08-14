@@ -42,11 +42,13 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       "nodes" => [
         %{"type" => "agent", "name" => "engendrador"},
         %{"type" => "agent", "name" => "conservator"},
-        %{"type" => "agent", "name" => "adjudicador"}
+        %{"type" => "object", "name" => "policy"},
+        %{"type" => "object", "name" => "commands"}
       ],
       "edges" => [
-        %{"from" => "engendrador", "to" => "adjudicador"},
-        %{"from" => "conservator", "to" => "adjudicador"}
+        %{"from" => "engendrador", "to" => "policy"},
+        %{"from" => "policy", "to" => "conservator"},
+        %{"from" => "commands", "to" => "policy"}
       ]
     }
 
@@ -54,27 +56,67 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
 
     assert_push_event(view, "pipeline:init", layout)
 
-    assert Enum.map(layout.nodes, & &1.name) == ["adjudicador", "conservator", "engendrador"]
+    # agents are NOT fixed layout nodes — they live in the hook's centered grid
+    assert Enum.map(layout.nodes, & &1.name) |> Enum.sort() == ["commands", "policy"]
 
-    assert layout.edges == [
-             %{from: "conservator", to: "adjudicador"},
-             %{from: "engendrador", to: "adjudicador"}
-           ]
+    # durable rails only between fixed nodes; agent legs animate as live traffic
+    assert layout.edges == [%{from: "commands", to: "policy"}]
 
     refute Enum.any?(layout.nodes, &(&1.name == "rally"))
     assert_push_event(view, "pipeline:agents", %{agents: agents})
-    assert agents == ["adjudicador", "conservator", "engendrador"]
+    assert agents == ["conservator", "engendrador"]
+  end
+
+  test "an atom-keyed snapshot still routes agents to the grid", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/topology")
+
+    snap = %{
+      nodes: [
+        %{name: "agent_x", type: "agent"},
+        %{name: "policy", type: "object"}
+      ],
+      edges: []
+    }
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+
+    assert_push_event(view, "pipeline:agents", %{agents: ["agent_x"]})
+  end
+
+  test "a snapshot cached at mount pushes the agent grid immediately", %{conn: conn} do
+    import Mox
+    set_mox_global(%{})
+
+    snap = %{
+      "nodes" => [
+        %{"type" => "agent", "name" => "agent_a"},
+        %{"type" => "object", "name" => "policy"}
+      ],
+      "edges" => [%{"from" => "agent_a", "to" => "policy"}]
+    }
+
+    stub(SubzeroSwarmDashboard.SwarmClientMock, :dashboard, fn _ -> {:ok, snap} end)
+    Phoenix.PubSub.subscribe(SubzeroSwarmDashboard.PubSub, "feed")
+    start_supervised!(SubzeroSwarmDashboard.SwarmFeed)
+    assert_receive {:snapshot, ^snap}, 2_000
+
+    {:ok, view, _html} = live(conn, "/topology")
+
+    # both pushed AT MOUNT — the next feed poll is seconds away, the
+    # assert_push_event timeout is 100ms
+    assert_push_event(view, "pipeline:init", %{nodes: [%{name: "policy"}]})
+    assert_push_event(view, "pipeline:agents", %{agents: ["agent_a"]})
   end
 
   describe "pipeline_layout/1" do
     alias SubzeroSwarmDashboardWeb.TopologyLive
 
-    test "uses only snapshot nodes and edges and layers sources before their target" do
+    test "agent-less DAGs still layer sources before their target" do
       snapshot = %{
         "nodes" => [
-          %{"name" => "engendrador", "type" => "agent"},
-          %{"name" => "conservator", "type" => "agent"},
-          %{"name" => "adjudicador", "type" => "agent"}
+          %{"name" => "engendrador", "type" => "object"},
+          %{"name" => "conservator", "type" => "object"},
+          %{"name" => "adjudicador", "type" => "object"}
         ],
         "edges" => [
           %{"from" => "engendrador", "to" => "adjudicador"},
@@ -95,7 +137,100 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
 
       assert by_name["engendrador"].x < by_name["adjudicador"].x
       assert by_name["conservator"].x < by_name["adjudicador"].x
-      assert Enum.all?(layout.nodes, &(&1.kind == "agent"))
+      assert Enum.all?(layout.nodes, &(&1.kind == "obj"))
+    end
+
+    test "agents are excluded and objects band by agent adjacency" do
+      snapshot = %{
+        "nodes" => [
+          %{"name" => "agent_0", "type" => "agent"},
+          %{"name" => "agent_1", "type" => "agent"},
+          %{"name" => "policy", "type" => "object"},
+          %{"name" => "tips", "type" => "object"},
+          %{"name" => "sender", "type" => "object"},
+          %{"name" => "commands", "type" => "object"}
+        ],
+        "edges" => [
+          %{"from" => "policy", "to" => "agent_0"},
+          %{"from" => "agent_0", "to" => "policy"},
+          %{"from" => "tips", "to" => "agent_1"},
+          %{"from" => "agent_0", "to" => "sender"},
+          %{"from" => "commands", "to" => "policy"}
+        ]
+      }
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+
+      # agents live in the hook's centered grid, never in the fixed layout
+      assert Map.keys(by_name) |> Enum.sort() == ["commands", "policy", "sender", "tips"]
+
+      # services (talk to agents) band on top, bookkeeping below the agent grid
+      for service <- ["policy", "tips", "sender"], do: assert(by_name[service].y < 0.3)
+      assert by_name["commands"].y > 0.7
+
+      # durable rails only between fixed nodes
+      assert layout.edges == [%{from: "commands", to: "policy"}]
+
+      # the grid corridor sits strictly between the innermost band rows
+      assert layout.agent_y_min > 0.12
+      assert layout.agent_y_max < 0.88
+      assert layout.agent_y_min < layout.agent_y_max
+    end
+
+    test "a fully cyclic agents<->services graph never collapses into one column" do
+      agents = for i <- 0..19, do: "agent_#{i}"
+      services = ~w(policy tips browser sender)
+      bookkeeping = ~w(commands rally cron llm_proxy metrics)
+
+      snapshot = %{
+        "nodes" =>
+          Enum.map(agents, &%{"name" => &1, "type" => "agent"}) ++
+            Enum.map(services ++ bookkeeping, &%{"name" => &1, "type" => "object"}),
+        "edges" =>
+          for(
+            s <- services,
+            a <- agents,
+            do: [%{"from" => s, "to" => a}, %{"from" => a, "to" => s}]
+          )
+          |> List.flatten()
+          |> Kernel.++([
+            %{"from" => "commands", "to" => "rally"},
+            %{"from" => "rally", "to" => "commands"},
+            %{"from" => "cron", "to" => "llm_proxy"},
+            %{"from" => "llm_proxy", "to" => "cron"}
+          ])
+      }
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+
+      assert Map.keys(by_name) |> Enum.sort() == Enum.sort(services ++ bookkeeping)
+      for s <- services, do: assert(by_name[s].y < 0.3)
+      for b <- bookkeeping, do: assert(by_name[b].y > 0.7)
+
+      # no two fixed nodes may share a position (the smear regression)
+      positions = Enum.map(layout.nodes, &{&1.x, &1.y})
+      assert positions == Enum.uniq(positions)
+    end
+
+    test "an oversized band wraps into extra rows and cedes corridor on its side only" do
+      snapshot = %{
+        "nodes" =>
+          [%{"name" => "agent_0", "type" => "agent"}] ++
+            for(i <- 1..9, do: %{"name" => "obj_#{i}", "type" => "object"}),
+        "edges" => []
+      }
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+
+      rows = layout.nodes |> Enum.map(& &1.y) |> Enum.uniq() |> Enum.sort()
+      assert length(rows) == 2
+      assert Enum.all?(rows, &(&1 > 0.7))
+      # bottom band grew two rows -> corridor bottom moves up past its
+      # innermost row; the empty top side keeps its default extent
+      assert layout.agent_y_max < 0.77
+      assert layout.agent_y_min == 0.17
     end
 
     test "an edgeless swarm gets a compact grid without invented nodes" do
@@ -110,10 +245,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       layout = TopologyLive.pipeline_layout(snapshot)
 
       assert Enum.map(layout.nodes, & &1.name) |> Enum.sort() ==
-               ~w(dashboard fleet fundare ingress seed sender tracker watch)
+               ~w(dashboard fleet fundare ingress sender tracker watch)
 
       assert layout.edges == []
-      refute Enum.any?(layout.nodes, &(&1.name == "rally"))
+      refute Enum.any?(layout.nodes, &(&1.name == "seed"))
       assert layout.nodes |> Enum.map(& &1.x) |> Enum.uniq() |> length() > 1
     end
 
