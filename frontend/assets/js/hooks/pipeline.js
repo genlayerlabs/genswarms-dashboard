@@ -633,23 +633,28 @@ export const Pipeline = {
     // around the column axis, column-major so numeric order reads top-down.
     const ags = [...this.AGENTS].sort((a, b) => this.agentOrder(a, b))
     const colX = this.LAYOUT.agent_column_x || 0.47
-    // the layout shrinks the span when a band wraps into extra rows; the label
-    // block under each dot (name + session line) is fixed pixels, so shave it
-    // off in pixels too or the bottom row's text runs into the band below
-    const spanY = this.LAYOUT.agent_span_y || 0.66
-    const spanPx = Math.max(80, spanY * H - 60)
+    // the layout hands us the vertical corridor between the band's innermost
+    // rows; the label block under each dot (name + session + status lines) is
+    // fixed pixels, so reserve it in pixels off the corridor's bottom or the
+    // bottom row's text runs into the band below
+    const LABEL_PX = 56
+    const yMin = (this.LAYOUT.agent_y_min ?? 0.17) * H
+    const yMax = (this.LAYOUT.agent_y_max ?? 0.83) * H
+    const spanPx = Math.max(40, yMax - yMin - LABEL_PX)
     const minPitch = 44
     const maxRows = Math.max(1, Math.floor(spanPx / minPitch))
     const cols = Math.max(1, Math.ceil(ags.length / maxRows))
     const rows = Math.ceil(ags.length / cols)
     const gapY = rows > 1 ? Math.min(0.1 * H, spanPx / (rows - 1)) : 0
-    // wide enough for the session sub-label (~95px) so neighbours don't touch
-    const colPitch = Math.min(120, Math.max(100, (0.44 * W) / cols))
+    // pitch targets the session sub-label (~95px) but shrinks to fit — an
+    // oversized fixed pitch would push whole columns off-canvas
+    const colPitch = Math.min(120, (0.44 * W) / cols)
     const r = cols > 2 ? 11 : 13
+    const centerY = yMin + spanPx / 2
     ags.forEach((n, i) => {
       const c = Math.floor(i / rows)
       const inCol = Math.min(rows, ags.length - c * rows)
-      const y = 0.5 * H + ((i % rows) - (inCol - 1) / 2) * gapY
+      const y = centerY + ((i % rows) - (inCol - 1) / 2) * gapY
       const x = colX * W + (c - (cols - 1) / 2) * colPitch
       this.POS[n] = {x, y, r, kind: "agent"}
     })

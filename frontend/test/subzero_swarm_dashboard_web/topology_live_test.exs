@@ -67,6 +67,22 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
     assert agents == ["conservator", "engendrador"]
   end
 
+  test "an atom-keyed snapshot still routes agents to the grid", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/topology")
+
+    snap = %{
+      nodes: [
+        %{name: "agent_x", type: "agent"},
+        %{name: "policy", type: "object"}
+      ],
+      edges: []
+    }
+
+    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+
+    assert_push_event(view, "pipeline:agents", %{agents: ["agent_x"]})
+  end
+
   test "a snapshot cached at mount pushes the agent grid immediately", %{conn: conn} do
     import Mox
     set_mox_global(%{})
@@ -155,7 +171,11 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
 
       # durable rails only between fixed nodes
       assert layout.edges == [%{from: "commands", to: "policy"}]
-      assert layout.agent_span_y == 0.66
+
+      # the grid corridor sits strictly between the innermost band rows
+      assert layout.agent_y_min > 0.12
+      assert layout.agent_y_max < 0.88
+      assert layout.agent_y_min < layout.agent_y_max
     end
 
     test "a fully cyclic agents<->services graph never collapses into one column" do
@@ -194,7 +214,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       assert positions == Enum.uniq(positions)
     end
 
-    test "an oversized band wraps into extra rows and shrinks the agent span" do
+    test "an oversized band wraps into extra rows and cedes corridor on its side only" do
       snapshot = %{
         "nodes" =>
           [%{"name" => "agent_0", "type" => "agent"}] ++
@@ -207,7 +227,10 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLiveTest do
       rows = layout.nodes |> Enum.map(& &1.y) |> Enum.uniq() |> Enum.sort()
       assert length(rows) == 2
       assert Enum.all?(rows, &(&1 > 0.7))
-      assert layout.agent_span_y < 0.66
+      # bottom band grew two rows -> corridor bottom moves up past its
+      # innermost row; the empty top side keeps its default extent
+      assert layout.agent_y_max < 0.77
+      assert layout.agent_y_min == 0.17
     end
 
     test "an edgeless swarm gets a compact grid without invented nodes" do

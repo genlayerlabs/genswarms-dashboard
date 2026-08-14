@@ -6,41 +6,34 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   alias SubzeroSwarmDashboardWeb.DashHooks
 
   # Band geometry (canvas fractions): services row(s) hang from the top edge,
-  # bookkeeping row(s) rise from the bottom; each extra row eats into the
-  # vertical span the hook gives the centered agent grid.
+  # bookkeeping row(s) rise from the bottom. The agent grid gets per-side
+  # extents derived from each band's innermost occupied row, so a deep band on
+  # one side pushes the grid toward the other instead of shrinking it in place.
   @band_row_max 7
   @band_row_step 0.11
   @band_top_y 0.12
   @band_bottom_y 0.88
-  @agent_span_default 0.66
-  # per extra band row; sized so the grid's bottom-row LABELS (two text lines
-  # under each dot) clear the row, not just the dots
-  @agent_span_per_row 0.26
-  @agent_span_min 0.30
+  # innermost band row -> grid edge breathing room (chip half-height + air)
+  @band_clearance 0.07
+  # grid extents when a side has no band (matches the legacy 0.66 span look)
+  @agent_y_min_default 0.17
+  @agent_y_max_default 0.83
 
   @impl true
   def mount(_params, _session, socket) do
     snap = socket.assigns[:snapshot]
     layout = pipeline_layout(snap)
 
+    # A cached snapshot at mount must seed the hook's agent grid too —
+    # otherwise the canvas shows an agent-less swarm until the next feed poll.
+    # Re-enter through the one snapshot handler instead of duplicating it;
+    # maybe_push_layout suppresses the redundant init.
+    if connected?(socket) && snap, do: send(self(), {:snapshot, snap})
+
     {:ok,
      socket
      |> assign(page_title: "Topology", debug: false, pipeline_layout: layout)
-     |> push_event("pipeline:init", layout)
-     |> maybe_push_agents(snap)}
-  end
-
-  # A cached snapshot at mount must seed the hook's agent grid too — otherwise
-  # the canvas shows an agent-less swarm until the next feed poll.
-  defp maybe_push_agents(socket, nil), do: socket
-
-  defp maybe_push_agents(socket, snap) do
-    privacy? = socket.assigns[:privacy] == true
-    inspect_lookup = DashHooks.inspect_lookup(snap)
-
-    socket
-    |> assign(:inspect_lookup, inspect_lookup)
-    |> push_event("pipeline:agents", agents_payload(snap, privacy?, inspect_lookup))
+     |> push_event("pipeline:init", layout)}
   end
 
   # ?debug=1 shows the hook's trace rig. The hook el is phx-update="ignore", so
@@ -310,14 +303,15 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
     end
   end
 
+  # Through normalize_nodes/1 so atom-keyed snapshots reach the grid too —
+  # this is the ONLY route an agent takes to the canvas.
   defp agent_names(snap) do
-    (snap["nodes"] || [])
+    snap
+    |> normalize_nodes()
     |> Enum.flat_map(fn
-      %{"type" => "agent", "name" => name} when is_binary(name) and name != "" -> [name]
+      %{type: "agent", name: name} -> [name]
       _ -> []
     end)
-    |> Enum.uniq()
-    |> Enum.sort()
   end
 
   @doc """
@@ -329,24 +323,24 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   exchange messages with agents (the services the request flows through) sit
   above the grid, bookkeeping objects below — swarm message graphs are
   naturally cyclic (request/reply), so layering by edge direction degenerates.
-  Oversized bands wrap into extra rows and shrink `agent_span_y` so the grid
-  never collides with a band. Durable rails only connect fixed nodes; agent
-  legs animate as live traffic. Agent-less snapshots keep the layered DAG
-  arrangement (compact grid when edgeless).
+  Oversized bands wrap into extra rows; `agent_y_min`/`agent_y_max` hand the
+  hook the vertical corridor left between the innermost occupied rows, so the
+  grid moves toward the emptier side instead of colliding with a band. Durable
+  rails only connect fixed nodes; agent legs animate as live traffic.
+  Agent-less snapshots keep the layered DAG arrangement (compact grid when
+  edgeless).
   """
   def pipeline_layout(snapshot) do
     nodes = normalize_nodes(snapshot)
     edges = normalize_edges(snapshot, nodes)
     {agents, objects} = Enum.split_with(nodes, &(&1.type == "agent"))
 
-    {positions, agent_span_y} =
+    {positions, {agent_y_min, agent_y_max}} =
       if agents == [] do
-        {node_positions(objects, edges), @agent_span_default}
+        {node_positions(objects, edges), {@agent_y_min_default, @agent_y_max_default}}
       else
         banded_positions(objects, edges, MapSet.new(agents, & &1.name))
       end
-
-    object_names = MapSet.new(objects, & &1.name)
 
     %{
       nodes:
@@ -363,12 +357,13 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
         end),
       edges:
         for {from, to} <- edges,
-            MapSet.member?(object_names, from) and MapSet.member?(object_names, to) do
+            Map.has_key?(positions, from) and Map.has_key?(positions, to) do
           %{from: from, to: to}
         end,
       chatter: [],
       return_arcs: [],
-      agent_span_y: agent_span_y
+      agent_y_min: agent_y_min,
+      agent_y_max: agent_y_max
     }
   end
 
@@ -426,17 +421,19 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
 
   defp field(map, string_key, atom_key), do: Map.get(map, string_key, Map.get(map, atom_key))
 
-  defp canvas_kind("agent"), do: "agent"
+  # No "agent" clauses: agents never become fixed nodes — the hook owns their
+  # look (grid dot radius lives in pipeline.js).
   defp canvas_kind(type) when type in ["external", "endpoint", "transport"], do: "ext"
   defp canvas_kind(_type), do: "obj"
 
-  defp canvas_radius("agent"), do: 16
   defp canvas_radius(type) when type in ["external", "endpoint", "transport"], do: 15
   defp canvas_radius(_type), do: 18
 
   # Split objects into the service band (anything that exchanges messages with
   # an agent) and the bookkeeping band, then stack each band's rows outward
-  # from its canvas edge. Returns {positions, agent_span_y}.
+  # from its canvas edge. Returns {positions, {agent_y_min, agent_y_max}}: the
+  # corridor between each band's innermost occupied row (plus clearance),
+  # which is where the hook may draw the agent grid.
   defp banded_positions(objects, edges, agent_names) do
     services =
       Enum.reduce(edges, MapSet.new(), fn {from, to}, acc ->
@@ -454,10 +451,28 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
         band_positions(bottom_rows, fn row -> @band_bottom_y - row * @band_row_step end)
       )
 
-    extra_rows = max(length(top_rows) - 1, 0) + max(length(bottom_rows) - 1, 0)
-    span = max(@agent_span_default - extra_rows * @agent_span_per_row, @agent_span_min)
+    y_min =
+      case top_rows do
+        [] -> @agent_y_min_default
+        rows -> @band_top_y + (length(rows) - 1) * @band_row_step + @band_clearance
+      end
 
-    {positions, span}
+    y_max =
+      case bottom_rows do
+        [] -> @agent_y_max_default
+        rows -> @band_bottom_y - (length(rows) - 1) * @band_row_step - @band_clearance
+      end
+
+    {positions, clamp_corridor(y_min, y_max)}
+  end
+
+  # Pathologically deep bands can cross; collapse the corridor to a thin strip
+  # at their midpoint so the grid stays drawable instead of inverting.
+  defp clamp_corridor(y_min, y_max) when y_max - y_min >= 0.05, do: {y_min, y_max}
+
+  defp clamp_corridor(y_min, y_max) do
+    mid = (y_min + y_max) / 2
+    {mid - 0.025, mid + 0.025}
   end
 
   # Balanced rows: 9 nodes over a 7-per-row cap become 5+4, not 7+2.
