@@ -80,6 +80,26 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
 | `DASHBOARD_POLL_MS` | `3000` | Snapshot poll interval |
 | `DASHBOARD_USER` / `DASHBOARD_PASS` | — | Basic-auth for the UI (active only when both set) |
 
+## Host overlay configuration (application env)
+
+A host may append a runtime overlay (an `.exs` evaluated at image build or boot)
+setting these `:subzero_swarm_dashboard` application-env keys. All are optional;
+the canvas degrades gracefully without them.
+
+| Key | Shape | Purpose |
+|---|---|---|
+| `:node_groups` | `%{"group" => ["member", ...]}` | Package groups: each collapsed group replaces its member objects with ONE super-node on the topology canvas; clicking expands it into a dotted box of members (open boxes tile into lanes). Members absent from the snapshot are ignored. |
+| `:object_descriptions` | `%{"node" => "text", agent: "text"}` | Hover cards: one-line description per object node; the `:agent` key covers every dynamic agent chip. Text-only — rendered with `textContent`, never markup. |
+| `:node_aliases` | `%{"vocab" => "real_name"}` | Maps the display-event vocabulary's canonical names (`"ingress"`, `"sender"`…) onto this swarm's real object names so packets land on snapshot nodes. Aliases flatten through collapsed groups automatically; `<name>_shard_N` folds onto `<name>` without configuration. |
+| `:ext_endpoints` | `["telegram", "web"]` | External endpoints the vocabulary talks to but no swarm object backs — drawn as small circles on the right edge so replies/browses visibly leave the swarm. |
+
+Extension-page tables additionally understand two producer-side fields: a column
+may declare `"link": true` (http(s) values in that column render as anchors —
+non-http values, including privacy-masked `•••`, stay plain text), and a row may
+carry `"detail"`: a list of `%{"label", "value", optional "link"}` maps rendered
+as a click-to-expand definition grid under the row (toggle keyed by the row's
+stable `"id"` when present).
+
 ## Pages
 
 - **Overview / Health** — status, `data_source`, **slot-pool saturation** (LRU
