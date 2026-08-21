@@ -54,4 +54,75 @@ defmodule SubzeroSwarmDashboardWeb.TopologyGroupingTest do
     assert names(layout) == ["orphan_shard_1", "policy"]
     assert edges(layout) == [{"orphan_shard_1", "policy"}]
   end
+
+  describe "host vocabulary aliases + external endpoints" do
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:subzero_swarm_dashboard, :node_aliases)
+        Application.delete_env(:subzero_swarm_dashboard, :ext_endpoints)
+      end)
+    end
+
+    test "host node aliases ride the layout payload for the hook's packet resolution" do
+      Application.put_env(:subzero_swarm_dashboard, :node_aliases, %{"ingress" => "tg_ingress"})
+
+      layout =
+        TopologyLive.pipeline_layout(snap([{"object", "tg_ingress"}], []))
+
+      assert layout.aliases == %{"ingress" => "tg_ingress"}
+    end
+
+    test "without config the alias map is empty and no ext nodes render" do
+      layout = TopologyLive.pipeline_layout(snap([{"object", "policy"}], []))
+
+      assert layout.aliases == %{}
+      refute Enum.any?(layout.nodes, &(&1.kind == "ext"))
+    end
+
+    test "configured external endpoints render as ext circles on the right edge" do
+      Application.put_env(:subzero_swarm_dashboard, :ext_endpoints, ["telegram", "web"])
+
+      layout = TopologyLive.pipeline_layout(snap([{"object", "policy"}], []))
+
+      ext = Enum.filter(layout.nodes, &(&1.kind == "ext"))
+      assert Enum.map(ext, & &1.name) |> Enum.sort() == ["telegram", "web"]
+      assert Enum.all?(ext, &(&1.x > 0.9))
+      # stacked, not overlapping
+      assert ext |> Enum.map(& &1.y) |> Enum.uniq() |> length() == 2
+    end
+  end
+
+  describe "hover description cards" do
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:subzero_swarm_dashboard, :object_descriptions)
+        Application.delete_env(:subzero_swarm_dashboard, :ext_endpoints)
+      end)
+    end
+
+    test "host object descriptions attach per node; :agent covers dynamic agent chips" do
+      Application.put_env(:subzero_swarm_dashboard, :object_descriptions, %{
+        "policy" => "Decides who may do what.",
+        "telegram" => "The Telegram Bot API.",
+        agent: "One conversation's agent."
+      })
+
+      Application.put_env(:subzero_swarm_dashboard, :ext_endpoints, ["telegram"])
+
+      layout = TopologyLive.pipeline_layout(snap([{"object", "policy"}, {"object", "sender"}], []))
+
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+      assert by_name["policy"].desc == "Decides who may do what."
+      assert by_name["sender"].desc == nil
+      assert by_name["telegram"].desc == "The Telegram Bot API."
+      assert layout.agent_desc == "One conversation's agent."
+    end
+
+    test "without config, descs are nil and agent_desc absent" do
+      layout = TopologyLive.pipeline_layout(snap([{"object", "policy"}], []))
+
+      assert hd(layout.nodes).desc == nil
+      assert layout.agent_desc == nil
+    end
+  end
 end

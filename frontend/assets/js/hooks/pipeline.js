@@ -97,12 +97,22 @@ export const Pipeline = {
       if (hit && this.SESSIONS[hit]) this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
     })
     this.HOVER = null // node under the pointer — its durable rails light up
+    // Hover card: object descriptions from the host overlay config
+    // (:object_descriptions), delivered per-node in the layout payload.
+    this.tip = document.createElement("div")
+    this.tip.className = "pipeline-tip"
+    this.tip.style.display = "none"
+    this.el.appendChild(this.tip)
     this.cv.addEventListener("mousemove", (e) => {
       this.HOVER = this.nodeAt(e.offsetX, e.offsetY)
       const hit = this.agentAt(e.offsetX, e.offsetY)
       this.cv.style.cursor = hit && this.SESSIONS[hit] ? "pointer" : ""
+      this.showTip(this.HOVER, e.offsetX, e.offsetY)
     })
-    this.cv.addEventListener("mouseleave", () => (this.HOVER = null))
+    this.cv.addEventListener("mouseleave", () => {
+      this.HOVER = null
+      this.tip.style.display = "none"
+    })
 
     this.handleEvent("pipeline:init", (layout) => {
       this.LAYOUT = layout
@@ -110,6 +120,10 @@ export const Pipeline = {
       // Event vocabulary → this swarm's real object names ("ingress" →
       // "tg_ingress"); host-provided so packets land on snapshot nodes.
       this.ALIASES = layout.aliases || {}
+      this.DESCS = Object.fromEntries(
+        (layout.nodes || []).filter((n) => n.desc).map((n) => [n.name, n.desc])
+      )
+      this.AGENT_DESC = layout.agent_desc || null
       this.BG = new Set(layout.chatter || [])
       // A snapshot replaces durable topology. Event-discovered endpoints and
       // cid ownership may reappear later, but must not leak from a previously
@@ -699,6 +713,37 @@ export const Pipeline = {
 
   // any node under the pointer — agents are dots, ext small circles, object
   // chips are sized to their label (mirror the draw-time extents)
+  // Object hover card: title row + host-provided description. Built with
+  // textContent only (descriptions are config data, never markup). Hidden
+  // when the hovered node has no description.
+  showTip(name, x, y) {
+    if (!this.tip) return
+    const agent = name && (this.POS?.[name]?.kind === "agent" || this.AGENTS?.has(name))
+    const desc = name ? (agent ? this.AGENT_DESC : this.DESCS?.[name]) : null
+    if (!desc) {
+      this.tip.style.display = "none"
+      return
+    }
+    if (this.tip._for !== name) {
+      this.tip._for = name
+      this.tip.textContent = ""
+      const title = document.createElement("div")
+      title.className = "pipeline-tip-title"
+      title.textContent = name
+      const body = document.createElement("div")
+      body.className = "pipeline-tip-body"
+      body.textContent = desc
+      this.tip.append(title, body)
+    }
+    this.tip.style.display = "block"
+    const W = this.el.clientWidth
+    const H = this.el.clientHeight
+    const tw = this.tip.offsetWidth
+    const th = this.tip.offsetHeight
+    this.tip.style.left = `${Math.max(8, Math.min(x + 14, W - tw - 8))}px`
+    this.tip.style.top = `${Math.max(8, Math.min(y + 14, H - th - 8))}px`
+  },
+
   nodeAt(x, y) {
     for (const [name, p] of Object.entries(this.POS || {})) {
       let hw, hh

@@ -398,6 +398,11 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
         banded_positions(objects, edges, MapSet.new(agents, & &1.name))
       end
 
+    # Object hover cards: host-provided descriptions per node name; the
+    # :agent key covers every dynamic agent chip. Config data, text-only —
+    # the hook renders it with textContent, never markup.
+    descs = Application.get_env(:subzero_swarm_dashboard, :object_descriptions, %{})
+
     # Event vocabulary → this swarm's real object names ("ingress" →
     # "tg_ingress"); host-provided so packets land on snapshot nodes instead
     # of being dropped for lack of a position.
@@ -415,11 +420,12 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       |> Enum.map(fn {name, i} ->
         y = 0.5 + (i - (length(ext_names) - 1) / 2) * 0.16
 
-        %{name: name, x: 0.955, y: y, kind: "ext", r: 15}
+        %{name: name, x: 0.955, y: y, kind: "ext", r: 15, desc: Map.get(descs, name)}
       end)
 
     %{
       aliases: aliases,
+      agent_desc: Map.get(descs, :agent),
       nodes:
         Enum.map(objects, fn node ->
           {x, y} = Map.fetch!(positions, node.name)
@@ -429,7 +435,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
             x: x,
             y: y,
             kind: canvas_kind(node.type),
-            r: canvas_radius(node.type)
+            r: canvas_radius(node.type),
+            desc: Map.get(descs, node.name)
           }
         end) ++ ext_nodes,
       edges:
