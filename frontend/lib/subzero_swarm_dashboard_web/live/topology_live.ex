@@ -388,6 +388,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   def pipeline_layout(snapshot) do
     nodes = normalize_nodes(snapshot)
     edges = normalize_edges(snapshot, nodes)
+    {nodes, edges} = collapse_shards(nodes, edges)
     {agents, objects} = Enum.split_with(nodes, &(&1.type == "agent"))
 
     {positions, {agent_y_min, agent_y_max}} =
@@ -420,6 +421,38 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       agent_y_min: agent_y_min,
       agent_y_max: agent_y_max
     }
+  end
+
+  # Fixed shard workers (`<router>_shard_N`) are an implementation detail of
+  # their router object; drawing 16 of them per router drowns the canvas.
+  # Collapse each shard into its router when the router itself is in the
+  # snapshot, folding shard edges onto the router (self-loops dropped).
+  @shard_suffix ~r/^(.+)_shard_\d+$/
+  defp collapse_shards(nodes, edges) do
+    names = MapSet.new(nodes, & &1.name)
+
+    rename =
+      for %{name: name} <- nodes,
+          [_, parent] <- [Regex.run(@shard_suffix, name)],
+          MapSet.member?(names, parent),
+          into: %{} do
+        {name, parent}
+      end
+
+    if rename == %{} do
+      {nodes, edges}
+    else
+      kept = Enum.reject(nodes, &Map.has_key?(rename, &1.name))
+
+      folded =
+        edges
+        |> Enum.map(fn {from, to} -> {Map.get(rename, from, from), Map.get(rename, to, to)} end)
+        |> Enum.reject(fn {from, to} -> from == to end)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      {kept, folded}
+    end
   end
 
   defp normalize_nodes(%{"nodes" => raw_nodes}) when is_list(raw_nodes) do
