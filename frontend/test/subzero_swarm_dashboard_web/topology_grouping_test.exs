@@ -125,4 +125,148 @@ defmodule SubzeroSwarmDashboardWeb.TopologyGroupingTest do
       assert layout.agent_desc == nil
     end
   end
+
+  describe "package groups" do
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:subzero_swarm_dashboard, :node_groups)
+        Application.delete_env(:subzero_swarm_dashboard, :node_aliases)
+      end)
+
+      Application.put_env(:subzero_swarm_dashboard, :node_groups, %{
+        "market" => ["market_bet", "market_resolution"],
+        "ops" => ["metrics", "cron"],
+        "ghost" => ["not_in_snapshot"]
+      })
+
+      {:ok,
+       snap:
+         snap(
+           [
+             {"object", "market_bet"},
+             {"object", "market_resolution"},
+             {"object", "metrics"},
+             {"object", "cron"},
+             {"object", "policy"}
+           ],
+           [
+             {"market_bet", "policy"},
+             {"market_resolution", "policy"},
+             {"metrics", "policy"},
+             {"market_bet", "market_resolution"}
+           ]
+         )}
+    end
+
+    test "collapsed groups replace members with ONE super-node; edges fold, meta describes", %{
+      snap: snapshot
+    } do
+      layout = TopologyLive.pipeline_layout(snapshot)
+
+      assert names(layout) == ["market", "ops", "policy"]
+      # member↔member edges become self-loops and drop
+      assert edges(layout) == [{"market", "policy"}, {"ops", "policy"}]
+
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+      assert by_name["market"].group == true
+      assert by_name["policy"].group == false
+      assert by_name["market"].desc =~ "2 objects"
+      assert by_name["market"].desc =~ "market_bet"
+
+      # a group with no member in the snapshot vanishes entirely
+      assert Enum.map(layout.groups, & &1.name) == ["market", "ops"]
+      assert %{count: 2, expanded: false} = hd(layout.groups)
+    end
+
+    test "host aliases flatten through collapsed groups", %{snap: snapshot} do
+      Application.put_env(:subzero_swarm_dashboard, :node_aliases, %{"bet" => "market_bet"})
+
+      layout = TopologyLive.pipeline_layout(snapshot)
+
+      # "bet" → market_bet → its collapsed group; members alias to the group too
+      assert layout.aliases["bet"] == "market"
+      assert layout.aliases["market_bet"] == "market"
+    end
+
+    test "an expanded group fans members out inside a box; labels drop the group prefix", %{
+      snap: snapshot
+    } do
+      layout = TopologyLive.pipeline_layout(snapshot, MapSet.new(["market"]))
+
+      assert "market_bet" in names(layout)
+      refute "market" in names(layout)
+
+      by_name = Map.new(layout.nodes, &{&1.name, &1})
+      assert by_name["market_bet"].label == "bet"
+
+      assert [box] = layout.boxes
+      assert box.name == "market"
+      assert Enum.sort(box.members) == ["market_bet", "market_resolution"]
+
+      # every member sits INSIDE the box rect
+      for m <- box.members do
+        assert {x, y} = {by_name[m].x, by_name[m].y}
+        assert x >= box.x0 and x <= box.x1
+        assert y >= box.y0 and y <= box.y1
+      end
+
+      # meta reports the expansion; the still-collapsed group keeps folding
+      assert Enum.find(layout.groups, &(&1.name == "market")).expanded == true
+      assert "ops" in names(layout)
+    end
+
+    test "expanded members never overlap each other", %{snap: snapshot} do
+      layout = TopologyLive.pipeline_layout(snapshot, MapSet.new(["market", "ops"]))
+
+      positions =
+        for n <- layout.nodes, do: {n.name, {Float.round(n.x, 4), Float.round(n.y, 4)}}
+
+      coords = Enum.map(positions, &elem(&1, 1))
+      assert coords == Enum.uniq(coords)
+
+      # two open boxes tile into disjoint lanes
+      assert [a, b] = layout.boxes |> Enum.sort_by(& &1.x0)
+      assert a.x1 <= b.x0 or a.y1 <= b.y0 or b.y1 <= a.y0
+    end
+  end
+end
+
+defmodule SubzeroSwarmDashboardWeb.TopologyGroupRoundTripTest do
+  # The LiveView half of package groups: chips render under the canvas and a
+  # click re-lays the canvas with that group's box open.
+  use SubzeroSwarmDashboardWeb.ConnCase, async: false
+  import Phoenix.LiveViewTest
+
+  setup do
+      on_exit(fn -> Application.delete_env(:subzero_swarm_dashboard, :node_groups) end)
+      Application.put_env(:subzero_swarm_dashboard, :node_groups, %{"ops" => ["metrics", "cron"]})
+      :ok
+    end
+
+    test "group chips render and a click re-lays the canvas with the box open", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/topology")
+
+      send(
+        view.pid,
+        {:snapshot,
+         %{
+           "nodes" => [
+             %{"type" => "object", "name" => "metrics"},
+             %{"type" => "object", "name" => "cron"},
+             %{"type" => "object", "name" => "policy"}
+           ],
+           "edges" => [%{"from" => "metrics", "to" => "policy"}]
+         }}
+      )
+
+      html = render(view)
+      assert html =~ "packages:"
+      assert html =~ "▸ ops"
+
+      view |> element(~s(button[phx-value-name="ops"])) |> render_click()
+
+      assert_push_event(view, "pipeline:init", %{boxes: [box]})
+      assert box.name == "ops"
+      assert render(view) =~ "▾ ops"
+    end
 end

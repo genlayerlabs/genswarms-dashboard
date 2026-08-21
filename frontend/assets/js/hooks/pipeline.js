@@ -94,7 +94,16 @@ export const Pipeline = {
     this.SESSION_LABELS = {}
     this.cv.addEventListener("click", (e) => {
       const hit = this.agentAt(e.offsetX, e.offsetY)
-      if (hit && this.SESSIONS[hit]) this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
+      if (hit && this.SESSIONS[hit])
+        return this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
+      // package groups: click a collapsed group node to expand it into its
+      // dotted box; click the box (any empty area inside it) to collapse.
+      const node = this.nodeAt(e.offsetX, e.offsetY)
+      if (node && this.GROUPNODES?.has(node)) return this.pushEvent("topo_group", {name: node})
+      if (!node) {
+        const box = this.boxAt(e.offsetX, e.offsetY)
+        if (box) this.pushEvent("topo_group", {name: box})
+      }
     })
     this.HOVER = null // node under the pointer — its durable rails light up
     // Hover card: object descriptions from the host overlay config
@@ -106,7 +115,12 @@ export const Pipeline = {
     this.cv.addEventListener("mousemove", (e) => {
       this.HOVER = this.nodeAt(e.offsetX, e.offsetY)
       const hit = this.agentAt(e.offsetX, e.offsetY)
-      this.cv.style.cursor = hit && this.SESSIONS[hit] ? "pointer" : ""
+      this.cv.style.cursor =
+        (hit && this.SESSIONS[hit]) ||
+        (this.HOVER && this.GROUPNODES?.has(this.HOVER)) ||
+        (!this.HOVER && this.boxAt(e.offsetX, e.offsetY))
+          ? "pointer"
+          : ""
       this.showTip(this.HOVER, e.offsetX, e.offsetY)
     })
     this.cv.addEventListener("mouseleave", () => {
@@ -124,6 +138,19 @@ export const Pipeline = {
         (layout.nodes || []).filter((n) => n.desc).map((n) => [n.name, n.desc])
       )
       this.AGENT_DESC = layout.agent_desc || null
+      // Expanded package boxes + collapsed group nodes. Open boxes need
+      // breathing room: the panel grows while any box is open (the hook owns
+      // the phx-update="ignore" container, so height changes must come from
+      // here), and layout() below re-reads the new clientHeight.
+      this.BOXES = layout.boxes || []
+      this.fitHeight()
+      // display labels (e.g. expanded members drop their group prefix)
+      this.LABELS = Object.fromEntries(
+        (layout.nodes || [])
+          .filter((n) => n.label && n.label !== n.name)
+          .map((n) => [n.name, n.label])
+      )
+      this.GROUPNODES = new Set((layout.nodes || []).filter((n) => n.group).map((n) => n.name))
       this.BG = new Set(layout.chatter || [])
       // A snapshot replaces durable topology. Event-discovered endpoints and
       // cid ownership may reappear later, but must not leak from a previously
@@ -148,6 +175,7 @@ export const Pipeline = {
       this.SESSION_LABELS = session_labels || sessions || {}
       this.NAMES = names || {} // slot → "@handle"/user name; absent under privacy
       this.AGENTS = new Set((agents || []).filter((name) => !this.FIXED.has(name)))
+      this.fitHeight()
       this.seedCids()
       this.layout()
     })
@@ -713,6 +741,50 @@ export const Pipeline = {
 
   // any node under the pointer — agents are dots, ext small circles, object
   // chips are sized to their label (mirror the draw-time extents)
+  // The panel grows with content instead of cramming it: open package boxes
+  // and large agent pools both earn more viewport height. The hook owns the
+  // phx-update="ignore" container, so height changes must come from here;
+  // layout() re-reads clientHeight.
+  fitHeight() {
+    const n = this.AGENTS?.size || 0
+    const agentVh = n > 12 ? Math.min(88, 64 + Math.ceil((n - 12) / 8) * 6) : 64
+    const boxVh = (this.BOXES || []).length ? 80 : 64
+    const vh = Math.max(agentVh, boxVh)
+    const want = vh === 64 ? "" : `${vh}vh`
+    if (this.el.style.height !== want) {
+      this.el.style.height = want
+      this.layout()
+    }
+  },
+
+  boxAt(x, y) {
+    for (const b of this.BOXPX || []) {
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b.name
+    }
+    return null
+  },
+
+  // bounding rect of a box's member chips, measured with the same font the
+  // chips draw with; extra headroom at the top carries the group label
+  boxRect(b) {
+    let x0 = Infinity
+    let x1 = -Infinity
+    let y0 = Infinity
+    let y1 = -Infinity
+    this.g.font = `600 12px ${MONO}`
+    for (const m of b.members || []) {
+      const p = this.POS[m]
+      if (!p) continue
+      const hw = this.g.measureText(this.short(m)).width / 2 + 14
+      x0 = Math.min(x0, p.x - hw)
+      x1 = Math.max(x1, p.x + hw)
+      y0 = Math.min(y0, p.y - 16)
+      y1 = Math.max(y1, p.y + 16)
+    }
+    if (x0 === Infinity) return null
+    return {x: x0 - 10, y: y0 - 32, w: x1 - x0 + 20, h: y1 - y0 + 46}
+  },
+
   // Object hover card: title row + host-provided description. Built with
   // textContent only (descriptions are config data, never markup). Hidden
   // when the hovered node has no description.
@@ -827,7 +899,7 @@ export const Pipeline = {
 
   decayEdges() {
     this.EDGES.forEach((v, k) => {
-      const n = v * 0.82
+      const n = v * 0.7 // cool traffic glow in ~5s, not ~20 (rails are permanent now)
       n < 0.15 ? this.EDGES.delete(k) : this.EDGES.set(k, n)
     })
   },
@@ -868,23 +940,56 @@ export const Pipeline = {
     // causal contract: a state change becomes visible when its packet lands
     this.LANDS = this.LANDS.filter((l) => (l.at <= pnow ? (l.fn(), false) : true))
 
-    // Durable topology from the selected swarm's snapshot — revealed on HOVER
-    // only: always-on rails turn a dense message graph into spaghetti, and
-    // live traffic (EDGES) already shows who is actually talking. Hovering a
-    // node lights up its rails for discoverability.
+    // Expanded package boxes: dotted container around the group's members.
+    // The rect is MEASURED from the drawn chips (fractions can't know label
+    // pixel widths), cached per frame for the click hit-test.
+    this.BOXPX = []
+    for (const b of this.BOXES || []) {
+      const rect = this.boxRect(b)
+      if (!rect) continue
+      this.BOXPX.push({name: b.name, ...rect})
+      const bx = rect.x
+      const by = rect.y
+      const bw = rect.w
+      const bh = rect.h
+      g.save()
+      g.setLineDash([5, 5])
+      g.strokeStyle = C.ink
+      g.globalAlpha = 0.22
+      g.lineWidth = 1
+      g.beginPath()
+      g.roundRect(bx, by, bw, bh, 10)
+      g.stroke()
+      g.setLineDash([])
+      g.globalAlpha = 0.55
+      g.fillStyle = C.ink
+      g.font = `600 11px ${MONO}`
+      g.fillText(`${b.name} ▾`, bx + 10, by + 15)
+      g.restore()
+    }
+
+    // Durable topology from the selected swarm's snapshot. Package grouping
+    // keeps the node count small, so ALL rails stay faintly visible — the
+    // graph reads as a graph instead of floating chips — while hovering a
+    // node brightens its own rails and adds the direction arrowheads.
     for (const edge of (this.LAYOUT && this.LAYOUT.edges) || []) {
-      if (!this.HOVER || (edge.from !== this.HOVER && edge.to !== this.HOVER)) continue
+      const hot = this.HOVER && (edge.from === this.HOVER || edge.to === this.HOVER)
       const railA = this.POS[edge.from]
       const railB = this.POS[edge.to]
       if (!railA || !railB) continue
       const gm = this.geom(edge.from, edge.to)
       g.strokeStyle = C.ink
-      g.globalAlpha = 0.3
-      g.lineWidth = 1.5
+      g.globalAlpha = hot ? 0.3 : 0.07
+      g.lineWidth = hot ? 1.5 : 1
       g.beginPath()
       g.moveTo(railA.x, railA.y)
       gm.q ? g.quadraticCurveTo(gm.cx, gm.cy, railB.x, railB.y) : g.lineTo(railB.x, railB.y)
       g.stroke()
+
+      if (!hot) {
+        g.globalAlpha = 1
+        continue
+      }
 
       const ang = gm.q
         ? Math.atan2(railB.y - gm.cy, railB.x - gm.cx)
@@ -911,8 +1016,8 @@ export const Pipeline = {
       const t = Math.min(h / 8, 1)
       const gm = this.geom(a, b)
       g.strokeStyle = C.ink
-      g.globalAlpha = bg ? 0.07 + 0.09 * t : 0.26 + 0.38 * t
-      g.lineWidth = bg ? 1 : 1.3 + t * 4
+      g.globalAlpha = bg ? 0.07 + 0.09 * t : 0.16 + 0.28 * t
+      g.lineWidth = bg ? 1 : 1.2 + t * 2.2
       g.beginPath()
       g.moveTo(A.x, A.y)
       gm.q ? g.quadraticCurveTo(gm.cx, gm.cy, B.x, B.y) : g.lineTo(B.x, B.y)
@@ -1258,6 +1363,8 @@ export const Pipeline = {
   },
 
   short(n) {
+    const label = this.LABELS?.[n]
+    if (label) return label
     return String(n).replace(/^.+_agent_/, "agent_").replace("conversation_sample", "convo")
   },
 
