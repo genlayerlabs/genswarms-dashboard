@@ -38,6 +38,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsSessionChurnTest do
     view
     |> element(~s(form[phx-change="select"]))
     |> render_change(%{"session_id" => "tg:111:0"})
+
     assert render(view) =~ "tg:111:0"
 
     # slot recycled: the next snapshot no longer carries the selected session

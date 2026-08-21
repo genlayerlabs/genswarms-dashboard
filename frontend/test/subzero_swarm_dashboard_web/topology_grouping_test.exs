@@ -109,7 +109,8 @@ defmodule SubzeroSwarmDashboardWeb.TopologyGroupingTest do
 
       Application.put_env(:subzero_swarm_dashboard, :ext_endpoints, ["telegram"])
 
-      layout = TopologyLive.pipeline_layout(snap([{"object", "policy"}, {"object", "sender"}], []))
+      layout =
+        TopologyLive.pipeline_layout(snap([{"object", "policy"}, {"object", "sender"}], []))
 
       by_name = Map.new(layout.nodes, &{&1.name, &1})
       assert by_name["policy"].desc == "Decides who may do what."
@@ -238,35 +239,35 @@ defmodule SubzeroSwarmDashboardWeb.TopologyGroupRoundTripTest do
   import Phoenix.LiveViewTest
 
   setup do
-      on_exit(fn -> Application.delete_env(:subzero_swarm_dashboard, :node_groups) end)
-      Application.put_env(:subzero_swarm_dashboard, :node_groups, %{"ops" => ["metrics", "cron"]})
-      :ok
-    end
+    on_exit(fn -> Application.delete_env(:subzero_swarm_dashboard, :node_groups) end)
+    Application.put_env(:subzero_swarm_dashboard, :node_groups, %{"ops" => ["metrics", "cron"]})
+    :ok
+  end
 
-    test "group chips render and a click re-lays the canvas with the box open", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/topology")
+  test "group chips render and a click re-lays the canvas with the box open", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/topology")
 
-      send(
-        view.pid,
-        {:snapshot,
-         %{
-           "nodes" => [
-             %{"type" => "object", "name" => "metrics"},
-             %{"type" => "object", "name" => "cron"},
-             %{"type" => "object", "name" => "policy"}
-           ],
-           "edges" => [%{"from" => "metrics", "to" => "policy"}]
-         }}
-      )
+    send(
+      view.pid,
+      {:snapshot,
+       %{
+         "nodes" => [
+           %{"type" => "object", "name" => "metrics"},
+           %{"type" => "object", "name" => "cron"},
+           %{"type" => "object", "name" => "policy"}
+         ],
+         "edges" => [%{"from" => "metrics", "to" => "policy"}]
+       }}
+    )
 
-      html = render(view)
-      assert html =~ "packages:"
-      assert html =~ "▸ ops"
+    html = render(view)
+    assert html =~ "packages:"
+    assert html =~ "▸ ops"
 
-      view |> element(~s(button[phx-value-name="ops"])) |> render_click()
+    view |> element(~s(button[phx-value-name="ops"])) |> render_click()
 
-      assert_push_event(view, "pipeline:init", %{boxes: [box]})
-      assert box.name == "ops"
-      assert render(view) =~ "▾ ops"
-    end
+    assert_push_event(view, "pipeline:init", %{boxes: [box]})
+    assert box.name == "ops"
+    assert render(view) =~ "▾ ops"
+  end
 end

@@ -206,5 +206,4 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   defp line_count_label(1), do: "1 line"
   defp line_count_label(n), do: "#{n} lines"
-
 end
