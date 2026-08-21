@@ -21,8 +21,9 @@ defmodule SubzeroSwarmDashboardWeb.LogsSessionChurnTest do
     }
   end
 
-  defp broadcast(snap),
-    do: Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
+  # Deliver straight to the view process — a PubSub broadcast is async and
+  # can race the next render/1.
+  defp broadcast(view, snap), do: send(view.pid, {:snapshot, snap})
 
   test "the selected session stays selectable when a later snapshot drops it", %{conn: conn} do
     stub(SubzeroSwarmDashboard.SwarmClientMock, :session_logs, fn _swarm, _sid ->
@@ -31,7 +32,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsSessionChurnTest do
 
     {:ok, view, _html} = live(conn, "/logs")
 
-    broadcast(snapshot([{"tg:111:0", "agent_0"}, {"tg:222:0", "agent_1"}]))
+    broadcast(view, snapshot([{"tg:111:0", "agent_0"}, {"tg:222:0", "agent_1"}]))
     render(view)
 
     view
@@ -40,7 +41,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsSessionChurnTest do
     assert render(view) =~ "tg:111:0"
 
     # slot recycled: the next snapshot no longer carries the selected session
-    broadcast(snapshot([{"tg:222:0", "agent_1"}]))
+    broadcast(view, snapshot([{"tg:222:0", "agent_1"}]))
     html = render(view)
 
     assert html =~ "tg:111:0",
@@ -52,7 +53,7 @@ defmodule SubzeroSwarmDashboardWeb.LogsSessionChurnTest do
   test "with nothing selected, a churned snapshot adds no synthetic option", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/logs")
 
-    broadcast(snapshot([{"tg:222:0", "agent_1"}]))
+    broadcast(view, snapshot([{"tg:222:0", "agent_1"}]))
     html = render(view)
 
     refute html =~ "not in latest snapshot"
