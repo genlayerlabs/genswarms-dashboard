@@ -107,6 +107,9 @@ export const Pipeline = {
     this.handleEvent("pipeline:init", (layout) => {
       this.LAYOUT = layout
       this.FIXED = new Set((layout.nodes || []).map((n) => n.name))
+      // Event vocabulary → this swarm's real object names ("ingress" →
+      // "tg_ingress"); host-provided so packets land on snapshot nodes.
+      this.ALIASES = layout.aliases || {}
       this.BG = new Set(layout.chatter || [])
       // A snapshot replaces durable topology. Event-discovered endpoints and
       // cid ownership may reappear later, but must not leak from a previously
@@ -545,8 +548,29 @@ export const Pipeline = {
 
   // execute one op; returns true iff a foreground packet was spawned (the causal
   // pump gates only on those — chatter and pure state changes never block flow)
+  // Ops are built from the display-event vocabulary's canonical node names
+  // ("ingress", "sender", "policy"...). Swarms whose objects use different
+  // names (tg_ingress, llm_proxy...) resolve through the host alias map, and
+  // collapsed shard workers fold onto their router — otherwise the packet
+  // would be dropped for lack of a node position.
+  resolveNode(name) {
+    if (!name || this.POS[name] || this.FIXED.has(name) || this.AGENTS?.has(name)) return name
+    const alias = this.ALIASES?.[name]
+    if (alias && (this.POS[alias] || this.FIXED.has(alias))) return alias
+    const m = /^(.+)_shard_\d+$/.exec(name)
+    if (m) {
+      if (this.POS[m[1]] || this.FIXED.has(m[1])) return m[1]
+      // shard's router itself collapsed into a package group
+      const pa = this.ALIASES?.[m[1]]
+      if (pa && (this.POS[pa] || this.FIXED.has(pa))) return pa
+    }
+    return name
+  },
+
   execOp(op, immediate) {
-    if (op.flash) this.FLASH[op.flash] = performance.now() + 1600
+    if (op.a) op = {...op, a: this.resolveNode(op.a)}
+    if (op.b) op = {...op, b: this.resolveNode(op.b)}
+    if (op.flash) this.FLASH[this.resolveNode(op.flash)] = performance.now() + 1600
     if (op.badge) this.BADGE[op.badge] = {glyph: op.glyph, until: performance.now() + 5000}
     if (!op.a || !op.b) {
       if (op.st) op.st()

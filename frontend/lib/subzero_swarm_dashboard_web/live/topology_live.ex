@@ -398,7 +398,28 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
         banded_positions(objects, edges, MapSet.new(agents, & &1.name))
       end
 
+    # Event vocabulary → this swarm's real object names ("ingress" →
+    # "tg_ingress"); host-provided so packets land on snapshot nodes instead
+    # of being dropped for lack of a position.
+    aliases = Application.get_env(:subzero_swarm_dashboard, :node_aliases, %{})
+
+    # External endpoints the display vocabulary talks to but no swarm object
+    # backs ("telegram" — the Telegram API, "web") get small ext circles
+    # stacked on the right edge, so reply/browse packets visibly LEAVE the
+    # swarm instead of being dropped.
+    ext_names = Application.get_env(:subzero_swarm_dashboard, :ext_endpoints, [])
+
+    ext_nodes =
+      ext_names
+      |> Enum.with_index()
+      |> Enum.map(fn {name, i} ->
+        y = 0.5 + (i - (length(ext_names) - 1) / 2) * 0.16
+
+        %{name: name, x: 0.955, y: y, kind: "ext", r: 15}
+      end)
+
     %{
+      aliases: aliases,
       nodes:
         Enum.map(objects, fn node ->
           {x, y} = Map.fetch!(positions, node.name)
@@ -410,7 +431,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
             kind: canvas_kind(node.type),
             r: canvas_radius(node.type)
           }
-        end),
+        end) ++ ext_nodes,
       edges:
         for {from, to} <- edges,
             Map.has_key?(positions, from) and Map.has_key?(positions, to) do
