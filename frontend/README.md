@@ -83,11 +83,22 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
 ## Host overlay configuration (application env)
 
 A host sets these `:subzero_swarm_dashboard` application-env keys as ONE JSON
-object, without editing files in this package: `DASHBOARD_TOPOLOGY_OVERLAY`
-(inline JSON; the `Dockerfile` bakes it from a build-arg of the same name, and a
-runtime env var overrides the baked value) or `DASHBOARD_TOPOLOGY_OVERLAY_FILE`
-(a path). All keys are optional; the canvas degrades gracefully without them. A
-malformed overlay is rejected whole with a boot-time warning — never half-applied.
+object, without editing files in this package, through one of (first wins):
+
+- `DASHBOARD_TOPOLOGY_OVERLAY_B64` — the JSON, base64-encoded (padding and line
+  wrapping tolerated). **Use this form when baking through
+  `docker/build-push-action`:** its `build-args` parser treats the value as CSV
+  and strips the quotes out of raw JSON, which the parser below then rejects.
+  `jq -c . overlay.json | base64 -w0` (macOS: `base64 | tr -d '\n'`).
+- `DASHBOARD_TOPOLOGY_OVERLAY` — inline JSON (fine from a shell-quoted
+  `docker buildx build --build-arg`, or as a runtime env var).
+- `DASHBOARD_TOPOLOGY_OVERLAY_FILE` — a path.
+
+The `Dockerfile` bakes the first two from build-args of the same names; a runtime
+env var overrides the baked value. All keys are optional; the canvas degrades
+gracefully without them. A malformed overlay is rejected **whole** — never
+half-applied — with a boot-time warning and a notice on the Topology page
+(`:topology_overlay_error`), so a bad bake is visible where its effect is missing.
 
 ```json
 {

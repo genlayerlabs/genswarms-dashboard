@@ -115,6 +115,11 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       |> assign(:nodes, table_nodes(assigns[:snapshot], privacy?, inspect_lookup))
       |> assign(:gauge, pool_meta(assigns[:snapshot]))
       |> assign(:in_flight, (assigns[:story] && assigns.story[:in_flight]) || [])
+      # set by config/runtime.exs when the host overlay was rejected whole
+      |> assign(
+        :overlay_error,
+        Application.get_env(:subzero_swarm_dashboard, :topology_overlay_error)
+      )
 
     ~H"""
     <Layouts.app
@@ -149,6 +154,20 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
             </div>
             <span class="text-xs opacity-60">pool</span>
           </div>
+        </div>
+
+        <div
+          :if={@overlay_error}
+          id="topology-overlay-error"
+          class="alert alert-warning text-xs py-2"
+          role="status"
+        >
+          <span>
+            host topology overlay rejected — {@overlay_error}. The canvas is drawn without
+            package groups, descriptions, aliases or external endpoints until the
+            <code>DASHBOARD_TOPOLOGY_OVERLAY*</code>
+            value is fixed.
+          </span>
         </div>
 
         <div
