@@ -221,6 +221,34 @@ h1, h2 { font-family: var(--font-display); letter-spacing: -0.02em; }
   box-shadow: inset 0 1px 0 oklch(60% 0.04 60 / 0.12), 0 18px 50px -30px rgb(0 0 0 / 0.55);
 }
 
+/* Topology hover card: host-provided object descriptions, floated over the
+   terminal panel. Text-only content (the hook writes textContent, never
+   markup); inks match the panel's constant bone-on-warm-black palette. */
+.pipeline-tip {
+  position: absolute;
+  z-index: 20;
+  max-width: 17rem;
+  pointer-events: none;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.5rem;
+  background: oklch(20% 0.015 60 / 0.96);
+  border: 1px solid oklch(40% 0.03 60 / 0.6);
+  box-shadow: 0 10px 30px -12px rgb(0 0 0 / 0.6);
+  color: oklch(90% 0.02 84);
+}
+.pipeline-tip-title {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.15rem;
+}
+.pipeline-tip-body {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  opacity: 0.8;
+}
+
 /* This file is for your main application CSS */
 
 /* ── conversation panel: messenger-style thread (generic msg-*) ─────────── */

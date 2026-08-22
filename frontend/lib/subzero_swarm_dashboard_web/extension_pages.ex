@@ -49,6 +49,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   attr :sort, :map, default: %{}
   attr :tab, :map, default: %{}
   attr :row_targets, :map, default: %{}
+  attr :detail_open, :any, default: nil
 
   def page(assigns) do
     sections = assigns.page |> sections() |> Enum.with_index()
@@ -100,6 +101,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
               tab={@tab}
               hoisted_idx={@hoisted && elem(@hoisted, 0)}
               row_targets={@row_targets}
+              detail_open={@detail_open}
             />
           </div>
         </div>
@@ -115,6 +117,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   attr :tab, :map, default: %{}
   attr :hoisted_idx, :any, default: nil
   attr :row_targets, :map, default: %{}
+  attr :detail_open, :any, default: nil
 
   defp section(%{section: %{"type" => "metrics"} = section} = assigns) do
     assigns =
@@ -176,16 +179,66 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
             </tr>
           </thead>
           <tbody>
-            <tr
-              :for={{row, ridx} <- @rows}
-              class={Map.has_key?(@row_targets, {@idx, ridx}) && "row-press"}
-              phx-click={Map.has_key?(@row_targets, {@idx, ridx}) && "inspect"}
-              phx-value-session_id={Map.get(@row_targets, {@idx, ridx})}
-            >
-              <td :for={col <- @columns} class={["max-w-xs", col_align(col)]}>
-                <span class={cell_class(col)}>{display(Map.get(row, col["key"]))}</span>
-              </td>
-            </tr>
+            <%= for {row, ridx} <- @rows do %>
+              <% detail = detail_items(row) %>
+              <% dkey = detail != [] && detail_key(@idx, row, ridx) %>
+              <% open? = dkey && detail_open?(@detail_open, dkey) %>
+              <tr
+                class={[
+                  (Map.has_key?(@row_targets, {@idx, ridx}) || dkey) && "row-press",
+                  dkey && "ext-has-detail",
+                  open? && "ext-detail-open"
+                ]}
+                phx-click={
+                  cond do
+                    Map.has_key?(@row_targets, {@idx, ridx}) -> "inspect"
+                    dkey -> "ext_detail"
+                    true -> nil
+                  end
+                }
+                phx-value-session_id={Map.get(@row_targets, {@idx, ridx})}
+                phx-value-key={dkey || nil}
+              >
+                <td :for={col <- @columns} class={["max-w-xs", col_align(col)]}>
+                  <a
+                    :if={col["link"] && http_link?(Map.get(row, col["key"]))}
+                    href={Map.get(row, col["key"])}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="link link-primary break-all text-xs"
+                  >
+                    {display(Map.get(row, col["key"]))}
+                  </a>
+                  <span
+                    :if={!(col["link"] && http_link?(Map.get(row, col["key"])))}
+                    class={cell_class(col)}
+                  >
+                    {display(Map.get(row, col["key"]))}
+                  </span>
+                </td>
+              </tr>
+              <tr :if={open?} class="ext-detail-row">
+                <td colspan={length(@columns)} class="!py-3">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1.5 text-xs">
+                    <div :for={item <- detail} class="flex gap-2 min-w-0">
+                      <span class="opacity-50 shrink-0 w-24">{display(item["label"])}</span>
+                      <a
+                        :if={http_link?(item["link"])}
+                        href={item["link"]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="link link-primary break-all"
+                      >
+                        {display(item["value"])}
+                      </a>
+                      <span :if={!http_link?(item["link"])} class="break-words min-w-0">
+                        {display(item["value"])}
+                      </span>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            <% end %>
           </tbody>
         </table>
       </div>
@@ -234,6 +287,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         sort_map={@sort_map}
         tab={@tab}
         row_targets={@row_targets}
+        detail_open={@detail_open}
       />
     </div>
     """
@@ -257,6 +311,30 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     <div class="hidden"></div>
     """
   end
+
+  # Row detail grammar: a row may carry "detail" — a list of
+  # %{"label", "value", optional "link"} maps — rendered as an expandable
+  # definition grid under the row. Toggle state lives in the LiveView
+  # (`ext_detail`), keyed by section + a stable row identity ("id" when the
+  # row carries one, else its source index) so sorting cannot misroute a
+  # toggle.
+  defp detail_items(%{"detail" => items}) when is_list(items),
+    do: Enum.filter(items, &(is_map(&1) and Map.get(&1, "label")))
+
+  defp detail_items(_row), do: []
+
+  defp detail_key(idx, row, ridx) do
+    id = Map.get(row, "id") || ridx
+    "#{idx}|#{id}"
+  end
+
+  defp detail_open?(%MapSet{} = open, key), do: MapSet.member?(open, key)
+  defp detail_open?(_open, _key), do: false
+
+  # Anchors render only for real absolute URLs. Privacy mode masks every
+  # binary row value to "•••", which must degrade to plain text — an
+  # <a href="•••"> would navigate to a broken relative path.
+  defp http_link?(value), do: is_binary(value) and String.starts_with?(value, "http")
 
   # ── sortable tables ──────────────────────────────────────────────────────────
   # Rows travel WITH their original index so the row→inspector targets (keyed by
@@ -576,7 +654,10 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       "key" => String.slice(col["key"], 0, 64),
       "label" => display_label(col["label"]),
       "align" => col["align"],
-      "mono" => col["mono"]
+      "mono" => col["mono"],
+      # opt-in: render http(s) values in this column as anchors (the cell
+      # renderer still refuses non-http values — see http_link?/1)
+      "link" => col["link"] == true
     }
   end
 

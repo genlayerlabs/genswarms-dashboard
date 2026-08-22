@@ -49,10 +49,13 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
       |> assign(:swarm_selector_form, to_form(%{"swarm" => assigns[:swarm] || ""}))
 
     ~H"""
-    <div class="flex min-h-screen" data-privacy={if @privacy, do: "on", else: "off"}>
+    <div
+      class="flex min-h-screen flex-col md:flex-row"
+      data-privacy={if @privacy, do: "on", else: "off"}
+    >
       <%!-- replays the per-browser sensitive-content preference on every mount --%>
       <span id="transcript-gate" phx-hook="TranscriptGate" class="hidden"></span>
-      <aside class="console-rail w-60 shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
+      <aside class="console-rail w-full md:w-60 md:min-h-screen shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
         <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
           <img src={~p"/images/logo.svg"} width="30" class="drop-shadow shrink-0" alt="" />
           <div class="leading-none min-w-0 flex-1">
@@ -307,6 +310,7 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
     <li>
       <.link
         navigate={@href}
+        aria-current={if @active == @key, do: "page", else: nil}
         class={[
           "font-medium gap-2.5 rounded-lg",
           @active == @key && "bg-primary/15 text-primary border border-primary/25",

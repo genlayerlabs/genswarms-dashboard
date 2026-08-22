@@ -94,19 +94,63 @@ export const Pipeline = {
     this.SESSION_LABELS = {}
     this.cv.addEventListener("click", (e) => {
       const hit = this.agentAt(e.offsetX, e.offsetY)
-      if (hit && this.SESSIONS[hit]) this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
+      if (hit && this.SESSIONS[hit])
+        return this.pushEvent("inspect", {session_id: this.SESSIONS[hit]})
+      // package groups: click a collapsed group node to expand it into its
+      // dotted box; click the box (any empty area inside it) to collapse.
+      const node = this.nodeAt(e.offsetX, e.offsetY)
+      if (node && this.GROUPNODES?.has(node)) return this.pushEvent("topo_group", {name: node})
+      if (!node) {
+        const box = this.boxAt(e.offsetX, e.offsetY)
+        if (box) this.pushEvent("topo_group", {name: box})
+      }
     })
     this.HOVER = null // node under the pointer — its durable rails light up
+    // Hover card: object descriptions from the host overlay config
+    // (:object_descriptions), delivered per-node in the layout payload.
+    this.tip = document.createElement("div")
+    this.tip.className = "pipeline-tip"
+    this.tip.style.display = "none"
+    this.el.appendChild(this.tip)
     this.cv.addEventListener("mousemove", (e) => {
       this.HOVER = this.nodeAt(e.offsetX, e.offsetY)
       const hit = this.agentAt(e.offsetX, e.offsetY)
-      this.cv.style.cursor = hit && this.SESSIONS[hit] ? "pointer" : ""
+      this.cv.style.cursor =
+        (hit && this.SESSIONS[hit]) ||
+        (this.HOVER && this.GROUPNODES?.has(this.HOVER)) ||
+        (!this.HOVER && this.boxAt(e.offsetX, e.offsetY))
+          ? "pointer"
+          : ""
+      this.showTip(this.HOVER, e.offsetX, e.offsetY)
     })
-    this.cv.addEventListener("mouseleave", () => (this.HOVER = null))
+    this.cv.addEventListener("mouseleave", () => {
+      this.HOVER = null
+      this.tip.style.display = "none"
+    })
 
     this.handleEvent("pipeline:init", (layout) => {
       this.LAYOUT = layout
       this.FIXED = new Set((layout.nodes || []).map((n) => n.name))
+      // Event vocabulary → this swarm's real object names ("ingress" →
+      // "tg_ingress"); host-provided so packets land on snapshot nodes.
+      this.ALIASES = layout.aliases || {}
+      this.DESCS = Object.fromEntries(
+        (layout.nodes || []).filter((n) => n.desc).map((n) => [n.name, n.desc])
+      )
+      this.AGENT_DESC = layout.agent_desc || null
+      // Expanded package boxes + collapsed group nodes. Open boxes need
+      // breathing room: the panel grows while any box is open (the hook owns
+      // the phx-update="ignore" container, so height changes must come from
+      // here), and layout() below re-reads the new clientHeight.
+      this.BOXES = layout.boxes || []
+      this.fitHeight()
+      // display labels (e.g. expanded members drop their group prefix)
+      this.LABELS = Object.fromEntries(
+        (layout.nodes || [])
+          .filter((n) => n.label && n.label !== n.name)
+          .map((n) => [n.name, n.label])
+      )
+      this.GROUPNODES = new Set((layout.nodes || []).filter((n) => n.group).map((n) => n.name))
       this.BG = new Set(layout.chatter || [])
       // A snapshot replaces durable topology. Event-discovered endpoints and
       // cid ownership may reappear later, but must not leak from a previously
@@ -131,6 +175,7 @@ export const Pipeline = {
       this.SESSION_LABELS = session_labels || sessions || {}
       this.NAMES = names || {} // slot → "@handle"/user name; absent under privacy
       this.AGENTS = new Set((agents || []).filter((name) => !this.FIXED.has(name)))
+      this.fitHeight()
       this.seedCids()
       this.layout()
     })
@@ -545,8 +590,29 @@ export const Pipeline = {
 
   // execute one op; returns true iff a foreground packet was spawned (the causal
   // pump gates only on those — chatter and pure state changes never block flow)
+  // Ops are built from the display-event vocabulary's canonical node names
+  // ("ingress", "sender", "policy"...). Swarms whose objects use different
+  // names (tg_ingress, llm_proxy...) resolve through the host alias map, and
+  // collapsed shard workers fold onto their router — otherwise the packet
+  // would be dropped for lack of a node position.
+  resolveNode(name) {
+    if (!name || this.POS[name] || this.FIXED.has(name) || this.AGENTS?.has(name)) return name
+    const alias = this.ALIASES?.[name]
+    if (alias && (this.POS[alias] || this.FIXED.has(alias))) return alias
+    const m = /^(.+)_shard_\d+$/.exec(name)
+    if (m) {
+      if (this.POS[m[1]] || this.FIXED.has(m[1])) return m[1]
+      // shard's router itself collapsed into a package group
+      const pa = this.ALIASES?.[m[1]]
+      if (pa && (this.POS[pa] || this.FIXED.has(pa))) return pa
+    }
+    return name
+  },
+
   execOp(op, immediate) {
-    if (op.flash) this.FLASH[op.flash] = performance.now() + 1600
+    if (op.a) op = {...op, a: this.resolveNode(op.a)}
+    if (op.b) op = {...op, b: this.resolveNode(op.b)}
+    if (op.flash) this.FLASH[this.resolveNode(op.flash)] = performance.now() + 1600
     if (op.badge) this.BADGE[op.badge] = {glyph: op.glyph, until: performance.now() + 5000}
     if (!op.a || !op.b) {
       if (op.st) op.st()
@@ -675,6 +741,81 @@ export const Pipeline = {
 
   // any node under the pointer — agents are dots, ext small circles, object
   // chips are sized to their label (mirror the draw-time extents)
+  // The panel grows with content instead of cramming it: open package boxes
+  // and large agent pools both earn more viewport height. The hook owns the
+  // phx-update="ignore" container, so height changes must come from here;
+  // layout() re-reads clientHeight.
+  fitHeight() {
+    const n = this.AGENTS?.size || 0
+    const agentVh = n > 12 ? Math.min(88, 64 + Math.ceil((n - 12) / 8) * 6) : 64
+    const boxVh = (this.BOXES || []).length ? 80 : 64
+    const vh = Math.max(agentVh, boxVh)
+    const want = vh === 64 ? "" : `${vh}vh`
+    if (this.el.style.height !== want) {
+      this.el.style.height = want
+      this.layout()
+    }
+  },
+
+  boxAt(x, y) {
+    for (const b of this.BOXPX || []) {
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b.name
+    }
+    return null
+  },
+
+  // bounding rect of a box's member chips, measured with the same font the
+  // chips draw with; extra headroom at the top carries the group label
+  boxRect(b) {
+    let x0 = Infinity
+    let x1 = -Infinity
+    let y0 = Infinity
+    let y1 = -Infinity
+    this.g.font = `600 12px ${MONO}`
+    for (const m of b.members || []) {
+      const p = this.POS[m]
+      if (!p) continue
+      const hw = this.g.measureText(this.short(m)).width / 2 + 14
+      x0 = Math.min(x0, p.x - hw)
+      x1 = Math.max(x1, p.x + hw)
+      y0 = Math.min(y0, p.y - 16)
+      y1 = Math.max(y1, p.y + 16)
+    }
+    if (x0 === Infinity) return null
+    return {x: x0 - 10, y: y0 - 32, w: x1 - x0 + 20, h: y1 - y0 + 46}
+  },
+
+  // Object hover card: title row + host-provided description. Built with
+  // textContent only (descriptions are config data, never markup). Hidden
+  // when the hovered node has no description.
+  showTip(name, x, y) {
+    if (!this.tip) return
+    const agent = name && (this.POS?.[name]?.kind === "agent" || this.AGENTS?.has(name))
+    const desc = name ? (agent ? this.AGENT_DESC : this.DESCS?.[name]) : null
+    if (!desc) {
+      this.tip.style.display = "none"
+      return
+    }
+    if (this.tip._for !== name) {
+      this.tip._for = name
+      this.tip.textContent = ""
+      const title = document.createElement("div")
+      title.className = "pipeline-tip-title"
+      title.textContent = name
+      const body = document.createElement("div")
+      body.className = "pipeline-tip-body"
+      body.textContent = desc
+      this.tip.append(title, body)
+    }
+    this.tip.style.display = "block"
+    const W = this.el.clientWidth
+    const H = this.el.clientHeight
+    const tw = this.tip.offsetWidth
+    const th = this.tip.offsetHeight
+    this.tip.style.left = `${Math.max(8, Math.min(x + 14, W - tw - 8))}px`
+    this.tip.style.top = `${Math.max(8, Math.min(y + 14, H - th - 8))}px`
+  },
+
   nodeAt(x, y) {
     for (const [name, p] of Object.entries(this.POS || {})) {
       let hw, hh
@@ -758,7 +899,7 @@ export const Pipeline = {
 
   decayEdges() {
     this.EDGES.forEach((v, k) => {
-      const n = v * 0.82
+      const n = v * 0.7 // cool traffic glow in ~5s, not ~20 (rails are permanent now)
       n < 0.15 ? this.EDGES.delete(k) : this.EDGES.set(k, n)
     })
   },
@@ -799,23 +940,56 @@ export const Pipeline = {
     // causal contract: a state change becomes visible when its packet lands
     this.LANDS = this.LANDS.filter((l) => (l.at <= pnow ? (l.fn(), false) : true))
 
-    // Durable topology from the selected swarm's snapshot — revealed on HOVER
-    // only: always-on rails turn a dense message graph into spaghetti, and
-    // live traffic (EDGES) already shows who is actually talking. Hovering a
-    // node lights up its rails for discoverability.
+    // Expanded package boxes: dotted container around the group's members.
+    // The rect is MEASURED from the drawn chips (fractions can't know label
+    // pixel widths), cached per frame for the click hit-test.
+    this.BOXPX = []
+    for (const b of this.BOXES || []) {
+      const rect = this.boxRect(b)
+      if (!rect) continue
+      this.BOXPX.push({name: b.name, ...rect})
+      const bx = rect.x
+      const by = rect.y
+      const bw = rect.w
+      const bh = rect.h
+      g.save()
+      g.setLineDash([5, 5])
+      g.strokeStyle = C.ink
+      g.globalAlpha = 0.22
+      g.lineWidth = 1
+      g.beginPath()
+      g.roundRect(bx, by, bw, bh, 10)
+      g.stroke()
+      g.setLineDash([])
+      g.globalAlpha = 0.55
+      g.fillStyle = C.ink
+      g.font = `600 11px ${MONO}`
+      g.fillText(`${b.name} ▾`, bx + 10, by + 15)
+      g.restore()
+    }
+
+    // Durable topology from the selected swarm's snapshot. Package grouping
+    // keeps the node count small, so ALL rails stay faintly visible — the
+    // graph reads as a graph instead of floating chips — while hovering a
+    // node brightens its own rails and adds the direction arrowheads.
     for (const edge of (this.LAYOUT && this.LAYOUT.edges) || []) {
-      if (!this.HOVER || (edge.from !== this.HOVER && edge.to !== this.HOVER)) continue
+      const hot = this.HOVER && (edge.from === this.HOVER || edge.to === this.HOVER)
       const railA = this.POS[edge.from]
       const railB = this.POS[edge.to]
       if (!railA || !railB) continue
       const gm = this.geom(edge.from, edge.to)
       g.strokeStyle = C.ink
-      g.globalAlpha = 0.3
-      g.lineWidth = 1.5
+      g.globalAlpha = hot ? 0.3 : 0.07
+      g.lineWidth = hot ? 1.5 : 1
       g.beginPath()
       g.moveTo(railA.x, railA.y)
       gm.q ? g.quadraticCurveTo(gm.cx, gm.cy, railB.x, railB.y) : g.lineTo(railB.x, railB.y)
       g.stroke()
+
+      if (!hot) {
+        g.globalAlpha = 1
+        continue
+      }
 
       const ang = gm.q
         ? Math.atan2(railB.y - gm.cy, railB.x - gm.cx)
@@ -842,8 +1016,8 @@ export const Pipeline = {
       const t = Math.min(h / 8, 1)
       const gm = this.geom(a, b)
       g.strokeStyle = C.ink
-      g.globalAlpha = bg ? 0.07 + 0.09 * t : 0.26 + 0.38 * t
-      g.lineWidth = bg ? 1 : 1.3 + t * 4
+      g.globalAlpha = bg ? 0.07 + 0.09 * t : 0.16 + 0.28 * t
+      g.lineWidth = bg ? 1 : 1.2 + t * 2.2
       g.beginPath()
       g.moveTo(A.x, A.y)
       gm.q ? g.quadraticCurveTo(gm.cx, gm.cy, B.x, B.y) : g.lineTo(B.x, B.y)
@@ -1189,6 +1363,8 @@ export const Pipeline = {
   },
 
   short(n) {
+    const label = this.LABELS?.[n]
+    if (label) return label
     return String(n).replace(/^.+_agent_/, "agent_").replace("conversation_sample", "convo")
   },
 

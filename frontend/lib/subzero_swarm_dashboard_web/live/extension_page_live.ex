@@ -7,10 +7,31 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    {:ok, assign(socket, page_id: id, page_title: "Extension", ext_sort: %{}, ext_tab: %{})}
+    {:ok,
+     assign(socket,
+       page_id: id,
+       page_title: "Extension",
+       ext_sort: %{},
+       ext_tab: %{},
+       ext_detail: MapSet.new()
+     )}
   end
 
   @impl true
+  # Per-row detail expando: rows carrying a "detail" list toggle open/closed.
+  # Keys are opaque "<section>|<row id>" strings built by ExtensionPages, so
+  # sorting cannot misroute a toggle.
+  def handle_event("ext_detail", %{"key" => key}, socket) when is_binary(key) do
+    open = socket.assigns.ext_detail
+
+    open =
+      if MapSet.member?(open, key),
+        do: MapSet.delete(open, key),
+        else: MapSet.put(open, key)
+
+    {:noreply, assign(socket, ext_detail: open)}
+  end
+
   def handle_event("ext_sort", %{"sec" => sec, "key" => key}, socket) do
     # Top-level sections key by integer position; tab-nested sections use the
     # composite "<idx>/<tab>" string. Both are opaque map keys past this point.
@@ -78,7 +99,13 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
       inspect_activity={@inspect_activity}
     >
       <%= if @page do %>
-        <ExtensionPages.page page={@page} sort={@ext_sort} tab={@ext_tab} row_targets={@row_targets} />
+        <ExtensionPages.page
+          page={@page}
+          sort={@ext_sort}
+          tab={@ext_tab}
+          row_targets={@row_targets}
+          detail_open={@ext_detail}
+        />
       <% else %>
         <div class="max-w-3xl">
           <.empty_state

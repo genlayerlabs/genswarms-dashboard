@@ -22,6 +22,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   @impl true
   def mount(_params, _session, socket) do
     snap = socket.assigns[:snapshot]
+    socket = assign(socket, :topo_expanded, MapSet.new())
     layout = pipeline_layout(snap)
 
     # A cached snapshot at mount must seed the hook's agent grid too —
@@ -41,6 +42,23 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   @impl true
   def handle_params(params, _uri, socket),
     do: {:noreply, assign(socket, debug: params["debug"] == "1")}
+
+  # Package-group chips under the canvas: toggling re-lays the canvas with
+  # that group expanded/collapsed, then replays the snapshot so the agent
+  # grid re-seeds immediately instead of waiting for the next feed poll.
+  @impl true
+  def handle_event("topo_group", %{"name" => name}, socket) when is_binary(name) do
+    expanded = socket.assigns[:topo_expanded] || MapSet.new()
+
+    expanded =
+      if MapSet.member?(expanded, name),
+        do: MapSet.delete(expanded, name),
+        else: MapSet.put(expanded, name)
+
+    socket = assign(socket, :topo_expanded, expanded)
+    if socket.assigns[:snapshot], do: send(self(), {:snapshot, socket.assigns[:snapshot]})
+    {:noreply, socket}
+  end
 
   @impl true
   # Raw display events drive the canvas; the hook owns playback timing (causal).
@@ -62,7 +80,7 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   def handle_info({:snapshot, snap}, socket) do
     privacy? = socket.assigns[:privacy] == true
     inspect_lookup = DashHooks.inspect_lookup(snap)
-    layout = pipeline_layout(snap)
+    layout = pipeline_layout(snap, socket.assigns[:topo_expanded] || MapSet.new())
 
     socket =
       socket
@@ -140,6 +158,25 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
           data-debug={@debug && "1"}
           class="pipeline-terminal w-full h-[64vh] rounded-box border relative overflow-hidden"
         >
+        </div>
+
+        <div
+          :if={(@pipeline_layout[:groups] || []) != []}
+          id="pipeline-groups"
+          class="flex flex-wrap items-center gap-2 text-xs"
+        >
+          <span class="opacity-50">packages:</span>
+          <button
+            :for={g <- @pipeline_layout[:groups]}
+            type="button"
+            phx-click="topo_group"
+            phx-value-name={g.name}
+            class="btn btn-xs gap-1"
+            title={Enum.join(g.members, ", ")}
+          >
+            {if g.expanded, do: "▾", else: "▸"} {g.name}
+            <span class="opacity-60 tnum">{g.count}</span>
+          </button>
         </div>
 
         <div
@@ -385,31 +422,115 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   Agent-less snapshots keep the layered DAG arrangement, falling back to a
   compact grid when edgeless or cyclic.
   """
-  def pipeline_layout(snapshot) do
+  def pipeline_layout(snapshot, expanded \\ MapSet.new()) do
     nodes = normalize_nodes(snapshot)
     edges = normalize_edges(snapshot, nodes)
-    {agents, objects} = Enum.split_with(nodes, &(&1.type == "agent"))
+    {nodes, edges} = collapse_shards(nodes, edges)
+
+    groups_cfg = Application.get_env(:subzero_swarm_dashboard, :node_groups, %{})
+
+    {nodes, edges, group_meta, group_aliases} =
+      collapse_groups(nodes, edges, groups_cfg, expanded)
+
+    # Positioning pass: EVERY group occupies one band slot — expanded groups
+    # fold to an anchor here too, then their members fan out in a local grid
+    # around that anchor inside a dotted box (the box is the collapse handle).
+    expanded_meta = Enum.filter(group_meta, & &1.expanded)
+
+    anchor_rename =
+      for g <- expanded_meta, m <- g.members, into: %{}, do: {m, g.name}
+
+    {pos_nodes, pos_edges} = fold_nodes(nodes, edges, anchor_rename)
+
+    {agents, pos_objects} = Enum.split_with(pos_nodes, &(&1.type == "agent"))
 
     {positions, {agent_y_min, agent_y_max}} =
       if agents == [] do
-        {node_positions(objects, edges), {@agent_y_min_default, @agent_y_max_default}}
+        {node_positions(pos_objects, pos_edges), {@agent_y_min_default, @agent_y_max_default}}
       else
-        banded_positions(objects, edges, MapSet.new(agents, & &1.name))
+        banded_positions(pos_objects, pos_edges, MapSet.new(agents, & &1.name))
       end
 
-    %{
-      nodes:
-        Enum.map(objects, fn node ->
-          {x, y} = Map.fetch!(positions, node.name)
+    # Display labels first: box extents and collision math need approximate
+    # chip widths, which depend on the label actually drawn.
+    member_labels =
+      for g <- expanded_meta, m <- g.members, into: %{} do
+        {m, String.replace_prefix(m, g.name <> "_", "")}
+      end
 
-          %{
+    {positions, boxes, {agent_y_min, agent_y_max}} =
+      place_expanded_members(positions, expanded_meta, {agent_y_min, agent_y_max}, member_labels)
+
+    expanded_members = MapSet.new(for g <- expanded_meta, m <- g.members, do: m)
+    positions = push_aside(positions, boxes, expanded_members, member_labels)
+
+    # Object hover cards: host-provided descriptions per node name; the
+    # :agent key covers every dynamic agent chip. Config data, text-only —
+    # the hook renders it with textContent, never markup.
+    descs = Application.get_env(:subzero_swarm_dashboard, :object_descriptions, %{})
+
+    # Event vocabulary → this swarm's real object names ("ingress" →
+    # "tg_ingress"); host-provided so packets land on snapshot nodes instead
+    # of being dropped for lack of a position.
+    # Aliases flatten through collapsed groups so a canonical name lands on
+    # whatever node currently exists ("bet" -> market_bet -> market).
+    aliases =
+      Application.get_env(:subzero_swarm_dashboard, :node_aliases, %{})
+      |> Map.new(fn {k, v} -> {k, Map.get(group_aliases, v, v)} end)
+      |> Map.merge(group_aliases)
+
+    collapsed_names = group_meta |> Enum.reject(& &1.expanded) |> MapSet.new(& &1.name)
+
+    group_descs =
+      Map.new(group_meta, fn g ->
+        {g.name, "Package group · #{g.count} objects: #{Enum.join(g.members, ", ")}"}
+      end)
+
+    objects = Enum.reject(nodes, &(&1.type == "agent"))
+
+    # External endpoints the display vocabulary talks to but no swarm object
+    # backs ("telegram" — the Telegram API, "web") get small ext circles
+    # stacked on the right edge, so reply/browse packets visibly LEAVE the
+    # swarm instead of being dropped.
+    ext_names = Application.get_env(:subzero_swarm_dashboard, :ext_endpoints, [])
+
+    ext_nodes =
+      ext_names
+      |> Enum.with_index()
+      |> Enum.map(fn {name, i} ->
+        y = 0.5 + (i - (length(ext_names) - 1) / 2) * 0.16
+
+        %{
+          name: name,
+          x: 0.955,
+          y: y,
+          kind: "ext",
+          r: 15,
+          desc: Map.get(descs, name),
+          group: false
+        }
+      end)
+
+    %{
+      aliases: aliases,
+      agent_desc: Map.get(descs, :agent),
+      groups: group_meta,
+      boxes: boxes,
+      nodes:
+        for(
+          node <- objects,
+          Map.has_key?(positions, node.name),
+          do: %{
             name: node.name,
-            x: x,
-            y: y,
+            label: Map.get(member_labels, node.name, node.name),
+            x: elem(Map.fetch!(positions, node.name), 0),
+            y: elem(Map.fetch!(positions, node.name), 1),
             kind: canvas_kind(node.type),
-            r: canvas_radius(node.type)
+            r: canvas_radius(node.type),
+            desc: Map.get(group_descs, node.name) || Map.get(descs, node.name),
+            group: MapSet.member?(collapsed_names, node.name)
           }
-        end),
+        ) ++ ext_nodes,
       edges:
         for {from, to} <- edges,
             Map.has_key?(positions, from) and Map.has_key?(positions, to) do
@@ -420,6 +541,262 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       agent_y_min: agent_y_min,
       agent_y_max: agent_y_max
     }
+  end
+
+  # Fan an expanded group's members out in a centered grid at the group's band
+  # anchor, growing toward the canvas center, and emit the dotted-box rect
+  # (canvas fractions) that visually contains them. The anchor position is
+  # consumed — the box itself is the collapse control. The agent corridor is
+  # squeezed past each box so the grid never sits under member chips.
+  @box_dx 0.1
+  @box_dy 0.088
+  @box_pad_x 0.045
+  @box_pad_top 0.052
+  @box_pad_bottom 0.03
+  # Band neighbours that would sit under an open box slide out of its way:
+  # non-member nodes whose slot falls inside a box rect fan outward past the
+  # nearer box edge, preserving their left/right order. Without this, the
+  # member grid overlaps whatever else shares the band row.
+  # Approximate half-width of a drawn chip (fraction of canvas width):
+  # 12px mono ~7.2px/char plus padding, conservative for narrow viewports.
+  defp approx_hw(label), do: 0.0026 * String.length(label) + 0.016
+
+  defp push_aside(positions, [], _members, _labels), do: positions
+
+  # Band neighbours whose CHIP EXTENT (not just center) intersects an open
+  # box slide out past the nearer box edge, stacked outward with their own
+  # widths so pushed chips cannot overlap each other either.
+  defp push_aside(positions, boxes, members, labels) do
+    Enum.reduce(boxes, positions, fn box, pos ->
+      {inside, outside} =
+        Enum.split_with(pos, fn {name, {x, y}} ->
+          hw = approx_hw(Map.get(labels, name, name))
+
+          not MapSet.member?(members, name) and
+            y >= box.y0 - 0.02 and y <= box.y1 + 0.02 and
+            x + hw >= box.x0 and x - hw <= box.x1
+        end)
+
+      moved =
+        inside
+        |> Enum.group_by(fn {_n, {x, y}} ->
+          {Float.round(y * 1.0, 3), x <= (box.x0 + box.x1) / 2}
+        end)
+        |> Enum.flat_map(fn {{y, left?}, entries} ->
+          entries
+          |> Enum.sort_by(fn {_n, {x, _y}} -> if left?, do: -x, else: x end)
+          |> Enum.map_reduce(
+            if(left?, do: box.x0 - 0.02, else: box.x1 + 0.02),
+            fn {name, _xy}, cursor ->
+              hw = approx_hw(Map.get(labels, name, name))
+              x = if left?, do: cursor - hw, else: cursor + hw
+              next = if left?, do: x - hw - 0.025, else: x + hw + 0.025
+              {{name, {x |> max(0.03) |> min(0.97), y}}, next}
+            end
+          )
+          |> elem(0)
+        end)
+
+      Map.merge(Map.new(outside), Map.new(moved))
+    end)
+  end
+
+  defp place_expanded_members(positions, [], corridor, _labels), do: {positions, [], corridor}
+
+  # Open boxes TILE: each band's expanded groups split the width into
+  # disjoint lanes (no two open boxes can collide), with grid columns
+  # adapted to the lane width. Grids grow from the band edge toward center.
+  defp place_expanded_members(positions, expanded_meta, corridor, labels) do
+    {top, bottom} =
+      Enum.split_with(expanded_meta, fn g ->
+        case Map.fetch(positions, g.name) do
+          {:ok, {_x, y}} -> y < 0.5
+          :error -> true
+        end
+      end)
+
+    {positions, top_boxes, corridor} = place_band(positions, top, true, corridor, labels)
+    {positions, bottom_boxes, corridor} = place_band(positions, bottom, false, corridor, labels)
+    {positions, top_boxes ++ bottom_boxes, corridor}
+  end
+
+  defp place_band(positions, [], _top?, corridor, _labels), do: {positions, [], corridor}
+
+  defp place_band(positions, metas, top?, corridor, labels) do
+    lane_w = 0.92 / length(metas)
+
+    metas
+    |> Enum.with_index()
+    |> Enum.reduce({positions, [], corridor}, fn {g, i}, {pos, boxes, {ymin, ymax}} ->
+      cx = 0.04 + lane_w * (i + 0.5)
+
+      cols =
+        ((lane_w - 2 * @box_pad_x) / @box_dx)
+        |> Float.floor()
+        |> trunc()
+        |> Kernel.+(1)
+        |> max(2)
+        |> min(4)
+
+      n = length(g.members)
+      rows = div(n + cols - 1, cols)
+      base_y = if top?, do: @band_top_y, else: @band_bottom_y
+      row_y = fn r -> if top?, do: base_y + r * @box_dy, else: base_y - r * @box_dy end
+
+      placed =
+        g.members
+        |> Enum.with_index()
+        |> Enum.map(fn {m, j} ->
+          r = div(j, cols)
+          c = rem(j, cols)
+          in_row = min(cols, n - r * cols)
+          x = cx + (c - (in_row - 1) / 2) * @box_dx
+          {m, x, row_y.(r)}
+        end)
+
+      pos = Enum.reduce(placed, pos, fn {m, x, y}, p -> Map.put(p, m, {x, y}) end)
+      pos = Map.delete(pos, g.name)
+
+      ys = Enum.map(0..(rows - 1), &row_y.(&1))
+      y_lo = Enum.min(ys)
+      y_hi = Enum.max(ys)
+
+      # Real horizontal extent: outermost chip EDGE (approx width), not the
+      # grid centers — push_aside and the corridor both key off this.
+      x_lo =
+        placed
+        |> Enum.map(fn {m, x, _y} -> x - approx_hw(Map.get(labels, m, m)) end)
+        |> Enum.min()
+
+      x_hi =
+        placed
+        |> Enum.map(fn {m, x, _y} -> x + approx_hw(Map.get(labels, m, m)) end)
+        |> Enum.max()
+
+      box = %{
+        name: g.name,
+        members: g.members,
+        x0: x_lo - 0.012,
+        x1: x_hi + 0.012,
+        y0: y_lo - if(top?, do: @box_pad_top, else: @box_pad_bottom) - 0.018,
+        y1: y_hi + if(top?, do: @box_pad_bottom, else: @box_pad_top) + 0.018
+      }
+
+      corridor =
+        if top?,
+          do: {max(ymin, box.y1 + 0.05), ymax},
+          else: {ymin, min(ymax, box.y0 - 0.05)}
+
+      {pos, [box | boxes], corridor}
+    end)
+    |> then(fn {pos, boxes, corridor} -> {pos, Enum.reverse(boxes), corridor} end)
+  end
+
+  # Generic node folding: members rename onto their target node (created if
+  # absent), edges follow, self-loops drop.
+  defp fold_nodes(nodes, edges, rename) when map_size(rename) == 0, do: {nodes, edges}
+
+  defp fold_nodes(nodes, edges, rename) do
+    existing = MapSet.new(nodes, & &1.name)
+
+    target_nodes =
+      rename
+      |> Map.values()
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(existing, &1))
+      |> Enum.map(&%{name: &1, type: "object"})
+
+    kept = Enum.reject(nodes, &Map.has_key?(rename, &1.name)) ++ target_nodes
+
+    folded =
+      edges
+      |> Enum.map(fn {from, to} -> {Map.get(rename, from, from), Map.get(rename, to, to)} end)
+      |> Enum.reject(fn {from, to} -> from == to end)
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    {Enum.sort_by(kept, & &1.name), folded}
+  end
+
+  # Host-configured package groups (`:node_groups`): each collapsed group
+  # replaces its member objects with ONE super-node named after the group,
+  # folding member edges onto it — the canvas stays readable however many
+  # objects a swarm wires. Expanded groups keep their members as plain nodes.
+  # Returns {nodes, edges, group_meta, member->group rename map}.
+  defp collapse_groups(nodes, edges, groups_cfg, expanded) when map_size(groups_cfg) > 0 do
+    names = MapSet.new(nodes, & &1.name)
+
+    {meta, rename} =
+      Enum.reduce(groups_cfg, {[], %{}}, fn {group, members}, {meta, rename} ->
+        present = members |> List.wrap() |> Enum.filter(&MapSet.member?(names, &1)) |> Enum.sort()
+
+        cond do
+          present == [] ->
+            {meta, rename}
+
+          MapSet.member?(expanded, group) ->
+            {[%{name: group, count: length(present), expanded: true, members: present} | meta],
+             rename}
+
+          true ->
+            {[%{name: group, count: length(present), expanded: false, members: present} | meta],
+             Enum.into(present, rename, &{&1, group})}
+        end
+      end)
+
+    meta = Enum.sort_by(meta, & &1.name)
+
+    if rename == %{} do
+      {nodes, edges, meta, %{}}
+    else
+      group_nodes =
+        rename |> Map.values() |> Enum.uniq() |> Enum.map(&%{name: &1, type: "object"})
+
+      kept = Enum.reject(nodes, &Map.has_key?(rename, &1.name)) ++ group_nodes
+
+      folded =
+        edges
+        |> Enum.map(fn {from, to} -> {Map.get(rename, from, from), Map.get(rename, to, to)} end)
+        |> Enum.reject(fn {from, to} -> from == to end)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      {Enum.sort_by(kept, & &1.name), folded, meta, rename}
+    end
+  end
+
+  defp collapse_groups(nodes, edges, _groups_cfg, _expanded), do: {nodes, edges, [], %{}}
+
+  # Fixed shard workers (`<router>_shard_N`) are an implementation detail of
+  # their router object; drawing 16 of them per router drowns the canvas.
+  # Collapse each shard into its router when the router itself is in the
+  # snapshot, folding shard edges onto the router (self-loops dropped).
+  @shard_suffix ~r/^(.+)_shard_\d+$/
+  defp collapse_shards(nodes, edges) do
+    names = MapSet.new(nodes, & &1.name)
+
+    rename =
+      for %{name: name} <- nodes,
+          [_, parent] <- [Regex.run(@shard_suffix, name)],
+          MapSet.member?(names, parent),
+          into: %{} do
+        {name, parent}
+      end
+
+    if rename == %{} do
+      {nodes, edges}
+    else
+      kept = Enum.reject(nodes, &Map.has_key?(rename, &1.name))
+
+      folded =
+        edges
+        |> Enum.map(fn {from, to} -> {Map.get(rename, from, from), Map.get(rename, to, to)} end)
+        |> Enum.reject(fn {from, to} -> from == to end)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      {kept, folded}
+    end
   end
 
   defp normalize_nodes(%{"nodes" => raw_nodes}) when is_list(raw_nodes) do
@@ -613,10 +990,20 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
       row_nodes
       |> Enum.with_index()
       |> Enum.map(fn {node, column} ->
-        {node.name, {spread(column, length(row_nodes), 0.08, 0.92), row_y.(row)}}
+        {node.name, {row_x(column, length(row_nodes)), row_y.(row)}}
       end)
     end)
     |> Map.new()
+  end
+
+  # Rows center with CAPPED spacing instead of spanning the full canvas —
+  # a small row should read as a cluster, not as corner flags at the edges.
+  @band_col_step 0.17
+  defp row_x(_index, 1), do: 0.5
+
+  defp row_x(index, count) do
+    span = min(0.84, (count - 1) * @band_col_step)
+    0.5 - span / 2 + index * span / (count - 1)
   end
 
   defp node_positions([], _edges), do: %{}

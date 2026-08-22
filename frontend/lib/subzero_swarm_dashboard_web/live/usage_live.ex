@@ -430,6 +430,28 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     """
   end
 
+  # "Deliberately not configured" and "configured but erroring" are different
+  # operator situations — never one ambiguous empty state.
+  defp usage(%{usage: {:unavailable, :not_configured}} = assigns) do
+    ~H"""
+    <.empty_state
+      id="usage-unavailable"
+      msg="Router detail not configured"
+      hint="Set ROUTER_USAGE_URL + ROUTER_API_KEY for external router detail. The host's own counters above keep working without it."
+    />
+    """
+  end
+
+  defp usage(%{usage: {:unavailable, _reason}} = assigns) do
+    ~H"""
+    <.empty_state
+      id="usage-unavailable"
+      msg="Router detail unavailable"
+      hint="The optional router /v1/usage endpoint returned an error. The host's own counters above keep working."
+    />
+    """
+  end
+
   defp usage(assigns) do
     ~H"""
     <.empty_state
