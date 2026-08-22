@@ -6,7 +6,7 @@ defmodule SubzeroSwarmDashboard.TopologyOverlayTest do
   # overrides) never edits config files inside the package. Shape errors are
   # LOUD (the whole overlay is rejected with a reason, runtime.exs warns) —
   # a silently half-applied overlay would look like a canvas bug.
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias SubzeroSwarmDashboard.TopologyOverlay
 
