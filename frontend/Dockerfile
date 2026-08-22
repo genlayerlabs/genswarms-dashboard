@@ -101,9 +101,13 @@ COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/subzero_swarm
 USER nobody
 
 # Host topology overlay (see config/runtime.exs + README "Host overlay
-# configuration") baked at build time from a build-arg — one compact JSON
-# object. A runtime env var of the same name overrides it. Kept next to
-# GIT_SHA at the tail so overlay edits never bust the release layers above.
+# configuration") baked at build time from a build-arg: the base64 form
+# (use THIS with docker/build-push-action — its build-args parser strips
+# quotes out of raw JSON) or one compact JSON object. A runtime env var of
+# the same name overrides the baked value. Kept next to GIT_SHA at the tail
+# so overlay edits never bust the release layers above.
+ARG DASHBOARD_TOPOLOGY_OVERLAY_B64=""
+ENV DASHBOARD_TOPOLOGY_OVERLAY_B64=${DASHBOARD_TOPOLOGY_OVERLAY_B64}
 ARG DASHBOARD_TOPOLOGY_OVERLAY=""
 ENV DASHBOARD_TOPOLOGY_OVERLAY=${DASHBOARD_TOPOLOGY_OVERLAY}
 

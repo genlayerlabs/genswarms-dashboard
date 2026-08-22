@@ -7,10 +7,15 @@ defmodule SubzeroSwarmDashboard.TopologyOverlay do
   `:ext_endpoints`. A host sets them WITHOUT touching files inside this
   package by handing the same data as JSON:
 
-    * `DASHBOARD_TOPOLOGY_OVERLAY` — inline JSON object (takes precedence);
+    * `DASHBOARD_TOPOLOGY_OVERLAY_B64` — the JSON object, base64-encoded
+      (takes precedence). The transport-safe form: `docker/build-push-action`
+      parses `build-args` as CSV and strips quotes out of a raw JSON value, so
+      a host baking the overlay through that action MUST use this one.
+      Padding and line wrapping (plain `base64` without `-w0`) are accepted;
+    * `DASHBOARD_TOPOLOGY_OVERLAY` — inline JSON object;
     * `DASHBOARD_TOPOLOGY_OVERLAY_FILE` — path to a JSON file.
 
-  The Dockerfile bakes `DASHBOARD_TOPOLOGY_OVERLAY` from a build-arg so an
+  The Dockerfile bakes both env forms from build-args of the same names so an
   image-building host can ship its overlay inside the image; a runtime env var
   of the same name overrides the baked value.
 
@@ -29,10 +34,17 @@ defmodule SubzeroSwarmDashboard.TopologyOverlay do
   @doc "Overlay from an env map (defaults to the process environment)."
   @spec from_env(%{optional(String.t()) => String.t()}) :: {:ok, keyword()} | {:error, String.t()}
   def from_env(env \\ System.get_env()) do
+    b64 = present(env["DASHBOARD_TOPOLOGY_OVERLAY_B64"])
     inline = present(env["DASHBOARD_TOPOLOGY_OVERLAY"])
     file = present(env["DASHBOARD_TOPOLOGY_OVERLAY_FILE"])
 
     cond do
+      b64 ->
+        case Base.decode64(b64, ignore: :whitespace, padding: false) do
+          {:ok, json} -> parse(json)
+          :error -> {:error, "DASHBOARD_TOPOLOGY_OVERLAY_B64 is not base64"}
+        end
+
       inline ->
         parse(inline)
 
