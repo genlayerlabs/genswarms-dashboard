@@ -82,9 +82,21 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
 
 ## Host overlay configuration (application env)
 
-A host may append a runtime overlay (an `.exs` evaluated at image build or boot)
-setting these `:subzero_swarm_dashboard` application-env keys. All are optional;
-the canvas degrades gracefully without them.
+A host sets these `:subzero_swarm_dashboard` application-env keys as ONE JSON
+object, without editing files in this package: `DASHBOARD_TOPOLOGY_OVERLAY`
+(inline JSON; the `Dockerfile` bakes it from a build-arg of the same name, and a
+runtime env var overrides the baked value) or `DASHBOARD_TOPOLOGY_OVERLAY_FILE`
+(a path). All keys are optional; the canvas degrades gracefully without them. A
+malformed overlay is rejected whole with a boot-time warning — never half-applied.
+
+```json
+{
+  "node_groups": {"ops": ["metrics", "cron"]},
+  "object_descriptions": {"policy": "Decides who may do what.", "agent": "One conversation's agent."},
+  "node_aliases": {"tg_ingress": "ingress"},
+  "ext_endpoints": ["telegram", "web"]
+}
+```
 
 | Key | Shape | Purpose |
 |---|---|---|
