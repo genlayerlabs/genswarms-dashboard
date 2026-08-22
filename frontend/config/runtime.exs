@@ -44,6 +44,18 @@ config :subzero_swarm_dashboard,
   configurator_engine_url: System.get_env("CONFIGURATOR_ENGINE_URL"),
   configurator_engine_token: System.get_env("CONFIGURATOR_ENGINE_TOKEN")
 
+# Host topology overlay (README "Host overlay configuration"): package groups,
+# hover descriptions, vocabulary aliases and external endpoints for the
+# topology canvas, as JSON in DASHBOARD_TOPOLOGY_OVERLAY (inline — the
+# Dockerfile bakes it from a build-arg) or DASHBOARD_TOPOLOGY_OVERLAY_FILE.
+# Fail-soft on purpose: a malformed overlay must not take the dashboard down,
+# but it is rejected WHOLE with a loud warning, never half-applied.
+case SubzeroSwarmDashboard.TopologyOverlay.from_env() do
+  {:ok, []} -> :ok
+  {:ok, overlay} -> config :subzero_swarm_dashboard, overlay
+  {:error, reason} -> IO.warn("DASHBOARD_TOPOLOGY_OVERLAY ignored — " <> reason)
+end
+
 # Story/issues restart persistence (EventsFeed): default is the OS tmp dir,
 # which survives a process restart on a long-lived host — but NOT a k8s pod
 # replacement, where /tmp dies with the pod and every deploy wipes the 24h
