@@ -37,6 +37,8 @@ defmodule GenswarmsDashboard.Objects.Dashboard do
 
   require Logger
 
+  @restart_delay_ms 250
+
   # ObjectHandler init/1: resolve config, start the endpoint, keep its pid.
   def init(config) when is_map(config) do
     with {:ok, swarm} <- fetch_swarm(config),
@@ -59,7 +61,9 @@ defmodule GenswarmsDashboard.Objects.Dashboard do
       case GenswarmsDashboard.start(opts) do
         {:ok, pid} ->
           Logger.info("[dashboard] listening: #{GenswarmsDashboard.describe()}")
-          {:ok, %{endpoint: pid, swarm: swarm, data_source: data_source}}
+
+          state = %{endpoint: pid, swarm: swarm, data_source: data_source}
+          {:ok, monitor_endpoint(state, pid)}
 
         {:error, reason} ->
           {:error, {:dashboard_start_failed, reason}}
@@ -103,6 +107,28 @@ defmodule GenswarmsDashboard.Objects.Dashboard do
     }
   end
 
+  def handle_info(
+        {:DOWN, ref, :process, pid, reason},
+        %{endpoint_ref: ref, endpoint: pid} = state
+      ) do
+    Logger.warning("[dashboard] endpoint exited: #{inspect(reason)}; restarting")
+    Process.send_after(self(), :restart_endpoint, @restart_delay_ms)
+    {:noreply, %{state | endpoint: nil, endpoint_ref: nil}}
+  end
+
+  def handle_info(:restart_endpoint, state) do
+    case GenswarmsDashboard.Endpoint.start_link([]) do
+      {:ok, pid} ->
+        Logger.info("[dashboard] endpoint restarted: #{GenswarmsDashboard.describe()}")
+        {:noreply, monitor_endpoint(state, pid)}
+
+      {:error, reason} ->
+        Logger.error("[dashboard] endpoint restart failed: #{inspect(reason)}; retrying")
+        Process.send_after(self(), :restart_endpoint, @restart_delay_ms)
+        {:noreply, state}
+    end
+  end
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   # ObjectHandler terminate/2: normal exits do not propagate through the link,
@@ -126,6 +152,11 @@ defmodule GenswarmsDashboard.Objects.Dashboard do
   end
 
   def terminate(_reason, _state), do: :ok
+
+  defp monitor_endpoint(state, pid) do
+    ref = Process.monitor(pid)
+    state |> Map.put(:endpoint, pid) |> Map.put(:endpoint_ref, ref)
+  end
 
   defp fetch_swarm(config) do
     case Map.get(config, :swarm) do
