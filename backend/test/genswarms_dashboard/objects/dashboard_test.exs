@@ -1,5 +1,6 @@
 defmodule GenswarmsDashboard.Objects.DashboardTest do
   use ExUnit.Case, async: false
+  import ExUnit.CaptureLog
 
   alias GenswarmsDashboard.Objects.Dashboard
 
@@ -73,6 +74,38 @@ defmodule GenswarmsDashboard.Objects.DashboardTest do
 
     {:reply, json, ^state} = Dashboard.handle_message(:agent, "not json", state)
     assert %{"ok" => false, "error" => "bad_json"} = Jason.decode!(json)
+  end
+
+  test "restarts the endpoint when its process exits" do
+    Process.flag(:trap_exit, true)
+    {:ok, state} = Dashboard.init(base_config(4101))
+    old_endpoint = state.endpoint
+
+    {restarted, log} =
+      with_log(fn ->
+        Process.exit(old_endpoint, :kill)
+
+        assert_receive {:DOWN, _ref, :process, ^old_endpoint, _reason} = death, 1_000
+
+        assert {:noreply, state} = Dashboard.handle_info(death, state)
+        assert_receive :restart_endpoint, 1_000
+        assert {:noreply, restarted} = Dashboard.handle_info(:restart_endpoint, state)
+        restarted
+      end)
+
+    assert log =~ "endpoint exited: :killed; restarting"
+    refute restarted.endpoint == old_endpoint
+    assert Process.alive?(restarted.endpoint)
+    assert :ok = Dashboard.terminate(:normal, restarted)
+  end
+
+  test "a stale restart message cannot create a retry loop for a live endpoint" do
+    {:ok, state} = Dashboard.init(base_config(4102))
+    on_exit(fn -> Dashboard.terminate(:normal, state) end)
+
+    assert {:noreply, ^state} = Dashboard.handle_info(:restart_endpoint, state)
+    refute_receive :restart_endpoint, 350
+    assert Process.alive?(state.endpoint)
   end
 
   test "interface/0 documents the status action" do
