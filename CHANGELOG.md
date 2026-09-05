@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.4 — Unreleased
+## 0.4.4 — 2026-09-05
 
 - Backend package: recover the dashboard endpoint after an unexpected exit,
   retry failed starts, and ignore stale restart messages while it is healthy.
