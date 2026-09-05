@@ -99,6 +99,15 @@ defmodule GenswarmsDashboard.Objects.DashboardTest do
     assert :ok = Dashboard.terminate(:normal, restarted)
   end
 
+  test "a stale restart message cannot create a retry loop for a live endpoint" do
+    {:ok, state} = Dashboard.init(base_config(4102))
+    on_exit(fn -> Dashboard.terminate(:normal, state) end)
+
+    assert {:noreply, ^state} = Dashboard.handle_info(:restart_endpoint, state)
+    refute_receive :restart_endpoint, 350
+    assert Process.alive?(state.endpoint)
+  end
+
   test "interface/0 documents the status action" do
     assert %{status: %{input: _, output: _}} = Dashboard.interface()
   end

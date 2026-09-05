@@ -287,6 +287,11 @@ dead `0.0.0.0` endpoint that 401s everything.
 
 ### Lifecycle
 
+When hosted by the GenSwarms `Objects.Dashboard` handler, the endpoint is
+monitored and restarted after an unexpected exit. Failed restarts retry after
+250 ms; stale restart messages do not restart a healthy endpoint. Swarm teardown
+stops the listener. This recovery belongs to the object handler, not `start/1`.
+
 `start/1` links the endpoint to the caller. There is no supervisor and no restart on
 crash. This suits a boot-script host that wraps the call in `try/rescue` (a dashboard
 failure must not take the host down). To supervise instead, put the injected config in

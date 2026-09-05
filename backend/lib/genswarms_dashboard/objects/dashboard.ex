@@ -116,7 +116,8 @@ defmodule GenswarmsDashboard.Objects.Dashboard do
     {:noreply, %{state | endpoint: nil, endpoint_ref: nil}}
   end
 
-  def handle_info(:restart_endpoint, state) do
+  # A queued duplicate must not start an endless :already_started retry loop.
+  def handle_info(:restart_endpoint, %{endpoint: nil} = state) do
     case GenswarmsDashboard.Endpoint.start_link([]) do
       {:ok, pid} ->
         Logger.info("[dashboard] endpoint restarted: #{GenswarmsDashboard.describe()}")
