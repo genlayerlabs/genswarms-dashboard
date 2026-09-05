@@ -5,6 +5,15 @@ defmodule SubzeroSwarmDashboard.SwarmClient.HttpTest do
   # The Req.Test stub intercepts by request_path regardless of host, so the default
   # swarm_api_url is fine.
 
+  test "swarms/0 unwraps the shared fleet catalog" do
+    Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn ->
+      assert conn.request_path == "/api/swarms"
+      Req.Test.json(conn, %{"swarms" => [%{"name" => "strategivm"}], "count" => 1})
+    end)
+
+    assert {:ok, [%{"name" => "strategivm"}]} = Http.swarms()
+  end
+
   test "dashboard/1 GETs the aggregate and returns the body on 200" do
     Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn ->
       assert conn.request_path == "/api/swarms/wingston/dashboard"

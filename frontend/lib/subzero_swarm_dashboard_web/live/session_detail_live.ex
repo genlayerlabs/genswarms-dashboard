@@ -156,7 +156,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
 
         <.panel title="Conversation">
           <p class="text-xs opacity-50 mb-3">
-            The clean user ↔ Wingston back-and-forth, saved to the database — it <strong>survives agent restarts</strong>. (Empty if persistence is off.)
+            The clean user ↔ swarm conversation, saved to the database — it <strong>survives agent restarts</strong>. (Empty if persistence is off.)
           </p>
           <.transcript transcript={@transcript} privacy={@privacy} />
         </.panel>

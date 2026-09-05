@@ -30,6 +30,7 @@ import {ScrollBottom} from "./hooks/scroll_bottom"
 import {TranscriptGate} from "./hooks/transcript_gate"
 import {ClipboardCopy} from "./hooks/clipboard_copy"
 import {GenAvatar} from "./hooks/gen_avatar"
+import {NavGroups} from "./hooks/nav_groups"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
@@ -45,6 +46,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     TranscriptGate,
     ClipboardCopy,
     GenAvatar,
+    NavGroups,
   },
 })
 

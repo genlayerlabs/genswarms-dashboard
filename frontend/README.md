@@ -4,7 +4,8 @@
 > the in-BEAM read-API it consumes is [`backend/`](../backend/README.md).
 > (Formerly the standalone `subzero-swarm-dashboard` repo.)
 
-A reusable, **read-only** web dashboard for observing a single swarm built on the
+A reusable, **read-only** web dashboard for observing one or more co-located
+swarms built on the
 [`genswarms`](https://github.com/genlayerlabs/genswarms) runtime. It shows swarm
 health, the live agent/object **topology** (agents vs objects), **sessions** and
 their transcripts, events, logs, and LLM usage.
@@ -70,13 +71,57 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
 |---|---|---|
 | `SWARM_API_URL` | `http://127.0.0.1:4000` | Swarm read API base (the in-BEAM endpoint) |
 | `SWARM_WS_URL` | derived from `SWARM_API_URL` | WS base for the live event tail |
-| `SWARM_NAME` | `wingston` | Which swarm to view |
+| `SWARM_NAME` | `wingston` | Initial swarm; other co-located swarms are discovered at runtime |
+| `DASHBOARD_FORCE_SSL` | `true` | Compile with `false` only when plain HTTP is intentional (for example, a private Tailscale address) |
 | `SWARM_API_TOKEN` | — | Read-only bearer/WS token (the swarm's `DASHBOARD_API_TOKEN`) |
 | `ROUTER_USAGE_URL` | — | LLM router usage endpoint (e.g. `https://router.ygr.ai/v1/usage`) |
 | `ROUTER_API_KEY` | — | Router key (server-side only) |
 | `PORT` | `4100` | Dashboard HTTP port (kept off the swarm's 4000) |
 | `DASHBOARD_POLL_MS` | `3000` | Snapshot poll interval |
 | `DASHBOARD_USER` / `DASHBOARD_PASS` | — | Basic-auth for the UI (active only when both set) |
+
+## Host overlay configuration (application env)
+
+A host sets these `:subzero_swarm_dashboard` application-env keys as ONE JSON
+object, without editing files in this package, through one of (first wins):
+
+- `DASHBOARD_TOPOLOGY_OVERLAY_B64` — the JSON, base64-encoded (padding and line
+  wrapping tolerated). **Use this form when baking through
+  `docker/build-push-action`:** its `build-args` parser treats the value as CSV
+  and strips the quotes out of raw JSON, which the parser below then rejects.
+  `jq -c . overlay.json | base64 -w0` (macOS: `base64 | tr -d '\n'`).
+- `DASHBOARD_TOPOLOGY_OVERLAY` — inline JSON (fine from a shell-quoted
+  `docker buildx build --build-arg`, or as a runtime env var).
+- `DASHBOARD_TOPOLOGY_OVERLAY_FILE` — a path.
+
+The `Dockerfile` bakes the first two from build-args of the same names; a runtime
+env var overrides the baked value. All keys are optional; the canvas degrades
+gracefully without them. A malformed overlay is rejected **whole** — never
+half-applied — with a boot-time warning and a notice on the Topology page
+(`:topology_overlay_error`), so a bad bake is visible where its effect is missing.
+
+```json
+{
+  "node_groups": {"ops": ["metrics", "cron"]},
+  "object_descriptions": {"policy": "Decides who may do what.", "agent": "One conversation's agent."},
+  "node_aliases": {"tg_ingress": "ingress"},
+  "ext_endpoints": ["telegram", "web"]
+}
+```
+
+| Key | Shape | Purpose |
+|---|---|---|
+| `:node_groups` | `%{"group" => ["member", ...]}` | Package groups: each collapsed group replaces its member objects with ONE super-node on the topology canvas; clicking expands it into a dotted box of members (open boxes tile into lanes). Members absent from the snapshot are ignored. |
+| `:object_descriptions` | `%{"node" => "text", agent: "text"}` | Hover cards: one-line description per object node; the `:agent` key covers every dynamic agent chip. Text-only — rendered with `textContent`, never markup. |
+| `:node_aliases` | `%{"vocab" => "real_name"}` | Maps the display-event vocabulary's canonical names (`"ingress"`, `"sender"`…) onto this swarm's real object names so packets land on snapshot nodes. Aliases flatten through collapsed groups automatically; `<name>_shard_N` folds onto `<name>` without configuration. |
+| `:ext_endpoints` | `["telegram", "web"]` | External endpoints the vocabulary talks to but no swarm object backs — drawn as small circles on the right edge so replies/browses visibly leave the swarm. |
+
+Extension-page tables additionally understand two producer-side fields: a column
+may declare `"link": true` (http(s) values in that column render as anchors —
+non-http values, including privacy-masked `•••`, stay plain text), and a row may
+carry `"detail"`: a list of `%{"label", "value", optional "link"}` maps rendered
+as a click-to-expand definition grid under the row (toggle keyed by the row's
+stable `"id"` when present).
 
 ## Pages
 
@@ -93,7 +138,8 @@ docker compose up -d --build     # → http://127.0.0.1:4100 (published on loopb
 
 ## How it works
 
-`SwarmFeed` polls `/api/swarms/:name/dashboard` every `DASHBOARD_POLL_MS` and
+`FleetCatalog` polls `/api/swarms` and keeps the sidebar selector current without a
+restart. `SwarmFeed` polls `/api/swarms/:name/dashboard` every `DASHBOARD_POLL_MS` and
 `SwarmFeed.Socket` (Slipstream) joins the swarm's `swarm:<name>` WS channel; both
 republish onto one `Phoenix.PubSub` topic (`"feed"`) that LiveViews subscribe to.
 A silent-empty guard warns when snapshots report agents but no WS events arrive

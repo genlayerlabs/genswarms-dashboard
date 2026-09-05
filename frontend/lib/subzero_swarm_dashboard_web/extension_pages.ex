@@ -49,6 +49,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   attr :sort, :map, default: %{}
   attr :tab, :map, default: %{}
   attr :row_targets, :map, default: %{}
+  attr :detail_open, :any, default: nil
 
   def page(assigns) do
     sections = assigns.page |> sections() |> Enum.with_index()
@@ -100,6 +101,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
               tab={@tab}
               hoisted_idx={@hoisted && elem(@hoisted, 0)}
               row_targets={@row_targets}
+              detail_open={@detail_open}
             />
           </div>
         </div>
@@ -115,6 +117,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   attr :tab, :map, default: %{}
   attr :hoisted_idx, :any, default: nil
   attr :row_targets, :map, default: %{}
+  attr :detail_open, :any, default: nil
 
   defp section(%{section: %{"type" => "metrics"} = section} = assigns) do
     assigns =
@@ -176,16 +179,66 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
             </tr>
           </thead>
           <tbody>
-            <tr
-              :for={{row, ridx} <- @rows}
-              class={Map.has_key?(@row_targets, {@idx, ridx}) && "row-press"}
-              phx-click={Map.has_key?(@row_targets, {@idx, ridx}) && "inspect"}
-              phx-value-session_id={Map.get(@row_targets, {@idx, ridx})}
-            >
-              <td :for={col <- @columns} class={["max-w-xs", col_align(col)]}>
-                <span class={cell_class(col)}>{display(Map.get(row, col["key"]))}</span>
-              </td>
-            </tr>
+            <%= for {row, ridx} <- @rows do %>
+              <% detail = detail_items(row) %>
+              <% dkey = detail != [] && detail_key(@idx, row, ridx) %>
+              <% open? = dkey && detail_open?(@detail_open, dkey) %>
+              <tr
+                class={[
+                  (Map.has_key?(@row_targets, {@idx, ridx}) || dkey) && "row-press",
+                  dkey && "ext-has-detail",
+                  open? && "ext-detail-open"
+                ]}
+                phx-click={
+                  cond do
+                    Map.has_key?(@row_targets, {@idx, ridx}) -> "inspect"
+                    dkey -> "ext_detail"
+                    true -> nil
+                  end
+                }
+                phx-value-session_id={Map.get(@row_targets, {@idx, ridx})}
+                phx-value-key={dkey || nil}
+              >
+                <td :for={col <- @columns} class={["max-w-xs", col_align(col)]}>
+                  <a
+                    :if={col["link"] && http_link?(Map.get(row, col["key"]))}
+                    href={Map.get(row, col["key"])}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="link link-primary break-all text-xs"
+                  >
+                    {display(Map.get(row, col["key"]))}
+                  </a>
+                  <span
+                    :if={!(col["link"] && http_link?(Map.get(row, col["key"])))}
+                    class={cell_class(col)}
+                  >
+                    {display(Map.get(row, col["key"]))}
+                  </span>
+                </td>
+              </tr>
+              <tr :if={open?} class="ext-detail-row">
+                <td colspan={length(@columns)} class="!py-3">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1.5 text-xs">
+                    <div :for={item <- detail} class="flex gap-2 min-w-0">
+                      <span class="opacity-50 shrink-0 w-24">{display(item["label"])}</span>
+                      <a
+                        :if={http_link?(item["link"])}
+                        href={item["link"]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="link link-primary break-all"
+                      >
+                        {display(item["value"])}
+                      </a>
+                      <span :if={!http_link?(item["link"])} class="break-words min-w-0">
+                        {display(item["value"])}
+                      </span>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            <% end %>
           </tbody>
         </table>
       </div>
@@ -234,6 +287,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         sort_map={@sort_map}
         tab={@tab}
         row_targets={@row_targets}
+        detail_open={@detail_open}
       />
     </div>
     """
@@ -257,6 +311,30 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     <div class="hidden"></div>
     """
   end
+
+  # Row detail grammar: a row may carry "detail" — a list of
+  # %{"label", "value", optional "link"} maps — rendered as an expandable
+  # definition grid under the row. Toggle state lives in the LiveView
+  # (`ext_detail`), keyed by section + a stable row identity ("id" when the
+  # row carries one, else its source index) so sorting cannot misroute a
+  # toggle.
+  defp detail_items(%{"detail" => items}) when is_list(items),
+    do: Enum.filter(items, &(is_map(&1) and Map.get(&1, "label")))
+
+  defp detail_items(_row), do: []
+
+  defp detail_key(idx, row, ridx) do
+    id = Map.get(row, "id") || ridx
+    "#{idx}|#{id}"
+  end
+
+  defp detail_open?(%MapSet{} = open, key), do: MapSet.member?(open, key)
+  defp detail_open?(_open, _key), do: false
+
+  # Anchors render only for real absolute URLs. Privacy mode masks every
+  # binary row value to "•••", which must degrade to plain text — an
+  # <a href="•••"> would navigate to a broken relative path.
+  defp http_link?(value), do: is_binary(value) and String.starts_with?(value, "http")
 
   # ── sortable tables ──────────────────────────────────────────────────────────
   # Rows travel WITH their original index so the row→inspector targets (keyed by
@@ -427,6 +505,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         "label" => String.slice(label, 0, 40),
         "icon" => normalize_icon(page["icon"]),
         "meta" => display(page["meta"]),
+        "group" => normalize_group(page["group"]),
         "sections" => sections(page)
       }
     end
@@ -434,10 +513,79 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
 
   defp normalize_page(_), do: nil
 
-  defp normalize_icon(icon) when is_binary(icon) do
-    if String.starts_with?(icon, "hero-"), do: icon, else: "hero-puzzle-piece"
+  # The sidebar's own groups. Extension pages whose "group" matches one of
+  # these (case-insensitively) are slotted INTO that section next to the
+  # core pages; any other group renders as its own section between LLM and
+  # System. This is what makes the sidebar ONE system instead of three:
+  # every row lives under a header, core and extension alike.
+  @builtin_groups ~w(swarm llm system)
+
+  @doc """
+  The full sidebar plan for the layout:
+
+      %{builtin: %{"swarm" => pages, "llm" => pages, "system" => pages},
+        extra: [{label, pages}],   # producer/host-defined sections, in order
+        ungrouped: pages}          # no group declared — flat, before System
+
+  Group labels come from `page["group"]` — declared by the producer, or
+  stamped by the host onto pages it aggregates (hosts own their sidebar
+  taxonomy, so already-published packages never need a re-release).
+  """
+  def sidebar_plan(snapshot) do
+    {ungrouped, groups} = snapshot |> pages() |> grouped()
+
+    {builtin, extra} =
+      Enum.split_with(groups, fn {label, _} -> String.downcase(label) in @builtin_groups end)
+
+    %{
+      builtin: Map.new(builtin, fn {label, pages} -> {String.downcase(label), pages} end),
+      extra: extra,
+      ungrouped: ungrouped
+    }
   end
 
+  @doc """
+  Sidebar grouping: `{ungrouped_pages, [{group_label, pages}]}`, groups in
+  first-seen order.
+  """
+  def grouped(pages) do
+    {ungrouped, grouped} = Enum.split_with(pages, &is_nil(&1["group"]))
+
+    groups =
+      grouped
+      |> Enum.group_by(& &1["group"])
+      |> Enum.sort_by(fn {group, _} ->
+        Enum.find_index(grouped, &(&1["group"] == group))
+      end)
+
+    {ungrouped, groups}
+  end
+
+  defp normalize_group(group) when is_binary(group) do
+    case String.trim(group) do
+      "" -> nil
+      trimmed -> String.slice(trimmed, 0, 24)
+    end
+  end
+
+  defp normalize_group(_), do: nil
+
+  # Heroicon CSS classes are GENERATED by Tailwind's scan of this app's own
+  # source — an icon name that only ever arrives as runtime data has no
+  # class and renders as an invisible blank (exactly the mixed icon/no-icon
+  # sidebar of 2026-07-27). This list is therefore load-bearing twice over:
+  # it is the allowlist, AND the literal names Tailwind's scanner reads to
+  # generate the classes. A producer shipping a new icon adds it here (one
+  # word) or gets the visible fallback — never a blank gap.
+  @known_icons ~w(
+    hero-arrow-trending-up hero-banknotes hero-chart-bar
+    hero-chat-bubble-left-right hero-clock hero-credit-card hero-cube
+    hero-gift hero-globe-alt hero-light-bulb hero-lifebuoy hero-lock-closed
+    hero-megaphone hero-puzzle-piece hero-shield-check hero-sparkles
+    hero-users hero-wallet
+  )
+
+  defp normalize_icon(icon) when icon in @known_icons, do: icon
   defp normalize_icon(_), do: "hero-puzzle-piece"
 
   defp sections(%{"sections" => sections}) when is_list(sections),
@@ -506,7 +654,10 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       "key" => String.slice(col["key"], 0, 64),
       "label" => display_label(col["label"]),
       "align" => col["align"],
-      "mono" => col["mono"]
+      "mono" => col["mono"],
+      # opt-in: render http(s) values in this column as anchors (the cell
+      # renderer still refuses non-http values — see http_link?/1)
+      "link" => col["link"] == true
     }
   end
 

@@ -32,6 +32,7 @@ defmodule SubzeroSwarmDashboard.Application do
   defp feed_children do
     if Application.get_env(:subzero_swarm_dashboard, :start_feed, true) do
       [
+        SubzeroSwarmDashboard.FleetCatalog,
         SubzeroSwarmDashboard.SwarmFeed,
         SubzeroSwarmDashboard.SwarmFeed.Socket,
         SubzeroSwarmDashboard.EventsFeed

@@ -30,6 +30,15 @@ defmodule SubzeroSwarmDashboard.RouterClient.HttpTest do
     assert {:unavailable, :not_configured} = Http.usage(%{})
   end
 
+  test "blank URL or key → {:unavailable, :not_configured} (no request)" do
+    for {url, key} <- [{"", "k"}, {"http://router.test/v1/usage", ""}] do
+      Application.put_env(:subzero_swarm_dashboard, :router_usage_url, url)
+      Application.put_env(:subzero_swarm_dashboard, :router_api_key, key)
+
+      assert {:unavailable, :not_configured} = Http.usage(%{})
+    end
+  end
+
   test "200 → {:ok, body}" do
     configure()
 

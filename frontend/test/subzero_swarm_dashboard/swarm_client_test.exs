@@ -5,6 +5,11 @@ defmodule SubzeroSwarmDashboard.SwarmClientTest do
 
   alias SubzeroSwarmDashboard.{SwarmClient, SwarmClientMock}
 
+  test "swarms/0 delegates to the configured impl" do
+    expect(SwarmClientMock, :swarms, fn -> {:ok, [%{"name" => "wingston"}]} end)
+    assert {:ok, [%{"name" => "wingston"}]} = SwarmClient.swarms()
+  end
+
   test "dashboard/1 delegates to the configured impl" do
     expect(SwarmClientMock, :dashboard, fn "wingston" -> {:ok, %{"swarm" => "wingston"}} end)
     assert {:ok, %{"swarm" => "wingston"}} = SwarmClient.dashboard("wingston")

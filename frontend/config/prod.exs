@@ -8,17 +8,19 @@ import Config
 config :subzero_swarm_dashboard, SubzeroSwarmDashboardWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json"
 
-# Force using SSL in production. This also sets the "strict-security-transport" header,
-# known as HSTS. If you have a health check endpoint, you may want to exclude it below.
-# Note `:force_ssl` is required to be set at compile-time.
-config :subzero_swarm_dashboard, SubzeroSwarmDashboardWeb.Endpoint,
-  force_ssl: [
-    rewrite_on: [:x_forwarded_proto],
-    exclude: [
-      # paths: ["/health"],
-      hosts: ["localhost", "127.0.0.1"]
+# Force SSL by default. A dashboard bound only to a private Tailscale address
+# can explicitly compile with DASHBOARD_FORCE_SSL=false and serve plain HTTP
+# without redirecting clients to a TLS listener that does not exist.
+if System.get_env("DASHBOARD_FORCE_SSL", "true") != "false" do
+  config :subzero_swarm_dashboard, SubzeroSwarmDashboardWeb.Endpoint,
+    force_ssl: [
+      rewrite_on: [:x_forwarded_proto],
+      exclude: [
+        # paths: ["/health"],
+        hosts: ["localhost", "127.0.0.1"]
+      ]
     ]
-  ]
+end
 
 # Do not print debug messages in production
 config :logger, level: :info

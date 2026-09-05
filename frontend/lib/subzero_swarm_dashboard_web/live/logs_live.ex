@@ -154,7 +154,23 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   defp sessions(snap), do: snap["sessions"] || []
 
   defp session_options(snapshot, selected, false) do
-    for s <- sessions(snapshot) do
+    rows = sessions(snapshot)
+
+    # The SELECTED session must survive snapshot churn: a slot recycled
+    # between polls drops out of the next snapshot, and rebuilding the option
+    # list without it silently reset the operator's choice. Privacy mode
+    # (clause below) deliberately keeps upstream behavior — masked options
+    # are index-keyed, so a not-in-snapshot row cannot be added without
+    # leaking the sid.
+    rows =
+      if is_binary(selected) and selected != "" and
+           not Enum.any?(rows, &(&1["session_id"] == selected)) do
+        rows ++ [%{"session_id" => selected, "agent" => "not in latest snapshot"}]
+      else
+        rows
+      end
+
+    for s <- rows do
       sid = s["session_id"]
       %{value: sid, label: "#{sid} (#{s["agent"]})", selected: selected == sid}
     end
@@ -190,5 +206,4 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   defp line_count_label(1), do: "1 line"
   defp line_count_label(n), do: "#{n} lines"
-
 end

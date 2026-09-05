@@ -31,6 +31,8 @@ defmodule GenswarmsDashboard.PlugTest do
             :stub_status,
             :stub_topology,
             :stub_events,
+            :stub_swarms,
+            :stub_history,
             :stub_logs,
             :stub_skills,
             :stub_last_events_query,
@@ -96,6 +98,25 @@ defmodule GenswarmsDashboard.PlugTest do
   end
 
   # ── routes (new — pinned against fixture + stubs) ───────────────────────────
+  test "GET /api/swarms lists every swarm in the co-located BEAM" do
+    Application.put_env(:genswarms_dashboard, :stub_swarms, [
+      %{name: "project-b", status: :running, agent_count: 3, object_count: 0},
+      %{name: "strategivm", status: :running, agent_count: 2, object_count: 6}
+    ])
+
+    conn = call(conn(:get, "/api/swarms"))
+
+    assert conn.status == 200
+
+    assert %{
+             "count" => 2,
+             "swarms" => [
+               %{"name" => "project-b", "agents" => 3},
+               %{"name" => "strategivm", "agents" => 2}
+             ]
+           } = Jason.decode!(conn.resp_body)
+  end
+
   test "GET /dashboard returns the aggregate; unknown swarm is 404 swarm_not_found" do
     Application.put_env(:genswarms_dashboard, :stub_status, %{
       name: "fix",
@@ -175,6 +196,70 @@ defmodule GenswarmsDashboard.PlugTest do
     # fix:2 is durable but NOT leased ⇒ unavailable (no slot bleed)
     conn = call(conn(:get, "/api/swarms/fix/sessions/fix:2/logs"))
     assert %{"logs" => [], "source" => "unavailable"} = Jason.decode!(conn.resp_body)
+  end
+
+  test "agent diagnostics expose safe status, bounded history and logs" do
+    Application.put_env(:genswarms_dashboard, :stub_status, %{
+      name: "fix",
+      status: :running,
+      started_at: ~U[2026-06-09 10:00:00Z],
+      agents: [
+        %{
+          name: :agent_1,
+          state: :ready,
+          backend: :tmux,
+          inbox_size: 2,
+          message_count: 7,
+          last_activity: ~U[2026-06-09 10:05:00Z],
+          turn_id: "turn-7",
+          attention_reason: :nudge_not_submitted,
+          session: %{
+            transport: :tmux,
+            client: :codex,
+            session: "genswarms-fix",
+            window: "agent_1",
+            pane_id: "%1",
+            phase: :ready,
+            submission_pending: true,
+            submission_attempts: 2,
+            workspace: "/host/private",
+            attach: %{executable: "/nix/store/private/tmux"},
+            runner: %{kind: :bwrap, network: :open, workspace: "/host/private"}
+          }
+        }
+      ],
+      objects: []
+    })
+
+    Application.put_env(:genswarms_dashboard, :stub_history, fn :agent_1, limit ->
+      Enum.take([%{direction: :in, content: "one"}, %{direction: :out, content: "two"}], limit)
+    end)
+
+    Application.put_env(:genswarms_dashboard, :stub_logs, fn :agent_1 ->
+      [%{line: "ready"}]
+    end)
+
+    agents = call(conn(:get, "/api/swarms/fix/agents"))
+    assert agents.status == 200
+    assert %{"agents" => [agent]} = Jason.decode!(agents.resp_body)
+    assert agent["name"] == "agent_1"
+    assert agent["turn_id"] == "turn-7"
+    assert agent["attention_reason"] == "nudge_not_submitted"
+    assert agent["session"]["pane_id"] == "%1"
+    assert agent["session"]["submission_pending"]
+    assert agent["session"]["submission_attempts"] == 2
+    assert agent["session"]["runner"]["kind"] == "bwrap"
+    refute inspect(agent) =~ "/host/private"
+    refute Map.has_key?(agent["session"], "attach")
+
+    history = call(conn(:get, "/api/swarms/fix/agents/agent_1/history?limit=1"))
+    assert %{"history" => [%{"content" => "one"}]} = Jason.decode!(history.resp_body)
+
+    logs = call(conn(:get, "/api/swarms/fix/agents/agent_1/logs"))
+    assert %{"logs" => [%{"line" => "ready"}]} = Jason.decode!(logs.resp_body)
+
+    missing = call(conn(:get, "/api/swarms/fix/agents/not-interned/history"))
+    assert missing.status == 404
   end
 
   test "GET /skills serves the leased slot's skills dir (the prompt source), host path stripped" do
@@ -405,7 +490,10 @@ defmodule GenswarmsDashboard.PlugTest do
   # The JSON error view (wired via render_errors) renders a clean body — so a 500 that
   # does reach the endpoint doesn't fail again on a missing template.
   test "ErrorJSON renders a clean JSON error body" do
-    assert GenswarmsDashboard.ErrorJSON.render("500.json", %{}) == %{error: "Internal Server Error"}
+    assert GenswarmsDashboard.ErrorJSON.render("500.json", %{}) == %{
+             error: "Internal Server Error"
+           }
+
     assert GenswarmsDashboard.ErrorJSON.render("404.json", %{}) == %{error: "Not Found"}
   end
 end

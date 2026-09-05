@@ -868,6 +868,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
         "requests" => 1240,
         "errors" => 0,
         "tokens_in" => 1_000_000,
+        "tokens_cached" => 700_000,
         "tokens_out" => 2_100_000,
         "tokens_total" => 3_100_000,
         "latency_ms_avg" => 420.0,
@@ -879,6 +880,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
         "gpt-5.5" => %{
           "requests" => 1240,
           "tokens_total" => 3_100_000,
+          "tokens_cached" => 700_000,
           "error_rate" => 0.0,
           "latency_ms_avg" => 420.0,
           "latency_ms_max" => 980.0
@@ -914,7 +916,8 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
           "served_model_id" => "gpt-5.5",
           "path" => "/v1/chat/completions",
           "latency_ms" => 420.0,
-          "tokens_total" => 2537
+          "tokens_total" => 2537,
+          "tokens_cached" => 1024
         }
       ],
       "security" => %{"sanitized" => true, "raw_api_key_exposed" => false}
@@ -932,6 +935,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Requests"
     # tokens formatted with thousands separators
     assert html =~ "3,100,000"
+    assert has_element?(view, "#usage-cached-input", "Cached input")
+    assert has_element?(view, "#usage-cached-input", "700,000")
+    assert has_element?(view, "#usage-cached-input", "70.0% of input")
+    assert has_element?(view, ".usage-recent-cached", "1,024 cached")
     # all four breakdown tables + a served-model row
     assert html =~ "By served model"
     assert html =~ "By provider"
@@ -943,6 +950,17 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "ab12cd34"
     assert html =~ "Recent requests"
     assert html =~ "schema v2"
+  end
+
+  test "usage distinguishes missing cache telemetry from zero cached tokens", %{conn: conn} do
+    payload = update_in(v2_usage(), ["totals"], &Map.delete(&1, "tokens_cached"))
+    stub(SwarmClientMock, :dashboard, fn _ -> {:ok, @snap} end)
+    stub(RouterClientMock, :usage, fn _ -> {:ok, payload} end)
+
+    {:ok, view, _} = live(conn, "/usage")
+    assert has_element?(view, "#usage-cached-input", "Cached input")
+    assert has_element?(view, "#usage-cached-input", "cache telemetry unavailable")
+    assert has_element?(view, "#usage-cached-input", "—")
   end
 
   test "usage range buttons re-query the router with a since bound", %{conn: conn} do

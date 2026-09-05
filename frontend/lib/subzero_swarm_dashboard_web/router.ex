@@ -26,6 +26,7 @@ defmodule SubzeroSwarmDashboardWeb.Router do
     pipe_through :browser
 
     post "/privacy/toggle", PrivacyController, :toggle
+    post "/swarm/select", SwarmController, :select
 
     live_session :dashboard, on_mount: {SubzeroSwarmDashboardWeb.DashHooks, :default} do
       live "/", OverviewLive

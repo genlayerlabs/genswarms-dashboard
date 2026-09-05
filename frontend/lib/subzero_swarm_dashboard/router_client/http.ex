@@ -7,7 +7,7 @@ defmodule SubzeroSwarmDashboard.RouterClient.Http do
     url = Application.get_env(:subzero_swarm_dashboard, :router_usage_url)
     key = Application.get_env(:subzero_swarm_dashboard, :router_api_key)
 
-    if is_nil(url) or is_nil(key) do
+    if url in [nil, ""] or key in [nil, ""] do
       {:unavailable, :not_configured}
     else
       params = Map.take(opts, [:since, :until, :bucket])
