@@ -52,21 +52,26 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
     {:noreply, assign(socket, ext_sort: sort)}
   end
 
-  @doc """
-  Handles tab selection events for extension page sections.
-
-  Validates that `tab` is a numeric string before converting to integer,
-  defaulting to 0 for invalid input to prevent ArgumentError crashes.
-  """
-  @impl true
-  def handle_event("ext_tab", %{"sec" => sec, "tab" => tab}, socket) do
-    tab_index = if Regex.match?(~r/^\d+$/, tab), do: String.to_integer(tab), else: 0
-
-    {:noreply,
-     assign(socket,
-       ext_tab: Map.put(socket.assigns.ext_tab, section_key(sec), tab_index)
-     )}
+  def handle_event("ext_tab", %{"sec" => sec, "tab" => tab}, socket)
+      when is_binary(sec) and byte_size(sec) <= 64 do
+    if Regex.match?(~r/\A[0-9]+(?:\/[0-9]+)*\z/, sec) do
+      {:noreply,
+       assign(socket,
+         ext_tab: Map.put(socket.assigns.ext_tab, section_key(sec), tab_index(tab))
+       )}
+    else
+      {:noreply, socket}
+    end
   end
+
+  def handle_event("ext_tab", _params, socket), do: {:noreply, socket}
+
+  # Bound client input before conversion; malformed values select the first tab.
+  defp tab_index(tab) when is_binary(tab) and byte_size(tab) <= 10 do
+    if Regex.match?(~r/\A[0-9]+\z/, tab), do: String.to_integer(tab), else: 0
+  end
+
+  defp tab_index(_tab), do: 0
 
   defp section_key(sec) do
     if Regex.match?(~r/^\d+$/, sec), do: String.to_integer(sec), else: sec
