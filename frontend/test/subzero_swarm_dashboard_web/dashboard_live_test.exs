@@ -707,11 +707,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
       ])
 
     {:ok, view, _} = live(conn, "/extensions/tab-cap")
-    Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
-    html = render(view)
+    send(view.pid, {:snapshot, snap})
 
-    assert html =~ "T6"
-    refute html =~ "T7"
+    assert has_element?(view, ~s(button[phx-value-tab="5"][phx-value-sec="0"]), "T6")
+    refute has_element?(view, ~s(button[phx-value-tab="6"][phx-value-sec="0"]))
   end
 
   test "tab selector uses the Usage-page join/btn style, right of the section title", %{
