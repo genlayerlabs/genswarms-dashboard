@@ -32,25 +32,36 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
     {:noreply, assign(socket, ext_detail: open)}
   end
 
-  def handle_event("ext_sort", %{"sec" => sec, "key" => key}, socket) do
-    # Top-level sections key by integer position; tab-nested sections use the
-    # composite "<idx>/<tab>" string. Both are opaque map keys past this point.
-    idx = section_key(sec)
+  def handle_event("ext_detail", _params, socket), do: {:noreply, socket}
 
-    next =
-      case Map.get(socket.assigns.ext_sort, idx) do
-        {^key, :asc} -> {key, :desc}
-        {^key, :desc} -> nil
-        _ -> {key, :asc}
-      end
+  # Client-typed payload: bound both values before they become map keys, the
+  # same way "ext_tab" does. A malformed section or key is a no-op, not a crash.
+  def handle_event("ext_sort", %{"sec" => sec, "key" => key}, socket)
+      when is_binary(sec) and byte_size(sec) <= 64 and is_binary(key) and byte_size(key) <= 128 do
+    if Regex.match?(~r/\A[0-9]+(?:\/[0-9]+)*\z/, sec) do
+      # Top-level sections key by integer position; tab-nested sections use the
+      # composite "<idx>/<tab>" string. Both are opaque map keys past this point.
+      idx = section_key(sec)
 
-    sort =
-      if next,
-        do: Map.put(socket.assigns.ext_sort, idx, next),
-        else: Map.delete(socket.assigns.ext_sort, idx)
+      next =
+        case Map.get(socket.assigns.ext_sort, idx) do
+          {^key, :asc} -> {key, :desc}
+          {^key, :desc} -> nil
+          _ -> {key, :asc}
+        end
 
-    {:noreply, assign(socket, ext_sort: sort)}
+      sort =
+        if next,
+          do: Map.put(socket.assigns.ext_sort, idx, next),
+          else: Map.delete(socket.assigns.ext_sort, idx)
+
+      {:noreply, assign(socket, ext_sort: sort)}
+    else
+      {:noreply, socket}
+    end
   end
+
+  def handle_event("ext_sort", _params, socket), do: {:noreply, socket}
 
   def handle_event("ext_tab", %{"sec" => sec, "tab" => tab}, socket)
       when is_binary(sec) and byte_size(sec) <= 64 do
