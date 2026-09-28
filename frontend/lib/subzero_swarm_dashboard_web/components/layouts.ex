@@ -50,12 +50,12 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
 
     ~H"""
     <div
-      class="flex min-h-screen flex-col md:flex-row"
+      class="flex min-h-screen flex-col md:flex-row md:h-dvh md:min-h-0 md:overflow-hidden"
       data-privacy={if @privacy, do: "on", else: "off"}
     >
       <%!-- replays the per-browser sensitive-content preference on every mount --%>
       <span id="transcript-gate" phx-hook="TranscriptGate" class="hidden"></span>
-      <aside class="console-rail w-full md:w-60 md:min-h-screen shrink-0 border-r border-base-300 px-3 py-5 flex flex-col">
+      <aside class="console-rail w-full md:w-60 md:h-full md:overflow-y-auto shrink-0 border-r border-base-300 px-3 py-5 flex flex-col scroll-thin">
         <div class="px-2 mb-7 flex items-center gap-2.5 min-w-0">
           <img src={~p"/images/logo.svg"} width="30" class="drop-shadow shrink-0" alt="" />
           <div class="leading-none min-w-0 flex-1">
@@ -199,7 +199,10 @@ defmodule SubzeroSwarmDashboardWeb.Layouts do
         <div class="mt-auto pt-6 px-2"><.theme_toggle /></div>
       </aside>
 
-      <main class="flex-1 p-6 lg:p-8 overflow-x-auto">
+      <main
+        id="dashboard-main"
+        class="min-w-0 flex-1 p-6 lg:p-8 overflow-x-auto md:min-h-0 md:overflow-y-auto scroll-thin"
+      >
         {render_slot(@inner_block)}
       </main>
     </div>

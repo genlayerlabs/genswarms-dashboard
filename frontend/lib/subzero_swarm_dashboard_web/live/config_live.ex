@@ -345,5 +345,4 @@ defmodule SubzeroSwarmDashboardWeb.ConfigLive do
   defp redact_string(value, false), do: value
   defp redact_string(value, true) when is_binary(value), do: PrivacyRedactor.mask_cid(value)
   defp redact_string(value, true), do: value
-
 end

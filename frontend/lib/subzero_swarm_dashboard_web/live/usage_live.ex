@@ -2,9 +2,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.PrivacyRedactor
-  alias SubzeroSwarmDashboard.RouterClient
   alias SubzeroSwarmDashboard.RouterUsageCache
   alias SubzeroSwarmDashboardWeb.DashHooks
+  alias SubzeroSwarmDashboardWeb.Pagination
 
   # Selectable look-back windows → seconds (nil = all recorded). Passed to the
   # router as a unix `since` (the v2 usage endpoint accepts since/until/bucket).
@@ -12,19 +12,20 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
   # Auto-refresh pulse — this page was fetch-once-per-mount while every
   # snapshot-driven page auto-updated.
   @refresh_ms 60_000
+  @tables ~w(recent route_health by_served_model by_provider by_route by_model_family)
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: send(self(), :load)
 
     # Stale-while-revalidate: paint the last good payload for this range
-    # immediately (no :loading flash while the router round-trips — 8s worst
-    # case); the :load fetch replaces it when it lands.
+    # immediately while the asynchronous fetch revalidates it.
     {:ok,
      assign(socket,
        page_title: "Usage",
-       usage: RouterUsageCache.get("all") || :loading,
+       usage: RouterUsageCache.get("all", {:page, %{}}) || :loading,
        range: "all",
+       usage_pages: %{},
        usage_timer: nil
      )}
   end
@@ -34,21 +35,69 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     # a range switch fires :load immediately — cancel the pending pulse so
     # timers never stack
     if ref = socket.assigns.usage_timer, do: Process.cancel_timer(ref)
-    result = RouterClient.usage(range_opts(socket.assigns.range))
-    RouterUsageCache.put(socket.assigns.range, result)
-    timer = Process.send_after(self(), :load, @refresh_ms)
-    {:noreply, assign(socket, usage: result, usage_timer: timer)}
+    range = socket.assigns.range
+    pages = socket.assigns.usage_pages
+
+    {:noreply,
+     socket
+     |> assign(usage_timer: nil)
+     |> start_async(:router_usage, fn ->
+       {range, RouterUsageCache.fetch(range, range_opts(range), {:page, pages})}
+     end)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_async(:router_usage, {:ok, {range, result}}, socket) do
+    if range == socket.assigns.range do
+      result =
+        case result do
+          {:ok, _} -> RouterUsageCache.get(range, {:page, socket.assigns.usage_pages}) || result
+          _ -> result
+        end
+
+      timer = Process.send_after(self(), :load, @refresh_ms)
+      {:noreply, assign(socket, usage: result, usage_timer: timer)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_async(:router_usage, {:exit, _reason}, socket),
+    do:
+      handle_async(
+        :router_usage,
+        {:ok, {socket.assigns.range, {:unavailable, :fetch_failed}}},
+        socket
+      )
+
+  @impl true
   def handle_event("range", %{"window" => w}, socket) when is_map_key(@windows, w) do
-    send(self(), :load)
-    {:noreply, assign(socket, range: w, usage: RouterUsageCache.get(w) || :loading)}
+    socket =
+      assign(socket,
+        range: w,
+        usage_pages: %{},
+        usage: RouterUsageCache.get(w, {:page, %{}}) || :loading
+      )
+
+    handle_info(:load, socket)
   end
 
   def handle_event("range", _params, socket), do: {:noreply, socket}
+
+  def handle_event(
+        "usage_page",
+        %{"sec" => key, "page" => page},
+        %{assigns: %{usage: {:ok, _}}} = socket
+      )
+      when key in @tables do
+    pages = Map.put(socket.assigns.usage_pages, key, Pagination.page(page))
+    usage = RouterUsageCache.get(socket.assigns.range, {:page, pages}) || socket.assigns.usage
+    {:noreply, assign(socket, usage_pages: pages, usage: usage)}
+  end
+
+  def handle_event("usage_page", _params, socket), do: {:noreply, socket}
 
   # Build the request opts for the selected window. "all" → no bound.
   defp range_opts("all"), do: %{}
@@ -306,12 +355,16 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
         key: u["key"] || %{},
         route_health: u["route_health"] || [],
         recent: u["recent"] || [],
+        pagination: u["pagination"],
         security: u["security"] || %{},
         breakdowns: [
-          {"By served model", "model", breakdown_rows(u["by_served_model"], assigns.privacy)},
-          {"By provider", "provider", breakdown_rows(u["by_provider"], assigns.privacy)},
-          {"By route", "route", breakdown_rows(u["by_route"], assigns.privacy)},
-          {"By model family", "family", breakdown_rows(u["by_model_family"], assigns.privacy)}
+          {"by_served_model", "By served model", "model",
+           breakdown_rows(u["by_served_model"], assigns.privacy)},
+          {"by_provider", "By provider", "provider",
+           breakdown_rows(u["by_provider"], assigns.privacy)},
+          {"by_route", "By route", "route", breakdown_rows(u["by_route"], assigns.privacy)},
+          {"by_model_family", "By model family", "family",
+           breakdown_rows(u["by_model_family"], assigns.privacy)}
         ],
         stale?: u["detail_level"] not in ["full", nil]
       )
@@ -376,7 +429,11 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
             {code}: {num(n)}
           </span>
         </div>
-        <div :if={@route_health != []} class="mt-3 border-t border-base-300 pt-3 space-y-1">
+        <div
+          :if={@route_health != []}
+          id="usage-route_health"
+          class="mt-3 border-t border-base-300 pt-3 space-y-1"
+        >
           <div :for={r <- @route_health} class="flex items-center gap-2 text-sm">
             <span class={["badge badge-xs", health_badge(r["state"])]}>{r["state"]}</span>
             <span class="font-mono text-xs">{r["route"]}</span>
@@ -384,6 +441,12 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
               → {r["served_model_id"]}
             </span>
           </div>
+          <Pagination.pager
+            id="usage-route_health-page"
+            event="usage_page"
+            sec="route_health"
+            pagination={@pagination["route_health"]}
+          />
         </div>
       </.panel>
 
@@ -406,14 +469,27 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     </div>
 
     <div class="grid lg:grid-cols-2 gap-5">
-      <.breakdown :for={{title, head, rows} <- @breakdowns} title={title} head={head} rows={rows} />
+      <.breakdown
+        :for={{key, title, head, rows} <- @breakdowns}
+        key={key}
+        title={title}
+        head={head}
+        rows={rows}
+        pagination={@pagination[key]}
+      />
     </div>
 
-    <.panel title="Recent requests" body_class="px-4 py-2">
+    <.panel id="usage-recent" title="Recent requests" body_class="px-4 py-2">
       <:meta>
         <span>sanitized — no request/response bodies, no secrets</span>
       </:meta>
       <.recent rows={@recent} privacy={@privacy} />
+      <Pagination.pager
+        id="usage-recent-page"
+        event="usage_page"
+        sec="recent"
+        pagination={@pagination["recent"]}
+      />
     </.panel>
 
     <p class="text-xs opacity-40">
@@ -464,12 +540,14 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
 
   # ── breakdown table (one per dimension) ─────────────────────────────────────
   attr :title, :string, required: true
+  attr :key, :string, required: true
   attr :head, :string, required: true
   attr :rows, :list, required: true
+  attr :pagination, :map, required: true
 
   defp breakdown(assigns) do
     ~H"""
-    <.panel title={@title} body_class="px-4 py-2">
+    <.panel id={"usage-#{@key}"} title={@title} body_class="px-4 py-2">
       <table :if={@rows != []} class="table table-xs">
         <thead>
           <tr>
@@ -495,6 +573,12 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
         </tbody>
       </table>
       <div :if={@rows == []} class="text-sm opacity-50 py-1">No data.</div>
+      <Pagination.pager
+        id={"usage-#{@key}-page"}
+        event="usage_page"
+        sec={@key}
+        pagination={@pagination}
+      />
     </.panel>
     """
   end
@@ -509,13 +593,8 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
     """
   end
 
-  # The router can return hundreds of rows — show the newest 25 and fold the
-  # rest behind a <details>, so the page keeps a bounded height (pure template
-  # split, no assigns).
+  # Only the current cache-projected page reaches the template.
   defp recent(assigns) do
-    {visible, older} = Enum.split(assigns.rows, 25)
-    assigns = assign(assigns, visible: visible, older: older)
-
     ~H"""
     <div class="overflow-x-auto">
       <table class="table table-xs">
@@ -531,19 +610,9 @@ defmodule SubzeroSwarmDashboardWeb.UsageLive do
           </tr>
         </thead>
         <tbody>
-          <.recent_row :for={r <- @visible} r={r} privacy={@privacy} />
+          <.recent_row :for={r <- @rows} r={r} privacy={@privacy} />
         </tbody>
       </table>
-      <details :if={@older != []} class="mt-1">
-        <summary class="cursor-pointer select-none text-xs opacity-60 py-1.5">
-          show {length(@older)} older…
-        </summary>
-        <table class="table table-xs">
-          <tbody>
-            <.recent_row :for={r <- @older} r={r} privacy={@privacy} />
-          </tbody>
-        </table>
-      </details>
     </div>
     """
   end

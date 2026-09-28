@@ -37,7 +37,7 @@ defmodule GoldenContractTest do
     {:ok, agg} = Aggregate.build("fix")
 
     assert Map.keys(agg) |> Enum.sort() ==
-             ~w(dashboard_title data_source edges extensions generated_at nodes sessions status summary swarm uptime_s warnings)a
+             ~w(dashboard_title data_source edges extensions generated_at nodes sessions sessions_available status summary swarm uptime_s warnings)a
 
     assert agg.dashboard_title == "Fixture Console"
 

@@ -114,6 +114,129 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "oldest 4m"
   end
 
+  test "overview and sessions show unavailable evidence instead of healthy zeroes", %{conn: conn} do
+    {:ok, overview, _} = live(conn, "/")
+    {:ok, sessions, _} = live(conn, "/sessions")
+
+    Phoenix.PubSub.broadcast(
+      SubzeroSwarmDashboard.PubSub,
+      "events",
+      {:story,
+       %{
+         feed_status: :ok,
+         feed_age_s: 0,
+         baseline_at: DateTime.utc_now(),
+         in_flight: [],
+         agents: [],
+         kpis: %{},
+         issues: [],
+         story: [%{kind: "reply_suppressed", cid: "suppressed", ts: System.os_time(:second)}]
+       }}
+    )
+
+    snap =
+      put_in(@snap, ["extensions", "inbox_queue"], %{
+        "available" => false,
+        "depth" => nil,
+        "oldest_seconds" => nil
+      })
+
+    push_snap(overview, snap)
+    assert has_element?(overview, "#kpi-panel div[title^='Messages waiting']", "unavailable")
+    assert has_element?(overview, "#kpi-panel div[title^='live conversations']", "unavailable")
+    assert has_element?(sessions, "tr[phx-value-session_id='tg:1:0']", "unavailable")
+    refute has_element?(sessions, "tr .badge-success", "answered")
+
+    suppressed_at = DateTime.utc_now() |> DateTime.add(-300) |> DateTime.to_iso8601()
+
+    for rows <- [
+          [],
+          [%{"session_id" => "suppressed", "last_activity" => suppressed_at}],
+          [%{"session_id" => "idle", "last_activity" => nil}],
+          [
+            %{
+              "session_id" => "pending",
+              "last_activity" => DateTime.to_iso8601(DateTime.utc_now())
+            }
+          ]
+        ],
+        source <- [nil, %{"available" => false, "items" => []}] do
+      partial = snap |> Map.put("sessions", rows) |> put_in(["extensions", "replies"], source)
+      push_snap(overview, partial)
+      assert has_element?(overview, "#kpi-panel div[title^='live conversations']", "unavailable")
+    end
+
+    healthy_empty =
+      snap
+      |> Map.put("sessions", [])
+      |> put_in(["extensions", "replies"], %{"available" => true, "items" => []})
+
+    push_snap(overview, healthy_empty)
+    assert has_element?(overview, "#kpi-panel div[title^='live conversations']", "0")
+
+    untracked =
+      Map.put(healthy_empty, "sessions", [
+        %{
+          "session_id" => "group",
+          "last_activity" => suppressed_at,
+          "reply_tracking_available" => false
+        }
+      ])
+
+    push_snap(overview, untracked)
+    assert has_element?(overview, "#kpi-panel div[title^='live conversations']", "unavailable")
+    push_snap(overview, Map.put(healthy_empty, "sessions_available", false))
+    assert has_element?(overview, "#kpi-panel div[title^='live conversations']", "unavailable")
+  end
+
+  test "incomplete session sources preserve known rows without claiming a total", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/sessions")
+    partial = Map.put(@snap, "sessions_available", false)
+    push_snap(view, partial)
+    assert has_element?(view, "#sessions-total", "unavailable")
+    assert has_element?(view, "tr[phx-value-session_id='tg:1:0']")
+    push_snap(view, Map.put(partial, "sessions", []))
+    assert has_element?(view, "#sessions-total", "unavailable")
+    refute has_element?(view, "section", "No sessions.")
+    push_snap(view, @snap)
+    assert has_element?(view, "#sessions-total", "1 total")
+  end
+
+  test "overview consumers show unavailable for absent or failed sources, and zero for a known empty source",
+       %{conn: conn} do
+    {:ok, view, _} = live(conn, "/")
+
+    for source <- [nil, %{"available" => false, "count" => nil, "items" => []}] do
+      push_snap(view, put_in(@snap, ["extensions", "consumers"], source))
+      assert has_element?(view, "#swarm-panel div[title='Stored consumers']", "unavailable")
+    end
+
+    push_snap(
+      view,
+      put_in(@snap, ["extensions", "consumers"], %{
+        "available" => true,
+        "count" => 0,
+        "items" => []
+      })
+    )
+
+    assert has_element?(view, "#swarm-panel div[title='Stored consumers']", "0")
+  end
+
+  test "overview renders string warnings alongside legacy structured warnings", %{conn: conn} do
+    {:ok, view, _} = live(conn, "/")
+
+    snap =
+      Map.put(@snap, "warnings", [
+        "Stored sessions unavailable",
+        %{"code" => "legacy", "object" => "source", "reason" => "legacy diagnostic"}
+      ])
+
+    push_snap(view, snap)
+    assert has_element?(view, "li", "Stored sessions unavailable")
+    assert has_element?(view, "li", "legacy diagnostic")
+  end
+
   test "layout renders the host-provided dashboard title from the snapshot", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/")
 
@@ -199,7 +322,9 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Alberto C"
   end
 
-  test "sessions show a reply-health badge from the sender's deliveries extension", %{conn: conn} do
+  test "sessions show a reply-health badge from the host's successful replies extension", %{
+    conn: conn
+  } do
     # reply-health classifies against the REAL clock, so the inbound must be
     # recent: fresh enough to be :unanswered (not :stale), old enough to be
     # past the 120s pending grace.
@@ -212,7 +337,8 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
     # answered: a delivery AFTER the last inbound
     answered =
-      put_in(snap, ["extensions", "deliveries"], %{
+      put_in(snap, ["extensions", "replies"], %{
+        "available" => true,
         "items" => [%{"session_id" => "tg:1:0", "at" => in_unix + 10, "status" => "sent"}]
       })
 
@@ -221,7 +347,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
 
     # unanswered: recent inbound, no delivery -> alarm badge with the waiting
     # time + counted in the clickable facet chip
-    unanswered = put_in(snap, ["extensions", "deliveries"], %{"items" => []})
+    unanswered = put_in(snap, ["extensions", "replies"], %{"available" => true, "items" => []})
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, unanswered})
     html = render(view)
     assert html =~ "no reply · 1h"
@@ -232,7 +358,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     {:ok, view, _} = live(conn, "/sessions")
 
     # @snap's last_activity is 2026-06-03 — long past the 48h decay window
-    stale = put_in(@snap, ["extensions", "deliveries"], %{"items" => []})
+    stale = put_in(@snap, ["extensions", "replies"], %{"available" => true, "items" => []})
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, stale})
     html = render(view)
 
@@ -242,7 +368,9 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     refute html =~ "⚠ unanswered"
   end
 
-  test "sessions: facet chips filter the table and the cap hides the long tail", %{conn: conn} do
+  test "sessions: facet chips filter the table and pagination reaches the long tail", %{
+    conn: conn
+  } do
     now = DateTime.utc_now()
 
     mk = fn n, state ->
@@ -261,20 +389,19 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     snap =
       @snap
       |> put_in(["sessions"], sessions)
-      |> put_in(["extensions", "deliveries"], %{"items" => []})
+      |> put_in(["extensions", "replies"], %{"available" => true, "items" => []})
 
     {:ok, view, _} = live(conn, "/sessions")
     Phoenix.PubSub.broadcast(SubzeroSwarmDashboard.PubSub, "feed", {:snapshot, snap})
-    html = render(view)
-
-    # 61 rows > the 50-row cap: the tail hides behind one "show more" row
-    assert html =~ "show 11 more"
-    assert view |> element("tr td button", "show 11 more") |> render_click() =~ "show fewer"
+    render(view)
+    assert has_element?(view, "#sessions-pager", "1–50 of 61")
+    view |> element("#sessions-pager-next") |> render_click()
+    assert has_element?(view, "#sessions-pager", "51–61 of 61")
 
     # the "live" facet narrows to the one active session
     html = view |> element("button[phx-value-f='live']") |> render_click()
     assert html =~ "tg:9000:0"
-    refute html =~ "show 11 more"
+    assert has_element?(view, "#sessions-pager", "1–1 of 1")
     refute html =~ "tg:1:0\n"
   end
 
@@ -489,8 +616,10 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     assert html =~ "Custom report"
     assert html =~ "Ratio"
     assert html =~ "0.125"
-    assert html =~ "item-100"
-    refute html =~ "item-101"
+    assert has_element?(page, "#ext-pager-1", "1–50 of 101")
+    refute has_element?(page, "#ext-table-1 td", "item-101")
+    page |> element("#ext-pager-1-last") |> render_click()
+    assert has_element?(page, "#ext-table-1 td", "item-101")
   end
 
   test "extension tables sort numerically on header click and toggle direction", %{conn: conn} do
@@ -929,7 +1058,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     stub(RouterClientMock, :usage, fn _ -> {:ok, payload} end)
 
     {:ok, view, _} = live(conn, "/usage")
-    html = render(view)
+    html = render_async(view)
 
     assert html =~ "Requests"
     # tokens formatted with thousands separators
@@ -957,6 +1086,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     stub(RouterClientMock, :usage, fn _ -> {:ok, payload} end)
 
     {:ok, view, _} = live(conn, "/usage")
+    render_async(view)
     assert has_element?(view, "#usage-cached-input", "Cached input")
     assert has_element?(view, "#usage-cached-input", "cache telemetry unavailable")
     assert has_element?(view, "#usage-cached-input", "—")
@@ -978,6 +1108,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     view |> element("button[phx-value-window='1h']") |> render_click()
     assert_receive {:usage_opts, %{since: since}}
     assert is_integer(since)
+    render_async(view)
   end
 
   test "logs page mounts", %{conn: conn} do

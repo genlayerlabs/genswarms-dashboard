@@ -55,14 +55,20 @@ defmodule SubzeroSwarmDashboard.Story.KindsParityTest do
       # stalled: an open episode past the threshold; abandoned: far past it
       state =
         State.new(stall_after_ms: 5_000)
-        |> Reducer.apply(%{"kind" => "request_open", "cid" => "tg:1:0", "seq" => 1, "ts" => 100.0})
+        |> Reducer.apply(%{
+          "kind" => "request_open",
+          "cid" => "tg:1:0",
+          "seq" => 1,
+          "ts" => 100.0
+        })
 
       stalled = Reducer.tick(state, 110.0)
       abandoned = Reducer.tick(stalled, 151.0)
       produced = Enum.map(abandoned.story, & &1.kind)
 
       for kind <- Kinds.tick_synthetic() do
-        assert kind in produced, "#{kind}: registered as tick-synthetic but tick never produced it"
+        assert kind in produced,
+               "#{kind}: registered as tick-synthetic but tick never produced it"
       end
     end
   end

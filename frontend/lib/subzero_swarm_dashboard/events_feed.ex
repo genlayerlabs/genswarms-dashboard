@@ -142,6 +142,19 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   # reconcile persisted live state against the current swarm boot. Display-feed
   # seqs survive a host restart, so cursor regression alone cannot prove that an
   # old open episode is dead; generated_at - uptime_s can.
+  def handle_info({:snapshot_ready, _revision}, state) do
+    case SubzeroSwarmDashboard.SwarmFeed.current(fn snap ->
+           {handles(snap), swarm_boot_at(snap)}
+         end) do
+      {users, boot} ->
+        story = state.story |> Reducer.put_users(users) |> Reducer.reconcile_boot(boot)
+        {:noreply, %{state | story: story}}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:snapshot, snap}, state) do
     story =
       state.story
@@ -193,9 +206,7 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
   # ONCE per outage (fails 0 → 1), never per 700ms tick.
   defp degrade(state, reason) do
     if state.fails == 0 do
-      Logger.warning(
-        "events feed degraded: #{inspect(reason, limit: 5, printable_limit: 200)}"
-      )
+      Logger.warning("events feed degraded: #{inspect(reason, limit: 5, printable_limit: 200)}")
     end
 
     %{state | feed_status: :unavailable, fails: state.fails + 1}
@@ -354,7 +365,9 @@ defmodule SubzeroSwarmDashboard.EventsFeed do
 
       %{state | cursor: snap.cursor, story: snap.story, baseline_at: snap.baseline_at}
     else
-      {:error, :enoent} -> state
+      {:error, :enoent} ->
+        state
+
       other ->
         Logger.warning("story snapshot ignored: #{inspect(other, limit: 3)}")
         state

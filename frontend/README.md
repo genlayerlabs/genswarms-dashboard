@@ -173,3 +173,33 @@ compile breaks: Phoenix's `mix phx.gen.cert` needs `public_key/include/OTP-PUB-K
 (install `erlang-dev`), and the framework drops `:ssh` from `extra_applications`
 (install `erlang-ssh` to restore the SSH backend). Stick to the pinned mise toolchain
 and neither bites.
+
+
+## Large rosters and usage tables
+
+The default swarm feed keeps one source aggregate and publishes revision notifications.
+LiveViews request paginated projections from that cache: 50 sessions or extension rows,
+25 usage rows, with complete population/accounting totals computed before slicing.
+Search and filters operate on the full cached roster; Logs and Events have searchable
+selectors. Active and selected conversations remain inspectable beyond page one.
+The desktop shell, table bodies and recent conversation history scroll independently.
+
+Router reads run asynchronously, share a per-range freshness window, and do not retry
+inside a polling attempt. Failed requests remain visible while last-good values can
+seed a subsequent mount. Source timestamps are never advanced just by reading a cache.
+HTTP clients copy decoded JSON strings so retained rows do not pin discarded response
+buffers after pagination or cache refresh.
+
+Run `mix precommit` for regressions and `MIX_ENV=test mix run scripts/snapshot_scale.exs`
+for the synthetic 20,000-contact memory probe. The probe compares one held view plus
+12 queued updates, and never contacts a backend or accesses user data. It reports
+process memory and referenced binary buffers separately, including a comparison
+of projected rows with reference versus copy decoding. These are not pod RSS measurements.
+
+Limits: the upstream aggregate and each router response are still fetched/decoded in
+full once per polling cycle/window. The default feed eliminates viewer/mailbox
+amplification; it does not add database pagination or prove a historical OOM cause.
+Non-default selected swarms and legacy snapshot publishers retain a per-view source.
+Measure pod memory after rollout before declaring an existing memory limit sufficient.
+Transcript requests currently return at most the latest 40 turns; table pagination
+is not historic transcript pagination.

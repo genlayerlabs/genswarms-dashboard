@@ -4,9 +4,8 @@ defmodule SubzeroSwarmDashboardWeb.LogsSessionChurnTest do
   # polls), the rebuilt option list silently lost it — the select visually
   # reset while @selected still pointed at the vanished sid. The selected
   # session must stay listed (marked as absent) so the operator's choice
-  # survives snapshot churn. Privacy mode deliberately keeps upstream
-  # behavior: masked options are index-keyed, so a not-in-snapshot row
-  # cannot be added without leaking the sid.
+  # survives snapshot churn. Privacy mode uses stable opaque targets, so the
+  # same selected-row fallback works without exposing the identity.
   use SubzeroSwarmDashboardWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mox

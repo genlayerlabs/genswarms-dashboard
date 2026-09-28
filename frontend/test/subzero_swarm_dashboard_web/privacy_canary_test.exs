@@ -503,7 +503,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
       expected_seed = :crypto.hash(:sha256, @handle) |> Base.encode16(case: :lower)
 
       assert payload.handles["wingston_agent_0"] == expected_seed
-      assert payload.sessions["wingston_agent_0"] == "inspect:0"
+      assert String.starts_with?(payload.sessions["wingston_agent_0"], "inspect:")
       assert payload.session_labels["wingston_agent_0"] == "tg:•••"
       refute_canary(payload, "topology agents payload")
     else
@@ -542,10 +542,10 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
 
     selector =
       if privacy?,
-        do: ~s(tr[phx-value-session_id="inspect:0"]),
+        do: ~s(tr[phx-value-session_id^="inspect:"]),
         else: ~s(tr[phx-value-session_id="#{@cid}"])
 
-    view |> element(selector) |> render_click()
+    view |> element(selector, "wingston_agent_0") |> render_click()
     render_click(view, "transcripts_reveal", %{})
     assert_receive {:history_loaded, @cid}, 500
 
@@ -580,7 +580,18 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyCanaryTest do
 
     push_snapshot(view)
 
-    selected = if privacy?, do: "session:0", else: @cid
+    [selected] =
+      view
+      |> element("#logs-session-select option:nth-child(2)")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.filter("option")
+      |> LazyHTML.attribute("value")
+
+    if privacy?,
+      do: assert(String.starts_with?(selected, "inspect:")),
+      else: assert(selected == @cid)
+
     view |> element("form[phx-change='select']") |> render_change(%{"session_id" => selected})
     assert_receive {:logs_loaded, @cid}, 500
 

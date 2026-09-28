@@ -13,7 +13,10 @@ defmodule SubzeroSwarmDashboardWeb.TranscriptGateTest do
 
   setup do
     Application.put_env(:subzero_swarm_dashboard, :reveal_transcripts_default, false)
-    on_exit(fn -> Application.put_env(:subzero_swarm_dashboard, :reveal_transcripts_default, true) end)
+
+    on_exit(fn ->
+      Application.put_env(:subzero_swarm_dashboard, :reveal_transcripts_default, true)
+    end)
 
     stub(SubzeroSwarmDashboard.SwarmClientMock, :dashboard, fn _swarm ->
       {:ok,

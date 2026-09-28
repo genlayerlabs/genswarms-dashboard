@@ -430,7 +430,11 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     test "push_failed is a failure issue naming the campaign; campaignless still folds" do
       state =
         fold([
-          ev("push_failed", 1, 100.0, %{"cid" => @cid, "campaign" => "reach:abc123", "error" => "429"}),
+          ev("push_failed", 1, 100.0, %{
+            "cid" => @cid,
+            "campaign" => "reach:abc123",
+            "error" => "429"
+          }),
           ev("push_failed", 2, 101.0, %{"cid" => @cid})
         ])
 
@@ -800,7 +804,9 @@ defmodule SubzeroSwarmDashboard.Story.ReducerTest do
     end
 
     test "llm_proxy_degraded renders an issue row naming the path" do
-      state = fold([ev("llm_proxy_degraded", 1, 100.0, %{"cid" => @cid, "path" => "usage_store"})])
+      state =
+        fold([ev("llm_proxy_degraded", 1, 100.0, %{"cid" => @cid, "path" => "usage_store"})])
+
       assert [row] = state.story
       assert row.issue
       assert row.text =~ "budget store degraded (usage_store)"

@@ -31,7 +31,9 @@ defmodule SubzeroSwarmDashboardWeb.ConnCase do
     end
   end
 
-  setup _tags do
+  setup tags do
+    # Shared request freshness must not carry another test's mocked response.
+    unless tags[:async], do: Agent.update(SubzeroSwarmDashboard.RouterUsageCache, fn _ -> %{} end)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 end

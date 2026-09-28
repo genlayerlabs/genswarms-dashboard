@@ -4,6 +4,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
   alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboardWeb.DashHooks
   alias SubzeroSwarmDashboardWeb.ExtensionPages
+  alias SubzeroSwarmDashboardWeb.Pagination
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -13,8 +14,14 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
        page_title: "Extension",
        ext_sort: %{},
        ext_tab: %{},
+       ext_page: %{},
        ext_detail: MapSet.new()
      )}
+  end
+
+  @impl true
+  def handle_params(%{"id" => id}, _uri, socket) do
+    {:noreply, socket |> assign(page_id: id) |> DashHooks.refresh_snapshot()}
   end
 
   @impl true
@@ -32,12 +39,8 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
     {:noreply, assign(socket, ext_detail: open)}
   end
 
-  def handle_event("ext_detail", _params, socket), do: {:noreply, socket}
-
-  # Client-typed payload: bound both values before they become map keys, the
-  # same way "ext_tab" does. A malformed section or key is a no-op, not a crash.
   def handle_event("ext_sort", %{"sec" => sec, "key" => key}, socket)
-      when is_binary(sec) and byte_size(sec) <= 64 and is_binary(key) and byte_size(key) <= 128 do
+      when is_binary(sec) and byte_size(sec) <= 64 and is_binary(key) and byte_size(key) <= 64 do
     if Regex.match?(~r/\A[0-9]+(?:\/[0-9]+)*\z/, sec) do
       # Top-level sections key by integer position; tab-nested sections use the
       # composite "<idx>/<tab>" string. Both are opaque map keys past this point.
@@ -55,27 +58,42 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
           do: Map.put(socket.assigns.ext_sort, idx, next),
           else: Map.delete(socket.assigns.ext_sort, idx)
 
-      {:noreply, assign(socket, ext_sort: sort)}
+      {:noreply,
+       socket
+       |> assign(ext_sort: sort, ext_page: Map.put(socket.assigns.ext_page, idx, 1))
+       |> DashHooks.refresh_snapshot()}
     else
       {:noreply, socket}
     end
   end
 
-  def handle_event("ext_sort", _params, socket), do: {:noreply, socket}
+  def handle_event("ext_page", %{"sec" => sec, "page" => page}, socket)
+      when is_binary(sec) and byte_size(sec) <= 64 do
+    if Regex.match?(~r/\A[0-9]+(?:\/[0-9]+)*\z/, sec) do
+      {:noreply,
+       socket
+       |> assign(
+         ext_page: Map.put(socket.assigns.ext_page, section_key(sec), Pagination.page(page))
+       )
+       |> DashHooks.refresh_snapshot()}
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_event("ext_tab", %{"sec" => sec, "tab" => tab}, socket)
       when is_binary(sec) and byte_size(sec) <= 64 do
     if Regex.match?(~r/\A[0-9]+(?:\/[0-9]+)*\z/, sec) do
       {:noreply,
-       assign(socket,
-         ext_tab: Map.put(socket.assigns.ext_tab, section_key(sec), tab_index(tab))
-       )}
+       socket
+       |> assign(ext_tab: Map.put(socket.assigns.ext_tab, section_key(sec), tab_index(tab)))
+       |> DashHooks.refresh_snapshot()}
     else
       {:noreply, socket}
     end
   end
 
-  def handle_event("ext_tab", _params, socket), do: {:noreply, socket}
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # Bound client input before conversion; malformed values select the first tab.
   defp tab_index(tab) when is_binary(tab) and byte_size(tab) <= 10 do
@@ -98,7 +116,9 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
     # raw cid ever reaches the rendered page in either mode.
     {page, row_targets} =
       ExtensionPages.extract_row_targets(
-        ExtensionPages.find(assigns.snapshot, assigns.page_id),
+        assigns.snapshot
+        |> ExtensionPages.find(assigns.page_id)
+        |> ExtensionPages.project_page(assigns),
         privacy?,
         inspect_lookup
       )
@@ -127,6 +147,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
           page={@page}
           sort={@ext_sort}
           tab={@ext_tab}
+          pages={@ext_page}
           row_targets={@row_targets}
           detail_open={@ext_detail}
         />

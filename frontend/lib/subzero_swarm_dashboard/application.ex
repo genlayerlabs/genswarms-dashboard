@@ -13,6 +13,7 @@ defmodule SubzeroSwarmDashboard.Application do
         {DNSCluster,
          query: Application.get_env(:subzero_swarm_dashboard, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: SubzeroSwarmDashboard.PubSub},
+        {Task.Supervisor, name: SubzeroSwarmDashboard.PollTasks},
         SubzeroSwarmDashboard.RouterUsageCache
       ] ++
         feed_children() ++

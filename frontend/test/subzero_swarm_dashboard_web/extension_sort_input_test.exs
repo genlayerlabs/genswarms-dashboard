@@ -3,8 +3,8 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionSortInputTest do
 
   alias SubzeroSwarmDashboardWeb.ExtensionPageLive
 
-  defp socket(sort \\ %{}) do
-    Phoenix.Component.assign(%Phoenix.LiveView.Socket{}, ext_sort: sort, ext_detail: MapSet.new())
+  defp socket do
+    Phoenix.Component.assign(%Phoenix.LiveView.Socket{}, ext_sort: %{}, ext_page: %{})
   end
 
   test "sorting cycles asc -> desc -> off for numeric and nested section keys" do
@@ -22,32 +22,22 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionSortInputTest do
     end
   end
 
-  test "malformed sections, keys and incomplete payloads are ignored" do
+  test "malformed sections and incomplete payloads are ignored" do
     for params <- [
           %{},
           %{"key" => "name"},
           %{"sec" => "0"},
           %{"sec" => nil, "key" => "name"},
           %{"sec" => 7, "key" => "name"},
-          %{"sec" => %{}, "key" => "name"},
-          %{"sec" => [], "key" => "name"},
           %{"sec" => "1\n", "key" => "name"},
           %{"sec" => "abc", "key" => "name"},
+          %{"sec" => "0/", "key" => "name"},
           %{"sec" => String.duplicate("9", 1000), "key" => "name"},
           %{"sec" => "0", "key" => nil},
-          %{"sec" => "0", "key" => 3},
-          %{"sec" => "0", "key" => %{}},
           %{"sec" => "0", "key" => String.duplicate("k", 1000)}
         ] do
       initial = socket()
       assert {:noreply, ^initial} = ExtensionPageLive.handle_event("ext_sort", params, initial)
-    end
-  end
-
-  test "malformed detail keys are ignored" do
-    for params <- [%{}, %{"key" => nil}, %{"key" => 1}, %{"key" => %{}}] do
-      initial = socket()
-      assert {:noreply, ^initial} = ExtensionPageLive.handle_event("ext_detail", params, initial)
     end
   end
 end

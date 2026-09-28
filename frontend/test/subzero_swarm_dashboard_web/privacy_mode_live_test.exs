@@ -345,7 +345,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
 
     expected_seed = :crypto.hash(:sha256, @canary_handle) |> Base.encode16(case: :lower)
     assert payload.handles["wingston_agent_0"] == expected_seed
-    assert payload.sessions["wingston_agent_0"] == "inspect:0"
+    assert String.starts_with?(payload.sessions["wingston_agent_0"], "inspect:")
     assert payload.session_labels["wingston_agent_0"] == "tg:•••"
     refute inspect(payload) =~ @canary_handle
     refute inspect(payload) =~ @canary_cid
@@ -395,7 +395,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     assert html =~ "wingston_agent_0"
     assert html =~ "scout"
 
-    view |> element(~s(tr[phx-value-session_id="inspect:0"])) |> render_click()
+    view |> element(~s(tr[phx-value-session_id^="inspect:"])) |> render_click()
     render_click(view, "transcripts_reveal", %{})
     assert_receive {:history_loaded, @canary_cid}, 500
     html = render(view)
@@ -499,7 +499,16 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     refute_canary(html)
     assert html =~ "session 1"
 
-    view |> element("form[phx-change='select']") |> render_change(%{"session_id" => "session:0"})
+    [token] =
+      view
+      |> element("#logs-session-select option:nth-child(2)")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.filter("option")
+      |> LazyHTML.attribute("value")
+
+    assert String.starts_with?(token, "inspect:")
+    view |> element("form[phx-change='select']") |> render_change(%{"session_id" => token})
     assert_receive {:logs_loaded, @canary_cid}, 500
     html = render(view)
 

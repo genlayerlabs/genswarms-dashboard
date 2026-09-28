@@ -54,8 +54,15 @@ defmodule SubzeroSwarmDashboard.SwarmClient.Http do
     token = Application.get_env(:subzero_swarm_dashboard, :swarm_api_token)
     headers = if token, do: [{"authorization", "Bearer #{token}"}], else: []
 
+    # Projected rows must not retain the entire JSON response through string references.
     opts =
-      [params: params, headers: headers, receive_timeout: 8_000]
+      [
+        params: params,
+        headers: headers,
+        receive_timeout: 8_000,
+        retry: false,
+        decode_json: [strings: :copy]
+      ]
       |> Keyword.merge(extra_opts)
       |> Kernel.++(Application.get_env(:subzero_swarm_dashboard, :req_options, []))
 

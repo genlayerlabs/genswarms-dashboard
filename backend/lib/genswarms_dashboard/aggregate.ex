@@ -24,7 +24,9 @@ defmodule GenswarmsDashboard.Aggregate do
 
         data = %{
           sessions: snap.sessions,
+          sessions_available: Map.get(snap, :sessions_available, true),
           extensions: snap.extensions,
+          warnings: Map.get(snap, :warnings, []),
           pool: ds.pool_snapshot(swarm_name),
           fabricate: fabricator(ds),
           dashboard_title:
@@ -78,7 +80,21 @@ defmodule GenswarmsDashboard.Aggregate do
   def assemble(status, topology, data, now) do
     %{sessions: rows, extensions: extensions, pool: pool} = data
     fabricate = Map.get(data, :fabricate) || (&default_session/1)
-    sessions = build_sessions(rows, pool, fabricate)
+    agent_names = MapSet.new(status.agents, &to_string(&1.name))
+    sessions = build_sessions(rows, pool, fabricate, agent_names)
+    sessions_available = Map.get(data, :sessions_available, true) != false
+
+    host_warnings =
+      case Map.get(data, :warnings) do
+        warnings when is_list(warnings) -> Enum.filter(warnings, &is_binary/1)
+        _ -> []
+      end
+
+    warnings =
+      sessions
+      |> Enum.filter(&(&1.agent && not MapSet.member?(agent_names, &1.agent)))
+      |> Enum.map(&"Stale lease: assigned agent #{&1.agent} is absent from the engine")
+      |> Enum.uniq()
 
     %{
       swarm: status.name,
@@ -91,14 +107,15 @@ defmodule GenswarmsDashboard.Aggregate do
       summary: %{
         agents: length(status.agents),
         objects: length(status.objects),
-        sessions: length(sessions),
+        sessions: if(sessions_available, do: length(sessions)),
         pool: %{leased: Map.get(pool, :leased, 0), size: Map.get(pool, :size, 0)}
       },
       nodes: classify_nodes(status),
       edges: normalize_edges(topology),
       sessions: sessions,
+      sessions_available: sessions_available,
       extensions: extensions,
-      warnings: []
+      warnings: host_warnings ++ warnings
     }
   end
 
@@ -120,7 +137,7 @@ defmodule GenswarmsDashboard.Aggregate do
   # Row order is preserved as the wire `sessions` array order (adapter-controlled);
   # fabricated pool-only rows are appended. Duplicate session_ids are dropped
   # (first row wins) — the legacy map-keyed aggregate guaranteed uniqueness for free.
-  defp build_sessions(rows, pool, fabricate) do
+  defp build_sessions(rows, pool, fabricate, agent_names) do
     rows = Enum.uniq_by(rows, & &1.session_id)
     assigned = Map.get(pool, :assigned, %{})
     pool_seen = Map.get(pool, :last_seen, %{})
@@ -136,7 +153,8 @@ defmodule GenswarmsDashboard.Aggregate do
 
       Map.merge(row, %{
         agent: slot && to_string(slot),
-        state: if(slot, do: "active", else: "idle"),
+        state:
+          if(slot && MapSet.member?(agent_names, to_string(slot)), do: "active", else: "idle"),
         last_activity: Map.get(pool_seen, cid) || row.last_activity
       })
     end)
@@ -279,7 +297,8 @@ defmodule GenswarmsDashboard.Aggregate do
   # sees a bare "agent stopped" and has to reach for kubectl. buffer_tail still
   # passes through unsafe_public_string? like every other string value.
   defp safe_metadata_key?(key),
-    do: key in ~w(action agent from kind reason source slot state status to type exit_status buffer_tail)
+    do:
+      key in ~w(action agent from kind reason source slot state status to type exit_status buffer_tail)
 
   defp safe_public_value(value) when is_atom(value) and value not in [nil, true, false],
     do: to_string(value)

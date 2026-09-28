@@ -2,26 +2,36 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.SwarmClient
+  alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboardWeb.DashHooks
 
   @impl true
   def mount(_params, _session, socket),
-    do: {:ok, assign(socket, page_title: "Logs", selected: nil, logs: nil)}
+    do: {:ok, assign(socket, page_title: "Logs", selected: nil, logs: nil, session_query: "")}
 
   @impl true
   def handle_event("select", %{"session_id" => ""}, socket),
-    do: {:noreply, assign(socket, selected: nil, logs: nil)}
+    do: {:noreply, socket |> assign(selected: nil, logs: nil) |> DashHooks.refresh_snapshot()}
 
   def handle_event("select", %{"session_id" => submitted}, socket) do
     case resolve_session_id(socket, submitted) do
       nil ->
-        {:noreply, assign(socket, selected: nil, logs: nil)}
+        {:noreply, socket}
 
       sid ->
         send(self(), {:load_logs, sid})
-        {:noreply, assign(socket, selected: sid, logs: :loading)}
+
+        {:noreply,
+         socket |> assign(selected: sid, logs: :loading) |> DashHooks.refresh_snapshot()}
     end
   end
+
+  def handle_event("session_search", %{"q" => q}, socket) when is_binary(q),
+    do:
+      {:noreply,
+       socket |> assign(session_query: String.slice(q, 0, 256)) |> DashHooks.refresh_snapshot()}
+
+  def handle_event("session_search", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_info({:load_logs, sid}, socket),
@@ -36,7 +46,9 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
     assigns =
       assign(assigns,
         layout_snapshot: DashHooks.layout_snapshot(assigns[:snapshot], privacy?),
-        session_options: session_options(assigns[:snapshot], assigns[:selected], privacy?)
+        session_options: session_options(assigns[:snapshot], assigns[:selected], privacy?),
+        session_search: get_in(assigns[:snapshot] || %{}, ["_session_search"]),
+        search_form: to_form(%{"q" => if(privacy?, do: "", else: assigns.session_query)})
       )
 
     ~H"""
@@ -60,8 +72,31 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
         </h1>
 
         <div class="flex flex-wrap gap-2 items-center rounded-box border border-base-300 bg-base-200/60 px-3 py-2.5 text-sm">
-          <form phx-change="select">
-            <select name="session_id" class="select select-bordered select-sm font-mono">
+          <.form for={@search_form} id="session-search-form" phx-change="session_search">
+            <.input
+              field={@search_form[:q]}
+              type="search"
+              label="Find session"
+              placeholder="ID, name or handle"
+              phx-debounce="300"
+            />
+          </.form>
+          <span :if={@session_search} id="session-search-status" class="text-xs opacity-60">
+            <%= if (@snapshot || %{})["sessions_available"] == false do %>
+              Session source unavailable · {num(@session_search.total)} known matches ({num(
+                @session_search.loaded
+              )} loaded, up to {@session_search.limit}); total unknown
+            <% else %>
+              {num(@session_search.loaded)} loaded of {num(@session_search.total)} matches · up to {@session_search.limit}; selection kept
+            <% end %>
+          </span>
+          <form id="logs-session-form" phx-change="select">
+            <select
+              id="logs-session-select"
+              name="session_id"
+              aria-label="Session"
+              class="select select-bordered select-sm font-mono"
+            >
               <option value="">select a session…</option>
               <option
                 :for={opt <- @session_options}
@@ -153,39 +188,37 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
   defp sessions(nil), do: []
   defp sessions(snap), do: snap["sessions"] || []
 
-  defp session_options(snapshot, selected, false) do
+  defp selection_rows(snapshot, selected) do
     rows = sessions(snapshot)
 
     # The SELECTED session must survive snapshot churn: a slot recycled
     # between polls drops out of the next snapshot, and rebuilding the option
-    # list without it silently reset the operator's choice. Privacy mode
-    # (clause below) deliberately keeps upstream behavior — masked options
-    # are index-keyed, so a not-in-snapshot row cannot be added without
-    # leaking the sid.
-    rows =
-      if is_binary(selected) and selected != "" and
-           not Enum.any?(rows, &(&1["session_id"] == selected)) do
-        rows ++ [%{"session_id" => selected, "agent" => "not in latest snapshot"}]
-      else
-        rows
-      end
-
-    for s <- rows do
-      sid = s["session_id"]
-      %{value: sid, label: "#{sid} (#{s["agent"]})", selected: selected == sid}
+    # list without it silently reset the operator's choice. Opaque stable
+    # tokens let the same fallback work in privacy mode.
+    if is_binary(selected) and selected != "" and
+         not Enum.any?(rows, &(&1["session_id"] == selected)) do
+      rows ++ [%{"session_id" => selected, "agent" => "not in latest snapshot"}]
+    else
+      rows
     end
   end
 
-  defp session_options(snapshot, selected, true) do
-    snapshot
-    |> sessions()
+  defp session_options(snapshot, selected, privacy?) do
+    rows = selection_rows(snapshot, selected)
+    lookup = DashHooks.inspect_lookup(%{"sessions" => rows})
+
+    rows
     |> Enum.with_index()
     |> Enum.map(fn {s, i} ->
       sid = s["session_id"]
 
       %{
-        value: "session:#{i}",
-        label: "session #{i + 1} (#{s["agent"]})",
+        value: DashHooks.inspect_value(lookup, privacy?, sid),
+        label:
+          if(privacy?,
+            do: "session #{i + 1} (#{PrivacyRedactor.mask_cid(s["agent"])})",
+            else: "#{sid} (#{s["agent"]})"
+          ),
         selected: selected == sid
       }
     end)
@@ -193,16 +226,14 @@ defmodule SubzeroSwarmDashboardWeb.LogsLive do
 
   defp resolve_session_id(_socket, ""), do: nil
 
-  defp resolve_session_id(socket, "session:" <> index) do
-    with {i, ""} <- Integer.parse(index),
-         %{"session_id" => sid} <- Enum.at(sessions(socket.assigns[:snapshot]), i) do
-      sid
-    else
-      _ -> nil
-    end
-  end
+  defp resolve_session_id(socket, submitted) do
+    lookup =
+      DashHooks.inspect_lookup(%{
+        "sessions" => selection_rows(socket.assigns[:snapshot], socket.assigns.selected)
+      })
 
-  defp resolve_session_id(_socket, sid), do: sid
+    DashHooks.resolve_inspect_value(lookup, submitted)
+  end
 
   defp line_count_label(1), do: "1 line"
   defp line_count_label(n), do: "#{n} lines"

@@ -2,7 +2,6 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   use SubzeroSwarmDashboardWeb, :live_view
 
   alias SubzeroSwarmDashboard.PrivacyRedactor
-  alias SubzeroSwarmDashboard.RouterClient
   alias SubzeroSwarmDashboard.RouterUsageCache
   alias SubzeroSwarmDashboardWeb.DashHooks
   alias SubzeroSwarmDashboardWeb.ReplyHealth
@@ -16,18 +15,29 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     if connected?(socket), do: send(self(), :load_usage)
 
     # stale-while-revalidate off the same cache the Usage page fills
-    {:ok, assign(socket, usage: RouterUsageCache.get("all") || :loading, page_title: "Overview")}
+    {:ok,
+     assign(socket,
+       usage: RouterUsageCache.get("all", :totals) || :loading,
+       page_title: "Overview"
+     )}
   end
 
   @impl true
   def handle_info(:load_usage, socket) do
-    result = RouterClient.usage()
-    RouterUsageCache.put("all", result)
+    {:noreply,
+     start_async(socket, :router_usage, fn -> RouterUsageCache.fetch("all", %{}, :totals) end)}
+  end
+
+  def handle_info(_msg, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_async(:router_usage, {:ok, result}, socket) do
     Process.send_after(self(), :load_usage, @usage_refresh_ms)
     {:noreply, assign(socket, usage: result)}
   end
 
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  def handle_async(:router_usage, {:exit, _reason}, socket),
+    do: handle_async(:router_usage, {:ok, {:unavailable, :fetch_failed}}, socket)
 
   @impl true
   def render(assigns) do
@@ -114,7 +124,7 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
             <.metric label="data source" value={@snapshot["data_source"]} />
             <.metric label="agents" value={get_in(@snapshot, ["summary", "agents"])} />
             <.metric label="objects" value={get_in(@snapshot, ["summary", "objects"])} />
-            <.metric label="consumers" value={consumers_count(@snapshot)} />
+            <.metric label="consumers" title="Stored consumers" value={consumers_count(@snapshot)} />
           </div>
         </.panel>
 
@@ -134,8 +144,8 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
         >
           <ul class="text-sm space-y-1">
             <li :for={w <- @warnings} class="font-mono">
-              <span class="badge badge-warning badge-sm">{w["code"]}</span>
-              {w["object"]} — {w["reason"]}
+              <span :if={w["code"]} class="badge badge-warning badge-sm">{w["code"]}</span>
+              <span :if={w["object"]}>{w["object"]} — </span>{w["reason"]}
             </li>
           </ul>
         </.panel>
@@ -273,7 +283,11 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   defp serving_chip(assigns) do
     assigns =
-      assign(assigns, :inspect_target, inspect_value(assigns.inspect_lookup, true, assigns.row.cid))
+      assign(
+        assigns,
+        :inspect_target,
+        inspect_value(assigns.inspect_lookup, true, assigns.row.cid)
+      )
 
     ~H"""
     <%= if @privacy do %>
@@ -406,6 +420,11 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
     assigns =
       assigns
       |> assign(:k, assigns.story[:kpis] || %{})
+      |> assign(
+        :reply_health_available?,
+        ReplyHealth.available?(assigns.snapshot) and
+          (assigns.snapshot || %{})["sessions_available"] != false
+      )
       |> assign(:today, metrics_today(assigns.snapshot))
       |> assign(:inbox_queue, get_in(assigns.snapshot || %{}, ["extensions", "inbox_queue"]))
       |> assign(
@@ -427,8 +446,15 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
         <.link navigate={~p"/sessions"} class="contents">
           <.metric
             label="unanswered"
-            value={@attention.unanswered}
-            tone={alarm_tone(@attention.unanswered, "warn")}
+            value={
+              if @reply_health_available? and @attention.unavailable == 0,
+                do: @attention.unanswered,
+                else: "unavailable"
+            }
+            tone={
+              if @reply_health_available? and @attention.unavailable == 0,
+                do: alarm_tone(@attention.unanswered, "warn")
+            }
             title="live conversations whose last user message got NO reply — a stall, not policy. Click for the attention-sorted list."
           />
         </.link>
@@ -477,9 +503,9 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
         <.metric
           :if={@inbox_queue}
           label="queue"
-          value={@inbox_queue["depth"]}
-          sub={queue_sub(@inbox_queue)}
-          tone={alarm_tone(@inbox_queue["depth"], "warn")}
+          value={if queue_available?(@inbox_queue), do: @inbox_queue["depth"], else: "unavailable"}
+          sub={if queue_available?(@inbox_queue), do: queue_sub(@inbox_queue)}
+          tone={if queue_available?(@inbox_queue), do: alarm_tone(@inbox_queue["depth"], "warn")}
           title="Messages waiting for a free agent slot — queued, never dropped; drained oldest-first every 20s."
         />
         <.metric
@@ -510,6 +536,8 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
 
   # "2 blocked · 1 failed" under the browser rate — blocked (policy) and broken
   # (render) are different problems with different owners; nil hides the line.
+  defp queue_available?(queue), do: queue["available"] != false and is_number(queue["depth"])
+
   defp queue_sub(%{"oldest_seconds" => seconds}) when is_number(seconds),
     do: "oldest #{div(trunc(seconds), 60)}m"
 
@@ -752,14 +780,26 @@ defmodule SubzeroSwarmDashboardWeb.OverviewLive do
   end
 
   # ── helpers ──────────────────────────────────────────────────────────────────
-  defp consumers_count(snap), do: get_in(snap, ["extensions", "consumers", "count"]) || 0
+  defp consumers_count(snap) do
+    case get_in(snap, ["extensions", "consumers"]) do
+      %{"available" => false} -> "unavailable"
+      %{"count" => count} when is_number(count) -> count
+      _ -> "unavailable"
+    end
+  end
 
   defp warnings(nil, _privacy?), do: []
-  defp warnings(snap, false), do: snap["warnings"] || []
+
+  defp warnings(snap, false) do
+    Enum.map(snap["warnings"] || [], fn
+      text when is_binary(text) -> %{"reason" => text}
+      warning -> warning
+    end)
+  end
 
   defp warnings(snap, true) do
     snap
-    |> Map.get("warnings", [])
+    |> warnings(false)
     |> PrivacyRedactor.mask_identity()
     |> Enum.map(fn
       %{} = w ->

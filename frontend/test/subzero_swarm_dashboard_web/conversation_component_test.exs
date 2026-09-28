@@ -36,7 +36,11 @@ defmodule SubzeroSwarmDashboardWeb.ConversationComponentTest do
   test "notes render centered, not as bubbles; no user/assistant labels anywhere" do
     html =
       render_conv([
-        %{"role" => "assistant", "content" => "📇 (sent the user a rich card: X)", "kind" => "note"}
+        %{
+          "role" => "assistant",
+          "content" => "📇 (sent the user a rich card: X)",
+          "kind" => "note"
+        }
       ])
 
     assert html =~ "msg-note"

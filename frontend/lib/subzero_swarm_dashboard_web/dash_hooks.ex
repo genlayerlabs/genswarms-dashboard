@@ -17,6 +17,7 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   alias SubzeroSwarmDashboard.PrivacyRedactor
   alias SubzeroSwarmDashboard.SwarmFeed
   alias SubzeroSwarmDashboard.SwarmClient
+  alias SubzeroSwarmDashboardWeb.SnapshotView
 
   @privacy_session_key :privacy
   @selected_poll_ms 3_000
@@ -44,15 +45,18 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
     # renders the full menu + page immediately — without this, every view opened
     # with nil assigns and flashed the empty state ("Extension unavailable",
     # incomplete menu) for up to one poll interval (3s).
-    cached_snapshot = if default?, do: SwarmFeed.current(), else: nil
+    cached_story = if default?, do: EventsFeed.current_story(), else: nil
+    cached = if default?, do: SwarmFeed.view(%{dashboard_view: socket.view, story: cached_story})
+    {status, revision, cached_snapshot} = cached || {:connecting, 0, nil}
     cached_inspect_lookup = inspect_lookup(cached_snapshot)
     dashboard_title = dashboard_title(cached_snapshot, swarm)
-    cached_story = if default?, do: EventsFeed.current_story(), else: nil
 
     socket =
       socket
       |> assign_new(:snapshot, fn -> cached_snapshot end)
-      |> assign_new(:conn_status, fn -> if(cached_snapshot, do: :connected, else: :connecting) end)
+      |> assign_new(:conn_status, fn -> status end)
+      |> assign_new(:snapshot_revision, fn -> revision end)
+      |> assign_new(:snapshot_notified_revision, fn -> revision end)
       |> assign_new(:feed_warning, fn -> nil end)
       |> assign_new(:dashboard_title, fn -> dashboard_title end)
       |> assign_new(:story, fn -> cached_story end)
@@ -152,54 +156,114 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   # Not an inspector event — let the page's own handle_event run.
   defp handle_inspect_event(_event, _params, socket), do: {:cont, socket}
 
-  @doc """
-  Builds the per-render inspect token map used by privacy-mode views.
+  @doc "Bidirectional, stable opaque targets; reordering a page cannot inspect the wrong user."
+  def inspect_lookup(snapshot) do
+    key = SubzeroSwarmDashboardWeb.Endpoint.config(:secret_key_base)
 
-  The map is intentionally one-way for rendering: DOM/canvas payloads can carry
-  `inspect:N` tokens while the server keeps the raw session id in assigns.
-  """
-  def inspect_lookup(%{"sessions" => sessions}) when is_list(sessions) do
-    sessions
-    |> Enum.with_index()
-    |> Enum.reduce(%{}, fn
-      {%{"session_id" => sid}, i}, acc when is_binary(sid) and sid != "" ->
-        Map.put(acc, "inspect:#{i}", sid)
+    by_sid =
+      Map.new(session_rows(snapshot), fn row ->
+        sid = row["session_id"]
 
-      _, acc ->
-        acc
-    end)
+        token =
+          "inspect:" <> Base.url_encode64(:crypto.mac(:hmac, :sha256, key, sid), padding: false)
+
+        {sid, token}
+      end)
+
+    %{by_sid: by_sid, by_token: Map.new(by_sid, fn {sid, token} -> {token, sid} end)}
   end
-
-  def inspect_lookup(_snapshot), do: %{}
 
   def inspect_value(_lookup, false, sid), do: sid
-
-  def inspect_value(lookup, true, sid) when is_map(lookup) and is_binary(sid) do
-    Enum.find_value(lookup, fn
-      {token, ^sid} -> token
-      _ -> nil
-    end)
-  end
+  def inspect_value(%{by_sid: by_sid}, true, sid), do: Map.get(by_sid, sid)
+  # Compatibility for extension hosts/tests passing the old opaque lookup.
+  def inspect_value(lookup, true, sid) when is_map(lookup) and is_binary(sid),
+    do: Enum.find_value(lookup, fn {token, value} -> if value == sid, do: token end)
 
   def inspect_value(_lookup, _privacy?, _sid), do: nil
 
-  @doc """
-  Masks the shared layout snapshot for privacy mode.
-
-  Extension page labels are operator chrome for the sidebar, so they are restored
-  from the original snapshot after the normal deep identity mask. Page sections
-  and every other extension payload field remain masked.
-  """
+  @doc "Project to sidebar chrome before privacy masking; unused tables never enter this walk."
   def layout_snapshot(snapshot, true) do
     snapshot
+    |> SnapshotView.layout()
     |> PrivacyRedactor.mask_identity()
     |> restore_dashboard_page_labels(snapshot)
   end
 
-  def layout_snapshot(snapshot, _privacy?), do: snapshot
+  def layout_snapshot(snapshot, _privacy?), do: SnapshotView.layout(snapshot)
 
-  defp resolve_inspect_sid(socket, submitted) do
-    Map.get(socket.assigns[:inspect_lookup] || %{}, submitted, submitted)
+  def resolve_inspect_value(lookup, "inspect:" <> _ = submitted),
+    do: Map.get(lookup[:by_token] || lookup, submitted)
+
+  def resolve_inspect_value(_lookup, submitted), do: submitted
+
+  defp resolve_inspect_sid(socket, submitted),
+    do: resolve_inspect_value(socket.assigns[:inspect_lookup] || %{}, submitted)
+
+  @doc "Re-query the shared source after a page, filter, tab or selection changes."
+  def refresh_snapshot(socket) do
+    opts = projection_opts(socket)
+    default = Application.get_env(:subzero_swarm_dashboard, :swarm_name, "wingston")
+    cached = if socket.assigns[:swarm] == default, do: SwarmFeed.view(opts)
+
+    case cached do
+      {status, revision, snapshot} when is_map(snapshot) ->
+        socket
+        |> assign(snapshot_revision: revision, conn_status: status)
+        |> put_snapshot(snapshot)
+
+      {status, revision, nil} ->
+        status =
+          if socket.assigns[:snapshot] && status == :connecting, do: :disconnected, else: status
+
+        assign(socket,
+          conn_status: status,
+          snapshot_revision: max(revision, socket.assigns[:snapshot_revision] || 0)
+        )
+
+      _ ->
+        # Legacy publishers and non-default swarms provide a local source. The
+        # default shared feed never assigns a complete snapshot to a LiveView.
+        source = socket.assigns[:snapshot_source] || socket.assigns[:snapshot]
+
+        socket =
+          if (socket.assigns[:snapshot_revision] || 0) > 0,
+            do: assign(socket, conn_status: :disconnected),
+            else: socket
+
+        put_snapshot(socket, SnapshotView.project(source, opts))
+    end
+  end
+
+  defp projection_opts(socket) do
+    socket.assigns
+    |> Map.take([
+      :q,
+      :filter,
+      :page,
+      :page_id,
+      :ext_sort,
+      :ext_tab,
+      :ext_page,
+      :story,
+      :session_id,
+      :selected,
+      :cid,
+      :session_query
+    ])
+    |> Map.put(
+      :inspect,
+      if(socket.assigns[:inspect], do: Map.take(socket.assigns.inspect, ["session_id"]))
+    )
+    |> Map.put(:dashboard_view, socket.view)
+  end
+
+  defp put_snapshot(socket, snap) do
+    assign(socket,
+      snapshot: snap,
+      snapshot_projected_at: System.monotonic_time(:millisecond),
+      inspect_lookup: inspect_lookup(snap),
+      dashboard_title: dashboard_title(snap, socket.assigns[:swarm])
+    )
   end
 
   defp restore_dashboard_page_labels(masked, %{
@@ -283,10 +347,16 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
 
   defp handle_inspect_info(_msg, socket), do: {:cont, socket}
 
-  defp find_session(%{"sessions" => sessions}, sid) when is_list(sessions),
-    do: Enum.find(sessions, &(&1["session_id"] == sid))
+  defp session_rows(nil), do: []
 
-  defp find_session(_snapshot, _sid), do: nil
+  defp session_rows(snapshot) do
+    ((snapshot["sessions"] || []) ++ (snapshot["_context_sessions"] || []))
+    |> Enum.filter(&(is_map(&1) and is_binary(&1["session_id"])))
+    |> Enum.uniq_by(& &1["session_id"])
+  end
+
+  defp find_session(snapshot, sid),
+    do: Enum.find(session_rows(snapshot), &(&1["session_id"] == sid))
 
   # {:cont} so pages that need a side-effect on new snapshots (e.g. Topology pushing
   # the graph to its JS hook) can also react; @snapshot is assigned here regardless.
@@ -304,15 +374,66 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
   defp handle_feed({:swarms, swarms}, socket),
     do: {:halt, assign(socket, :swarms, swarms)}
 
-  defp handle_feed({:snapshot, snap}, socket) do
-    socket =
-      assign(socket,
-        snapshot: snap,
-        conn_status: :connected,
-        inspect_lookup: inspect_lookup(snap),
-        dashboard_title: dashboard_title(snap, socket.assigns[:swarm])
-      )
+  defp handle_feed({:snapshot_ready, revision}, socket) do
+    if revision > (socket.assigns[:snapshot_notified_revision] || 0) do
+      socket = socket |> refresh_snapshot() |> refresh_inspector()
+      {:cont, assign(socket, snapshot_notified_revision: socket.assigns.snapshot_revision)}
+    else
+      {:halt, socket}
+    end
+  end
 
+  # Compatibility for selected-swarm polling and explicit external publishers.
+  defp handle_feed({:snapshot, snap}, socket) do
+    socket = socket |> assign(snapshot_source: snap, conn_status: :connected)
+    snapshot = SnapshotView.project(snap, projection_opts(socket))
+    {:cont, socket |> put_snapshot(snapshot) |> refresh_inspector()}
+  end
+
+  defp handle_feed({:disconnected, revision, _reason}, socket) do
+    if revision > (socket.assigns[:snapshot_revision] || 0),
+      do: {:halt, refresh_snapshot(socket)},
+      else: {:halt, socket}
+  end
+
+  defp handle_feed({:disconnected, _reason}, socket),
+    do: {:halt, assign(socket, conn_status: :disconnected)}
+
+  defp handle_feed({:warning, w}, socket),
+    do: {:halt, assign(socket, feed_warning: w)}
+
+  # {:cont} like {:snapshot}: the Events page stream-prepends new story rows in
+  # its own handle_info; @story is assigned here regardless.
+  defp handle_feed({:story, summary}, socket) do
+    previous = socket.assigns[:story]
+    socket = assign(socket, story: summary)
+    elapsed = System.monotonic_time(:millisecond) - (socket.assigns[:snapshot_projected_at] || 0)
+
+    changed? =
+      SubzeroSwarmDashboardWeb.ReplyHealth.suppressed_by_cid(previous) !=
+        SubzeroSwarmDashboardWeb.ReplyHealth.suppressed_by_cid(summary)
+
+    # Reclassify the complete cached roster even during an upstream outage.
+    # Keep normal story ticks cheap; suppression changes must update immediately.
+    socket =
+      if socket.assigns[:snapshot] && (changed? or elapsed >= @selected_poll_ms),
+        do: refresh_snapshot(socket),
+        else: socket
+
+    {:cont, socket}
+  end
+
+  # Raw display events flow through to pages that consume them (Topology canvas).
+  defp handle_feed({:display_event, _ev}, socket), do: {:cont, socket}
+
+  # Live WS events flow through to pages (every page has a catch-all handle_info/2;
+  # Topology consumes them for instant graph updates). SwarmFeed also observes them
+  # (it subscribes to "feed") for the silent-empty guard.
+  # Non-feed messages (e.g. a page's own :load_usage) also pass through.
+  defp handle_feed(_other, socket), do: {:cont, socket}
+
+  defp refresh_inspector(socket) do
+    snap = socket.assigns.snapshot
     # Keep the open inspector live: its header follows the fresh roster row, and
     # {:refresh_inspect} re-fetches the detail (activity always, transcript only
     # on a row change) without a loading flash.
@@ -325,28 +446,8 @@ defmodule SubzeroSwarmDashboardWeb.DashHooks do
         _ -> socket
       end
 
-    {:cont, socket}
+    socket
   end
-
-  defp handle_feed({:disconnected, _reason}, socket),
-    do: {:halt, assign(socket, conn_status: :disconnected)}
-
-  defp handle_feed({:warning, w}, socket),
-    do: {:halt, assign(socket, feed_warning: w)}
-
-  # {:cont} like {:snapshot}: the Events page stream-prepends new story rows in
-  # its own handle_info; @story is assigned here regardless.
-  defp handle_feed({:story, summary}, socket),
-    do: {:cont, assign(socket, story: summary)}
-
-  # Raw display events flow through to pages that consume them (Topology canvas).
-  defp handle_feed({:display_event, _ev}, socket), do: {:cont, socket}
-
-  # Live WS events flow through to pages (every page has a catch-all handle_info/2;
-  # Topology consumes them for instant graph updates). SwarmFeed also observes them
-  # (it subscribes to "feed") for the silent-empty guard.
-  # Non-feed messages (e.g. a page's own :load_usage) also pass through.
-  defp handle_feed(_other, socket), do: {:cont, socket}
 
   @doc """
   Host-provided title, else a titleized swarm name. Public because `Layouts.app`

@@ -688,7 +688,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
           <.panel title="Conversation" body_class="p-4">
             <:meta>
               <span :if={transcript_turns(@transcript) != []} class="text-xs">
-                saved to the database · survives restarts
+                recent conversation · up to 40 saved turns
               </span>
             </:meta>
             <.inspector_transcript transcript={@transcript} privacy={@privacy} />
@@ -815,8 +815,8 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   attr :transcript, :any, default: nil
   attr :privacy, :boolean, default: false
 
-  # Full durable transcript — every turn, untruncated (mirrors the dedicated
-  # session page so the inspector is a complete view, not a peek).
+  # The same recent saved window as the dedicated session page (the API
+  # defaults to 40 turns); older history is not loaded here.
   defp inspector_transcript(%{transcript: {:ok, %{"turns" => [_ | _] = turns}}} = assigns) do
     assigns = assign(assigns, turns: turns)
 

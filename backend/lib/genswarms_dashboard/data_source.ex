@@ -11,10 +11,20 @@ defmodule GenswarmsDashboard.DataSource do
   Rows must have unique `session_id`s (duplicates are dropped, first wins); the row list
   order is preserved as the wire `sessions` array order, with pool-only fabricated rows
   appended after.
+
+  Reply health requires a separate `"replies"` extension with `available: true`
+  and `items: [%{session_id: cid, status: "sent", at: unix_seconds}]`: the latest
+  successful actual reply per session, never a proactive or generic delivery.
+  An empty successful read uses `items: []`; failed reads use `available: false`.
+  Missing/unavailable evidence displays as unavailable, not answered/unanswered.
+  An optional top-level `warnings: [string]` reports unavailable host reads.
+  Set `sessions_available: false` if the stored population read is incomplete:
+  known/live rows remain visible, but `summary.sessions` is nil. Omission defaults
+  to true for legacy hosts. Individual rows outside durable reply tracking may
+  set `reply_tracking_available: false` to keep their health unavailable.
   """
   @callback snapshot(swarm :: String.t()) ::
-              %{sessions: [map()],
-                extensions: %{optional(String.t()) => map()}}
+              %{sessions: [map()], extensions: %{optional(String.t()) => map()}}
 
   @doc """
   Durable transcript for a session id. Turn maps carry `role` + `content`, and
@@ -28,9 +38,12 @@ defmodule GenswarmsDashboard.DataSource do
 
   @doc "Current live session->slot pool snapshot (cid => slot atom), with last_seen + counts."
   @callback pool_snapshot(swarm :: String.t()) ::
-              %{assigned: %{optional(String.t()) => atom()},
+              %{
+                assigned: %{optional(String.t()) => atom()},
                 last_seen: %{optional(String.t()) => any()},
-                leased: non_neg_integer(), size: non_neg_integer()}
+                leased: non_neg_integer(),
+                size: non_neg_integer()
+              }
 
   @doc """
   OPTIONAL. Base row for a pool-only cid (leased right now, not yet in the durable rows).

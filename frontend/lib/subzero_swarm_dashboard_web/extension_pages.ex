@@ -18,16 +18,16 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   Metrics may request 2 or 4 responsive columns. Metric items may provide `title`
   for exact hover detail and `wrap_sub: true` for explanatory notes. The renderer
   treats every value as display data. Unknown or malformed blocks are ignored, and
-  large collections are capped so an extension cannot overwhelm the dashboard shell.
+  large tables are paged so an extension cannot overwhelm the dashboard shell.
   """
   use SubzeroSwarmDashboardWeb, :html
+  alias SubzeroSwarmDashboardWeb.Pagination
 
   @id_re ~r/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
   @max_pages 12
   @max_sections 12
   @max_metric_items 8
   @max_columns 12
-  @max_rows 100
   @max_tabs 6
 
   def pages(snapshot) do
@@ -45,14 +45,131 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   def active_key(%{"id" => id}), do: "extension:" <> id
   def active_key(_), do: nil
 
+  @doc "Bound the selected page's tables while preserving source row identities and totals."
+  def project_page(nil, _assigns), do: nil
+
+  def project_page(page, assigns) do
+    projected =
+      page
+      |> sections()
+      |> Enum.with_index()
+      |> Enum.map(fn {section, idx} -> project_section(section, idx, assigns) end)
+
+    page
+    |> Map.take(~w(id label icon group meta))
+    |> Map.update("meta", nil, &display/1)
+    |> Map.put("sections", projected)
+  end
+
+  defp project_section(%{"type" => "table", "_pagination" => %{}} = section, _idx, _assigns),
+    do: section
+
+  defp project_section(%{"type" => "table"} = section, idx, assigns) do
+    rows = indexed_rows(section) |> sort_rows(Map.get(assigns[:ext_sort] || %{}, idx))
+    {shown, pagination} = Pagination.slice(rows, Map.get(assigns[:ext_page] || %{}, idx))
+    columns = columns(section["columns"])
+
+    section
+    |> section_chrome()
+    |> Map.put("columns", columns)
+    |> Map.put("rows", Enum.map(shown, fn {row, _} -> project_row(row, columns) end))
+    |> Map.put("_row_indices", Enum.map(shown, &elem(&1, 1)))
+    |> Map.put("_pagination", pagination)
+  end
+
+  defp project_section(%{"type" => "tabs"} = section, idx, assigns) do
+    tabs = normalize_tabs(section["tabs"])
+    active = tab_active(assigns[:ext_tab] || %{}, idx, tabs)
+
+    tabs =
+      tabs
+      |> Enum.with_index()
+      |> Enum.map(fn {tab, tidx} ->
+        inner =
+          if tidx == active,
+            do: project_section(tab["section"], "#{idx}/#{tidx}", assigns),
+            else: %{}
+
+        %{"label" => display_label(tab["label"]), "section" => inner}
+      end)
+
+    section |> section_chrome() |> Map.put("tabs", tabs)
+  end
+
+  defp project_section(%{"type" => "metrics"} = section, _idx, _assigns) do
+    section
+    |> section_chrome()
+    |> Map.put("columns", if(section["columns"] in [2, 4], do: section["columns"]))
+    |> Map.put("items", metric_items(section["items"]))
+  end
+
+  defp project_section(%{"type" => "text"} = section, _idx, _assigns),
+    do: section |> section_chrome() |> Map.put("body", display(section["body"]))
+
+  defp project_section(_section, _idx, _assigns), do: %{}
+
+  defp section_chrome(section) do
+    %{
+      "type" => section["type"],
+      "title" => display(section["title"]),
+      "meta" => display(section["meta"]),
+      "span" => if(section["span"] == "half", do: "half")
+    }
+  end
+
+  defp project_row(row, columns) do
+    cells =
+      Map.new(columns, fn col ->
+        value = Map.get(row, col["key"])
+        value = if col["link"], do: bounded_link(value), else: bounded_value(value)
+        {col["key"], value}
+      end)
+
+    detail =
+      Enum.map(detail_items(row), fn item ->
+        %{
+          "label" => display_label(item["label"]),
+          "value" => bounded_value(item["value"]),
+          "link" => bounded_link(item["link"])
+        }
+      end)
+
+    %{"id" => row_id(row["id"]), "_cid" => row_id(row["_cid"])}
+    |> Map.put("detail", detail)
+    |> Map.merge(cells)
+  end
+
+  defp row_id(value) when is_binary(value) and byte_size(value) <= 4096, do: value
+  defp row_id(value) when is_number(value), do: value
+  defp row_id(_value), do: nil
+
+  defp bounded_value(value) when is_number(value) or is_boolean(value) or is_nil(value), do: value
+  defp bounded_value(value), do: display(value)
+  defp bounded_link(value) when is_binary(value), do: String.slice(value, 0, 4096)
+  defp bounded_link(value), do: bounded_value(value)
+
+  defp indexed_rows(%{"rows" => rows, "_row_indices" => indices})
+       when is_list(rows) and is_list(indices),
+       do: Enum.zip(rows, indices) |> Enum.filter(fn {row, _} -> is_map(row) end)
+
+  defp indexed_rows(%{"rows" => rows}) when is_list(rows),
+    do: rows |> Enum.with_index() |> Enum.filter(fn {row, _} -> is_map(row) end)
+
+  defp indexed_rows(_), do: []
+
   attr :page, :map, required: true
   attr :sort, :map, default: %{}
   attr :tab, :map, default: %{}
+  attr :pages, :map, default: %{}
   attr :row_targets, :map, default: %{}
   attr :detail_open, :any, default: nil
 
   def page(assigns) do
-    sections = assigns.page |> sections() |> Enum.with_index()
+    sections =
+      assigns.page
+      |> project_page(%{ext_sort: assigns.sort, ext_tab: assigns.tab, ext_page: assigns.pages})
+      |> sections()
+      |> Enum.with_index()
 
     # A page with exactly ONE tabs section gets that selector hoisted into the
     # page header — same top-right placement as the Usage range control. Pages
@@ -91,7 +208,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div
             :for={{section, idx} <- @sections}
-            class={span_class(section)}
+            class={["min-w-0", span_class(section)]}
           >
             <.section
               section={section}
@@ -152,17 +269,17 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       |> assign(:title, section["title"] || "Table")
       |> assign(:meta, display(section["meta"]))
       |> assign(:columns, columns(section["columns"]))
-      |> assign(
-        :rows,
-        section["rows"] |> rows() |> Enum.with_index() |> sort_rows(assigns[:sort])
-      )
+      |> assign(:rows, indexed_rows(section))
+      |> assign(:pagination, section["_pagination"])
+      |> assign(:table_id, "ext-table-#{assigns.idx}")
+      |> assign(:pager_id, "ext-pager-#{assigns.idx}")
 
     ~H"""
     <.panel title={@title} body_class="px-4 py-2">
       <:meta :if={@meta}>{@meta}</:meta>
-      <div :if={@columns != [] and @rows != []} class="overflow-x-auto">
-        <table class="table table-xs">
-          <thead>
+      <div :if={@columns != [] and @rows != []} class="max-h-[65vh] overflow-auto scroll-thin">
+        <table id={@table_id} class="table table-xs">
+          <thead class="sticky top-0 z-10 bg-base-200">
             <tr>
               <th :for={col <- @columns} class={[col_align(col), "p-0"]}>
                 <button
@@ -243,6 +360,7 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
         </table>
       </div>
       <div :if={@columns == [] or @rows == []} class="text-sm opacity-50 py-1">No data.</div>
+      <Pagination.pager id={@pager_id} event="ext_page" sec={@idx} pagination={@pagination} />
     </.panel>
     """
   end
@@ -386,50 +504,40 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
       |> sections()
       |> Enum.with_index()
       |> Enum.map_reduce(%{}, fn {sec, sidx}, acc ->
-        case sec do
-          %{"type" => "table", "rows" => rows} when is_list(rows) ->
-            {rows2, acc2} =
-              rows
-              |> Enum.with_index()
-              |> Enum.map_reduce(acc, fn {row, ridx}, a ->
-                a = put_row_target(a, {sidx, ridx}, row, privacy?, lookup)
-                {strip_row_meta(row), a}
-              end)
-
-            {Map.put(sec, "rows", rows2), acc2}
-
-          %{"type" => "tabs", "tabs" => tabs} when is_list(tabs) ->
-            {tabs2, acc2} =
-              tabs
-              |> Enum.with_index()
-              |> Enum.map_reduce(acc, fn {tab, tidx}, a ->
-                case tab do
-                  %{"section" => %{"type" => "table", "rows" => rows} = inner}
-                  when is_list(rows) ->
-                    {rows2, a2} =
-                      rows
-                      |> Enum.with_index()
-                      |> Enum.map_reduce(a, fn {row, ridx}, aa ->
-                        aa = put_row_target(aa, {"#{sidx}/#{tidx}", ridx}, row, privacy?, lookup)
-                        {strip_row_meta(row), aa}
-                      end)
-
-                    {Map.put(tab, "section", Map.put(inner, "rows", rows2)), a2}
-
-                  _ ->
-                    {tab, a}
-                end
-              end)
-
-            {Map.put(sec, "tabs", tabs2), acc2}
-
-          _ ->
-            {sec, acc}
-        end
+        extract_section_targets(sec, sidx, acc, privacy?, lookup)
       end)
 
     {Map.put(page, "sections", sections), targets}
   end
+
+  defp extract_section_targets(%{"type" => "table"} = section, idx, acc, privacy?, lookup) do
+    indexed = indexed_rows(section)
+
+    {rows, targets} =
+      Enum.map_reduce(indexed, acc, fn {row, ridx}, targets ->
+        {strip_row_meta(row), put_row_target(targets, {idx, ridx}, row, privacy?, lookup)}
+      end)
+
+    {section |> Map.put("rows", rows) |> Map.put("_row_indices", Enum.map(indexed, &elem(&1, 1))),
+     targets}
+  end
+
+  defp extract_section_targets(%{"type" => "tabs"} = section, idx, acc, privacy?, lookup) do
+    {tabs, targets} =
+      section["tabs"]
+      |> normalize_tabs()
+      |> Enum.with_index()
+      |> Enum.map_reduce(acc, fn {tab, tidx}, targets ->
+        {inner, targets} =
+          extract_section_targets(tab["section"], "#{idx}/#{tidx}", targets, privacy?, lookup)
+
+        {Map.put(tab, "section", inner), targets}
+      end)
+
+    {Map.put(section, "tabs", tabs), targets}
+  end
+
+  defp extract_section_targets(section, _idx, acc, _privacy?, _lookup), do: {section, acc}
 
   defp put_row_target(acc, key, row, privacy?, lookup) when is_map(row) do
     with cid when is_binary(cid) and cid != "" <- Map.get(row, "_cid"),
@@ -631,10 +739,10 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
   defp normalize_metric_item(item) do
     %{
       "label" => display_label(item["label"]),
-      "value" => item["value"],
-      "sub" => item["sub"],
-      "tone" => item["tone"],
-      "title" => item["title"],
+      "value" => bounded_value(item["value"]),
+      "sub" => bounded_value(item["sub"]),
+      "tone" => tone(item["tone"]),
+      "title" => display(item["title"]),
       "wrap_sub" => item["wrap_sub"] == true
     }
   end
@@ -653,16 +761,13 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPages do
     %{
       "key" => String.slice(col["key"], 0, 64),
       "label" => display_label(col["label"]),
-      "align" => col["align"],
-      "mono" => col["mono"],
+      "align" => if(col["align"] == "right", do: "right"),
+      "mono" => col["mono"] == true,
       # opt-in: render http(s) values in this column as anchors (the cell
       # renderer still refuses non-http values — see http_link?/1)
       "link" => col["link"] == true
     }
   end
-
-  defp rows(rows) when is_list(rows), do: rows |> Stream.filter(&is_map/1) |> Enum.take(@max_rows)
-  defp rows(_), do: []
 
   defp display(nil), do: nil
   defp display(value) when is_binary(value), do: String.slice(value, 0, 240)

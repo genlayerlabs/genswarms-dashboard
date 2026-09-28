@@ -77,6 +77,9 @@ defmodule SubzeroSwarmDashboardWeb.TopologyLive do
   # serves (the canvas labels the node "agent_15" + that session id) and an
   # avatar seed (the telegram handle) — the identity lives in the drawn avatar,
   # not in a "@handle" text label.
+  def handle_info({:snapshot_ready, _revision}, socket),
+    do: handle_info({:snapshot, socket.assigns.snapshot}, socket)
+
   def handle_info({:snapshot, snap}, socket) do
     privacy? = socket.assigns[:privacy] == true
     inspect_lookup = DashHooks.inspect_lookup(snap)

@@ -23,12 +23,42 @@ defmodule SubzeroSwarmDashboard.SwarmClient.HttpTest do
     assert {:ok, %{"swarm" => "wingston"}} = Http.dashboard("wingston")
   end
 
+  test "a projected session label does not retain the discarded HTTP response buffer" do
+    label = String.duplicate("synthetic name ", 10)
+
+    Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn ->
+      Req.Test.json(conn, %{
+        "sessions" => [%{"session_id" => "test:1:0", "user" => %{"name" => label}}],
+        "extensions" => %{"unused" => String.duplicate("x", 1_000_000)}
+      })
+    end)
+
+    {:ok, source} = Http.dashboard("wingston")
+    page = SubzeroSwarmDashboardWeb.SnapshotView.project(source, %{})
+    retained = hd(page["sessions"])["user"]["name"]
+
+    assert retained == label
+    refute Map.has_key?(page["extensions"], "unused")
+    assert :binary.referenced_byte_size(retained) == byte_size(retained)
+  end
+
   test "non-200 maps to {:error, {:http, status}}" do
     Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn ->
       Plug.Conn.send_resp(conn, 404, "nope")
     end)
 
     assert {:error, {:http, 404}} = Http.dashboard("x")
+  end
+
+  test "scheduled polls return a transient failure without retrying inside the call" do
+    Req.Test.stub(SubzeroSwarmDashboard.HttpStub, fn conn ->
+      attempts = Process.get(:swarm_attempts, 0)
+      Process.put(:swarm_attempts, attempts + 1)
+      Plug.Conn.send_resp(conn, if(attempts == 0, do: 503, else: 200), "{}")
+    end)
+
+    assert {:error, {:http, 503}} = Http.dashboard("wingston")
+    assert Process.get(:swarm_attempts) == 1
   end
 
   test "session_history hits the history route" do

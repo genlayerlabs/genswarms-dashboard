@@ -114,6 +114,7 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLiveReplyStatusTest do
 
   test "sort_by_attention: unanswered (oldest first) → pending → suppressed → answered → stale → idle (newest first)" do
     mk = fn sid, iso -> %{"session_id" => sid, "last_activity" => iso} end
+
     statuses = %{
       "a-old" => :unanswered,
       "a-new" => :unanswered,

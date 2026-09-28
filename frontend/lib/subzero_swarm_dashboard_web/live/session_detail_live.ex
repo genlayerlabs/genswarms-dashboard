@@ -12,14 +12,16 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
     if connected?(socket), do: send(self(), :load)
 
     {:ok,
-     assign(socket,
+     socket
+     |> assign(
        page_title: "Session #{display_session_id(cid, socket.assigns[:privacy] == true)}",
        session_id: cid,
        transcript: :loading,
        activity: :loading,
        skills: :loading,
        requests: :loading
-     )}
+     )
+     |> DashHooks.refresh_snapshot()}
   end
 
   # Session cids may carry colons (scheme-prefixed transport ids) — they trip Plug.Static (InvalidPathError) when
@@ -66,6 +68,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
       {:noreply, socket}
     end
   end
+
+  def handle_info({:snapshot_ready, _revision}, socket),
+    do: handle_info({:snapshot, socket.assigns.snapshot}, socket)
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -151,12 +156,15 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
             recorded it — open, claim, first feedback, reply. <strong>Exact facts</strong>,
             no log guessing.
           </p>
-          <.requests requests={@requests} story={@story} />
+          <div class="max-h-[50vh] overflow-auto scroll-thin">
+            <.requests requests={@requests} story={@story} />
+          </div>
         </.panel>
 
         <.panel title="Conversation">
           <p class="text-xs opacity-50 mb-3">
-            The clean user ↔ swarm conversation, saved to the database — it <strong>survives agent restarts</strong>. (Empty if persistence is off.)
+            The most recent saved conversation, up to 40 turns. Older history is not loaded here.
+            Saved turns survive agent restarts. (Empty if persistence is off.)
           </p>
           <.transcript transcript={@transcript} privacy={@privacy} />
         </.panel>
@@ -171,7 +179,9 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
             The agent's raw working log for this slot right now — messages in, tool
             calls, results, sends. <strong>Ephemeral</strong>: wiped when the slot is recycled.
           </p>
-          <.activity_timeline activity={@activity} privacy={@privacy} />
+          <div class="max-h-[50vh] overflow-auto scroll-thin">
+            <.activity_timeline activity={@activity} privacy={@privacy} />
+          </div>
         </.panel>
       </div>
     </Layouts.app>
@@ -246,7 +256,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
         <.icon name="hero-eye-slash" class="size-3.5" /> hide
       </button>
     </div>
-    <.conversation id="session-conversation" turns={@turns} privacy={@privacy} />
+    <div
+      id="session-conversation-scroll"
+      phx-hook="ScrollBottom"
+      class="max-h-[65vh] overflow-auto scroll-thin"
+    >
+      <.conversation id="session-conversation" turns={@turns} privacy={@privacy} />
+    </div>
     """
   end
 
@@ -277,7 +293,13 @@ defmodule SubzeroSwarmDashboardWeb.SessionDetailLive do
   end
 
   defp find_session(nil, _id), do: nil
-  defp find_session(snap, id), do: Enum.find(snap["sessions"] || [], &(&1["session_id"] == id))
+
+  defp find_session(snap, id),
+    do:
+      Enum.find(
+        (snap["sessions"] || []) ++ (snap["_context_sessions"] || []),
+        &(&1["session_id"] == id)
+      )
 
   # The change signal for the refetch gate. A session missing from the snapshot
   # (evicted/idle-trimmed) yields nil — which still differs from a previous

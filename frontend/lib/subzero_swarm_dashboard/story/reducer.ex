@@ -264,7 +264,9 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
   # runtime allowlist grant (browser pkg 0.2.0 allow_sync): audit-surface row —
   # the grantor is an object (rally), not an agent slot, so no geometry/counters
   defp fold("browser_grant", state, ev) do
-    row(state, ev, %{text: "🔓 browser host granted: #{ev["host"] || "?"} (by #{ev["source"] || "?"})"})
+    row(state, ev, %{
+      text: "🔓 browser host granted: #{ev["host"] || "?"} (by #{ev["source"] || "?"})"
+    })
   end
 
   defp fold("progress_sent", state, %{"cid" => cid} = ev) when is_binary(cid) do
@@ -361,7 +363,10 @@ defmodule SubzeroSwarmDashboard.Story.Reducer do
 
   # llm-proxy budget store degraded (failing open to the in-memory mirror)
   defp fold("llm_proxy_degraded", state, ev) do
-    issue_row(state, ev, %{cid: ev["cid"], text: "⚠ LLM budget store degraded (#{ev["path"] || "?"})"})
+    issue_row(state, ev, %{
+      cid: ev["cid"],
+      text: "⚠ LLM budget store degraded (#{ev["path"] || "?"})"
+    })
   end
 
   # scheduled job finished: ok-runs fire every few minutes — canvas-level only

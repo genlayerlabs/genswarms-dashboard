@@ -21,17 +21,21 @@ defmodule SubzeroSwarmDashboardWeb.ReplyHealth do
   @stale_after_s 48 * 3600
 
   @doc """
-  `:idle | :answered | :suppressed | :pending | :unanswered | :stale` for one
-  session.
+  `:idle | :answered | :suppressed | :pending | :unanswered | :stale | :unavailable` for one
+  session. Pass the map from `replies/1`, or nil when that source is unavailable.
 
   A suppression at/after the inbound classifies `:suppressed` — the bot CHOSE
   silence (spam window), which must not render as the `:unanswered` alarm (a
   stall). A real delivery still wins: answered is checked first. Unanswered
   older than 48h decays to `:stale`.
   """
-  def status(session, deliveries, suppressed, now) do
+  def status(%{"reply_tracking_available" => false}, _replies, _suppressed, _now),
+    do: :unavailable
+
+  def status(session, replies, suppressed, now) do
     last_in = to_unix(session["last_activity"])
-    last_send = delivery_at((deliveries[session["session_id"]] || %{})["at"])
+    reply = (replies || %{})[session["session_id"]] || %{}
+    last_send = if reply["status"] == "sent", do: delivery_at(reply["at"])
     last_supp = suppressed[session["session_id"]]
 
     cond do
@@ -39,6 +43,7 @@ defmodule SubzeroSwarmDashboardWeb.ReplyHealth do
       is_number(last_send) and last_send >= last_in - @reply_skew_s -> :answered
       is_number(last_supp) and last_supp >= last_in - @reply_skew_s -> :suppressed
       now - last_in <= @reply_grace_s -> :pending
+      is_nil(replies) -> :unavailable
       now - last_in > @stale_after_s -> :stale
       true -> :unanswered
     end
@@ -66,12 +71,25 @@ defmodule SubzeroSwarmDashboardWeb.ReplyHealth do
 
   defp delivery_at(_), do: nil
 
-  @doc "cid => latest delivery, from the sender's dashboard extension."
-  def deliveries(nil), do: %{}
+  @doc "Whether the host supplied a successful read of the reply evidence source."
+  def available?(snap) do
+    match?(
+      %{"available" => true, "items" => items} when is_list(items),
+      get_in(snap || %{}, ["extensions", "replies"])
+    )
+  end
 
-  def deliveries(snap) do
-    (get_in(snap, ["extensions", "deliveries", "items"]) || [])
-    |> Map.new(fn d -> {d["session_id"], d} end)
+  @doc "Latest successful actual replies by session, or nil when evidence is unavailable."
+  def replies(nil), do: nil
+
+  def replies(snap) do
+    case get_in(snap, ["extensions", "replies"]) do
+      %{"available" => true, "items" => items} when is_list(items) ->
+        Map.new(items, fn reply -> {reply["session_id"], reply} end)
+
+      _ ->
+        nil
+    end
   end
 
   @doc """
@@ -88,27 +106,30 @@ defmodule SubzeroSwarmDashboardWeb.ReplyHealth do
 
   @doc "cid => status for every session in the snapshot, one pass."
   def statuses(snap, story, now) do
-    deliveries = deliveries(snap)
+    replies = replies(snap)
     suppressed = suppressed_by_cid(story)
 
     Map.new(
       (snap && snap["sessions"]) || [],
-      &{&1["session_id"], status(&1, deliveries, suppressed, now)}
+      &{&1["session_id"], status(&1, replies, suppressed, now)}
     )
   end
 
   @doc """
-  %{unanswered: n, suppressed: m, stale: k} over the whole snapshot — the
+  %{unanswered: n, suppressed: m, stale: k, unavailable: u} over the whole snapshot — the
   Overview tile reads unanswered/suppressed (fresh alarms only; stale is
   reported separately so aged rows can never re-inflate the alarm).
   """
+  def counts(%{"_reply_health" => counts}, _story, _now), do: counts
+
   def counts(snap, story, now) do
     statuses = statuses(snap, story, now)
 
     %{
       unanswered: Enum.count(statuses, fn {_, st} -> st == :unanswered end),
       suppressed: Enum.count(statuses, fn {_, st} -> st == :suppressed end),
-      stale: Enum.count(statuses, fn {_, st} -> st == :stale end)
+      stale: Enum.count(statuses, fn {_, st} -> st == :stale end),
+      unavailable: Enum.count(statuses, fn {_, st} -> st == :unavailable end)
     }
   end
 

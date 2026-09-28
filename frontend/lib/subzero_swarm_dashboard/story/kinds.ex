@@ -75,7 +75,8 @@ defmodule SubzeroSwarmDashboard.Story.Kinds do
     {"proc_crash", %{sample: %{"module" => "Wingston.Worker"}, story: true, canvas: false}},
     # sample uses a FAILED run: ok runs are story-silent by design (they fire
     # every few minutes) but still reach the canvas (cron ✓ float)
-    {"job_run", %{sample: %{"name" => "daily_tip", "status" => "error"}, story: true, canvas: true}},
+    {"job_run",
+     %{sample: %{"name" => "daily_tip", "status" => "error"}, story: true, canvas: true}},
     {"compaction", %{sample: %{"cid" => "tg:1:0"}, story: true, canvas: true}},
     {"inbox_dropped",
      %{sample: %{"agent" => "wingston_agent_0", "count" => 2}, story: true, canvas: true}},

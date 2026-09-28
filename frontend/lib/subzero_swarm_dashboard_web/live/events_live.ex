@@ -24,6 +24,7 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
       socket
       |> assign(
         page_title: "Events",
+        session_query: "",
         # engine-raw view (the existing LogStore table), demoted behind the toggle
         events: :loading,
         # server-side filters
@@ -56,10 +57,12 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
       |> assign(
         view: if(params["view"] == "raw", do: "raw", else: "story"),
         kind: params["kind"] || "",
-        cid: params["cid"] || "",
+        cid:
+          params["cid"] || if(socket.assigns[:privacy], do: socket.assigns[:cid] || "", else: ""),
         agent_f: params["agent"] || "",
         issues: params["issues"] in ["1", "true"]
       )
+      |> DashHooks.refresh_snapshot()
       |> reset_story()
 
     # Run the raw-view poll loop ONLY while the raw view is showing: polling
@@ -85,17 +88,39 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
         do: resolve_user_filter(socket, params["user"] || ""),
         else: resolve_cid_filter(socket, params["cid"] || "")
 
-    {:noreply,
-     push_patch(socket,
-       to:
-         story_path(socket.assigns,
-           kind: params["kind"] || "",
-           cid: cid,
-           agent: params["agent"] || "",
-           issues: params["issues"] == "1"
-         )
-     )}
+    if socket.assigns[:privacy] do
+      # Private selections stay server-side: raw identity must not enter URL
+      # patches or the generated story/raw toggle links.
+      {:noreply,
+       socket
+       |> assign(
+         kind: params["kind"] || "",
+         cid: cid,
+         agent_f: params["agent"] || "",
+         issues: params["issues"] == "1"
+       )
+       |> DashHooks.refresh_snapshot()
+       |> reset_story()}
+    else
+      {:noreply,
+       push_patch(socket,
+         to:
+           story_path(socket.assigns,
+             kind: params["kind"] || "",
+             cid: cid,
+             agent: params["agent"] || "",
+             issues: params["issues"] == "1"
+           )
+       )}
+    end
   end
+
+  def handle_event("session_search", %{"q" => q}, socket) when is_binary(q),
+    do:
+      {:noreply,
+       socket |> assign(session_query: String.slice(q, 0, 256)) |> DashHooks.refresh_snapshot()}
+
+  def handle_event("session_search", _params, socket), do: {:noreply, socket}
 
   def handle_event("pause", _params, socket),
     do: {:noreply, assign(socket, paused: true, pending: [], pending_count: 0)}
@@ -222,6 +247,8 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   # only non-default filters appear in the URL, so deep links stay minimal
   defp story_path(a, overrides) do
+    overrides = if a[:privacy], do: Keyword.put(overrides, :cid, ""), else: overrides
+
     params =
       [view: a.view, kind: a.kind, cid: a.cid, agent: a.agent_f, issues: a.issues]
       |> Keyword.merge(overrides)
@@ -237,22 +264,27 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
   end
 
   # nobody types a raw scheme-prefixed cid by hand — the dropdown maps label → session_id
-  defp user_options(snapshot, selected_cid, false) do
-    for s <- sessions(snapshot),
-        h = get_in(s, ["user", "handle"]),
-        is_binary(h) and h != "" do
-      %{label: "@" <> h, value: s["session_id"], selected: selected_cid == s["session_id"]}
+  defp user_options(snapshot, selected_cid, false, _lookup) do
+    for s <- sessions(snapshot) do
+      handle = get_in(s, ["user", "handle"])
+
+      label =
+        if is_binary(handle) and handle != "",
+          do: "@" <> handle,
+          else: s["label"] || s["session_id"]
+
+      %{label: label, value: s["session_id"], selected: selected_cid == s["session_id"]}
     end
   end
 
-  defp user_options(snapshot, selected_cid, true) do
+  defp user_options(snapshot, selected_cid, true, lookup) do
     snapshot
     |> sessions()
     |> Enum.with_index()
     |> Enum.map(fn {s, i} ->
       %{
         label: "user #{i + 1}",
-        value: "session:#{i}",
+        value: DashHooks.inspect_value(lookup, true, s["session_id"]),
         selected: selected_cid == s["session_id"]
       }
     end)
@@ -262,16 +294,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
 
   defp resolve_user_filter(_socket, ""), do: ""
 
-  defp resolve_user_filter(socket, "session:" <> index) do
-    with {i, ""} <- Integer.parse(index),
-         %{"session_id" => sid} <- Enum.at(sessions(socket.assigns[:snapshot]), i) do
-      sid
-    else
-      _ -> ""
-    end
-  end
-
-  defp resolve_user_filter(_socket, value), do: value
+  defp resolve_user_filter(socket, value),
+    do:
+      DashHooks.resolve_inspect_value(socket.assigns.inspect_lookup, value) || socket.assigns.cid
 
   defp resolve_cid_filter(socket, submitted) do
     if socket.assigns[:privacy] == true and submitted == display_cid(socket.assigns.cid, true) do
@@ -281,7 +306,8 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
     end
   end
 
-  defp display_cid(cid, true) when is_binary(cid), do: PrivacyRedactor.mask_cid(cid)
+  defp display_cid("", true), do: ""
+  defp display_cid(_cid, true), do: "•••"
   defp display_cid(cid, _privacy?), do: cid
 
   # ── engine-raw plumbing (unchanged) ──────────────────────────────────────────
@@ -392,7 +418,9 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
         kinds: @kinds,
         story_href: story_path(assigns, view: "story"),
         raw_href: story_path(assigns, view: "raw"),
-        user_opts: user_options(assigns[:snapshot], assigns.cid, privacy?)
+        user_opts: user_options(assigns[:snapshot], assigns.cid, privacy?, inspect_lookup),
+        session_search: get_in(assigns[:snapshot] || %{}, ["_session_search"]),
+        search_form: to_form(%{"q" => if(privacy?, do: "", else: assigns.session_query)})
       )
 
     ~H"""
@@ -438,6 +466,29 @@ defmodule SubzeroSwarmDashboardWeb.EventsLive do
         </div>
 
         <div :if={@view == "story"} id="story-view" class="space-y-3">
+          <.form
+            for={@search_form}
+            id="session-search-form"
+            phx-change="session_search"
+            class="flex flex-wrap items-end gap-3"
+          >
+            <.input
+              field={@search_form[:q]}
+              type="search"
+              label="Find session"
+              placeholder="ID, name or handle"
+              phx-debounce="300"
+            />
+            <span :if={@session_search} id="session-search-status" class="text-xs opacity-60 pb-2">
+              <%= if (@snapshot || %{})["sessions_available"] == false do %>
+                Session source unavailable · {num(@session_search.total)} known matches ({num(
+                  @session_search.loaded
+                )} loaded, up to {@session_search.limit}); total unknown
+              <% else %>
+                {num(@session_search.loaded)} loaded of {num(@session_search.total)} matches · up to {@session_search.limit}; selection kept
+              <% end %>
+            </span>
+          </.form>
           <%!-- one toolbar: filters left, the pause control anchored right --%>
           <div class="flex flex-wrap gap-2 items-center rounded-box border border-base-300 bg-base-200/60 px-3 py-2.5 text-sm">
             <form
