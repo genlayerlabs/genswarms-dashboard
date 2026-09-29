@@ -73,7 +73,7 @@ defmodule SubzeroSwarmDashboardWeb.TranscriptGateTest do
     assert html =~ ~s(phx-click="transcripts_reveal")
 
     render_click(view, "transcripts_reveal", %{})
-    assert render(view) =~ "SECRET-USER-TEXT"
+    assert render_async(view) =~ "SECRET-USER-TEXT"
 
     render_click(view, "transcripts_hide", %{})
     html = render(view)

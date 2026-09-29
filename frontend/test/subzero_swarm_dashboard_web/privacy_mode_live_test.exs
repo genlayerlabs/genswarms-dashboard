@@ -428,7 +428,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     _html = push_canary_snap(view)
     render_click(view, "transcripts_reveal", %{})
     assert_receive {:history_loaded, @canary_cid}, 500
-    html = render(view)
+    html = render_async(view)
 
     refute_canary(html)
     assert html =~ "▪▪▪▪▪"
@@ -443,7 +443,7 @@ defmodule SubzeroSwarmDashboardWeb.PrivacyModeLiveTest do
     _html = push_canary_snap(view)
     render_click(view, "transcripts_reveal", %{})
     assert_receive {:history_loaded, @canary_cid}, 500
-    html = render(view)
+    html = render_async(view)
 
     assert_canary_identity(html)
     assert html =~ @canary_text

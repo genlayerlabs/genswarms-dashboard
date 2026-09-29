@@ -441,7 +441,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     # sibling tests) instead of depending on ambient gate state, which made
     # this test order-dependent across seeds
     render_click(view, "transcripts_reveal", %{})
-    html = render(view)
+    html = render_async(view)
 
     assert html =~ "Agent activity"
     assert html =~ "agent_server"
@@ -460,7 +460,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     end)
 
     {:ok, view, _} = live(conn, "/sessions/tg:1:0")
-    html = render(view)
+    html = render_async(view)
 
     assert html =~ "System prompt · skills"
     assert html =~ "browse.md"
@@ -479,7 +479,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
     end)
 
     {:ok, view, _} = live(conn, "/sessions/tg:1:0")
-    html = render(view)
+    html = render_async(view)
 
     assert html =~ "System prompt · skills"
     assert html =~ "Render pages."
@@ -491,7 +491,7 @@ defmodule SubzeroSwarmDashboardWeb.DashboardLiveTest do
   } do
     # default session_skills stub is source: unavailable
     {:ok, view, _} = live(conn, "/sessions/tg:1:0")
-    html = render(view)
+    html = render_async(view)
 
     assert html =~ "System prompt · skills"
     assert html =~ "Unavailable (no live agent"

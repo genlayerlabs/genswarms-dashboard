@@ -5,6 +5,11 @@ export const ScrollBottom = {
   mounted() {
     this.follow = true
     this.el.scrollTop = this.el.scrollHeight
+    this.jumpToBottom = () => {
+      this.follow = true
+      this.el.scrollTop = this.el.scrollHeight
+    }
+    this.el.addEventListener("scroll:bottom", this.jumpToBottom)
   },
   // the near-bottom decision must use PRE-patch measurements: right after content
   // loads, scrollHeight has already grown and the reader would never count as
@@ -14,5 +19,8 @@ export const ScrollBottom = {
   },
   updated() {
     if (this.follow) this.el.scrollTop = this.el.scrollHeight
+  },
+  destroyed() {
+    this.el.removeEventListener("scroll:bottom", this.jumpToBottom)
   },
 }

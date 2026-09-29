@@ -190,7 +190,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       _ = :sys.get_state(feed)
 
       {:ok, view, _} = live(conn, "/sessions/#{@cid}")
-      html = render(view)
+      html = render_async(view)
 
       assert has_element?(view, "#session-requests")
       assert has_element?(view, "#session-request-0")
@@ -206,7 +206,7 @@ defmodule SubzeroSwarmDashboardWeb.StoryPagesLiveTest do
       # the EventsFeed process isn't running at all (test default) — same face
       # as an empty feed
       {:ok, view, _} = live(conn, "/sessions/#{@cid}")
-      html = render(view)
+      html = render_async(view)
 
       assert has_element?(view, "#session-requests")
       assert has_element?(view, "#session-requests-empty")
