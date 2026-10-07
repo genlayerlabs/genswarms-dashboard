@@ -41,15 +41,23 @@ defmodule SubzeroSwarmDashboardWeb.Router do
     end
   end
 
-  # Read-only basic auth (spec §10). Active only when DASHBOARD_USER/PASS are set.
+  # Both absent delegates authentication to the ingress. Partial configuration
+  # must not silently disable Basic Auth or accept an empty credential.
   defp dashboard_auth(conn, _opts) do
     user = System.get_env("DASHBOARD_USER")
     pass = System.get_env("DASHBOARD_PASS")
 
-    if user && pass && user != "" do
-      Plug.BasicAuth.basic_auth(conn, username: user, password: pass)
-    else
-      conn
+    cond do
+      is_nil(user) and is_nil(pass) ->
+        conn
+
+      is_binary(user) and is_binary(pass) and String.trim(user) != "" and String.trim(pass) != "" ->
+        Plug.BasicAuth.basic_auth(conn, username: user, password: pass)
+
+      true ->
+        conn
+        |> send_resp(503, "Dashboard authentication is not configured correctly")
+        |> halt()
     end
   end
 
