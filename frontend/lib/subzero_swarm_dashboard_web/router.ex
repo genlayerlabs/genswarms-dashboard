@@ -41,14 +41,14 @@ defmodule SubzeroSwarmDashboardWeb.Router do
     end
   end
 
-  # Both absent delegates authentication to the ingress. Partial configuration
-  # must not silently disable Basic Auth or accept an empty credential.
+  # Both absent or both empty delegates authentication to the ingress (Compose
+  # passes empty strings). Partial configuration must not accept an empty credential.
   defp dashboard_auth(conn, _opts) do
     user = System.get_env("DASHBOARD_USER")
     pass = System.get_env("DASHBOARD_PASS")
 
     cond do
-      is_nil(user) and is_nil(pass) ->
+      (is_nil(user) and is_nil(pass)) or (user == "" and pass == "") ->
         conn
 
       is_binary(user) and is_binary(pass) and String.trim(user) != "" and String.trim(pass) != "" ->

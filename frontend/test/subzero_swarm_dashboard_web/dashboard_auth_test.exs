@@ -7,13 +7,13 @@ defmodule SubzeroSwarmDashboardWeb.DashboardAuthTest do
     :ok
   end
 
-  test "incomplete or blank Basic Auth fails closed" do
+  test "incomplete or whitespace-only Basic Auth fails closed" do
     for {user, pass} <- [
           {"operator", nil},
           {nil, "secret"},
           {"operator", ""},
           {"", "secret"},
-          {"", ""},
+          {" ", "\t"},
           {"operator", "  "}
         ] do
       credentials(user, pass)
@@ -54,6 +54,11 @@ defmodule SubzeroSwarmDashboardWeb.DashboardAuthTest do
 
   test "both variables absent preserves authentication delegated to the ingress" do
     credentials(nil, nil)
+    assert build_conn() |> get("/") |> html_response(200)
+  end
+
+  test "both variables empty preserves Compose authentication delegated to the ingress" do
+    credentials("", "")
     assert build_conn() |> get("/") |> html_response(200)
   end
 
