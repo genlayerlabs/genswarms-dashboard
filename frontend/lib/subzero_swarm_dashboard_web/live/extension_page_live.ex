@@ -41,26 +41,30 @@ defmodule SubzeroSwarmDashboardWeb.ExtensionPageLive do
 
   def handle_event("ext_sort", %{"sec" => sec, "key" => key}, socket)
       when is_binary(sec) and byte_size(sec) <= 64 and is_binary(key) and byte_size(key) <= 64 do
-    # Top-level sections key by integer position; tab-nested sections use the
-    # composite "<idx>/<tab>" string. Both are opaque map keys past this point.
-    idx = section_key(sec)
+    if Regex.match?(~r/\A[0-9]+(?:\/[0-9]+)*\z/, sec) do
+      # Top-level sections key by integer position; tab-nested sections use the
+      # composite "<idx>/<tab>" string. Both are opaque map keys past this point.
+      idx = section_key(sec)
 
-    next =
-      case Map.get(socket.assigns.ext_sort, idx) do
-        {^key, :asc} -> {key, :desc}
-        {^key, :desc} -> nil
-        _ -> {key, :asc}
-      end
+      next =
+        case Map.get(socket.assigns.ext_sort, idx) do
+          {^key, :asc} -> {key, :desc}
+          {^key, :desc} -> nil
+          _ -> {key, :asc}
+        end
 
-    sort =
-      if next,
-        do: Map.put(socket.assigns.ext_sort, idx, next),
-        else: Map.delete(socket.assigns.ext_sort, idx)
+      sort =
+        if next,
+          do: Map.put(socket.assigns.ext_sort, idx, next),
+          else: Map.delete(socket.assigns.ext_sort, idx)
 
-    {:noreply,
-     socket
-     |> assign(ext_sort: sort, ext_page: Map.put(socket.assigns.ext_page, idx, 1))
-     |> DashHooks.refresh_snapshot()}
+      {:noreply,
+       socket
+       |> assign(ext_sort: sort, ext_page: Map.put(socket.assigns.ext_page, idx, 1))
+       |> DashHooks.refresh_snapshot()}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("ext_page", %{"sec" => sec, "page" => page}, socket)
