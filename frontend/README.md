@@ -35,6 +35,9 @@ its read API listens on `http://127.0.0.1:4000`.
 Elixir 1.18 / OTP 27 (pinned in `.tool-versions` for [mise](https://mise.jdx.dev/)).
 `mise install` to match.
 
+Tests also require Node.js 24 for the browser-hook unit tests, which run as part of
+`mix test` and `mix precommit` using Node's built-in test runner (no npm dependencies).
+
 ## Run (local toolchain)
 
 ```bash

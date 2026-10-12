@@ -193,9 +193,11 @@ defmodule SubzeroSwarmDashboardWeb.SessionsLive do
                           <span class="font-mono text-sm">•••</span>
                         <% else %>
                           <.identity
+                            id={"session-#{Base.url_encode64(row.sid, padding: false)}"}
                             user={row.session["user"]}
                             session_id={row.sid}
                             label={row.session["label"]}
+                            copyable
                           />
                           <span
                             :if={topic_of(row.session)}

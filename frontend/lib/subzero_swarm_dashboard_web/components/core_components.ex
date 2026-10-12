@@ -516,9 +516,17 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
   attr :size, :atom, default: :md, values: [:sm, :md, :lg]
   attr :class, :any, default: nil
   attr :id, :string, default: nil
+  attr :copyable, :boolean, default: false
 
   def identity(assigns) do
     lines = identity_lines(assigns.user, assigns.session_id, assigns.label)
+    handle = present(assigns.user && assigns.user["handle"])
+    cid = short_cid(assigns.session_id)
+
+    copy_labels =
+      if assigns.copyable and not assigns.privacy,
+        do: %{(handle && "@#{handle}") => "username", cid => "ID", assigns.session_id => "ID"},
+        else: %{}
 
     size_class =
       case {assigns.size, lines.primary_mono} do
@@ -529,7 +537,7 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
 
     assigns =
       assigns
-      |> assign(lines: lines, size_class: size_class)
+      |> assign(lines: lines, size_class: size_class, copy_labels: copy_labels, cid: cid)
       |> assign_avatar()
 
     ~H"""
@@ -547,19 +555,65 @@ defmodule SubzeroSwarmDashboardWeb.CoreComponents do
         <canvas width={@avatar_px} height={@avatar_px} class="block h-full w-full"></canvas>
       </span>
       <div class="min-w-0 leading-tight">
-        <div class={[
-          "truncate",
-          @size_class,
-          @lines.primary_mono && "font-mono",
-          !@lines.primary_mono && "font-medium"
-        ]}>
-          {@lines.primary}
+        <div class="flex items-center gap-1">
+          <span class={[
+            "truncate",
+            @size_class,
+            @lines.primary_mono && "font-mono",
+            !@lines.primary_mono && "font-medium"
+          ]}>
+            {@lines.primary}
+          </span>
+          <.identity_copy_button
+            :if={@copy_labels[@lines.primary]}
+            id={"#{@avatar_id}-primary-copy-#{@copy_labels[@lines.primary]}"}
+            text={@lines.primary}
+            label={@copy_labels[@lines.primary]}
+          />
         </div>
-        <div :if={@lines.secondary} class="text-xs opacity-55 font-mono truncate">
-          {@lines.secondary}
+        <div :if={@lines.secondary} class="flex items-center gap-1 text-xs font-mono">
+          <span class="opacity-55 truncate">{@lines.secondary}</span>
+          <.identity_copy_button
+            :if={@copy_labels[@lines.secondary]}
+            id={"#{@avatar_id}-secondary-copy-#{@copy_labels[@lines.secondary]}"}
+            text={@lines.secondary}
+            label={@copy_labels[@lines.secondary]}
+          />
+        </div>
+        <div
+          :if={
+            @copy_labels[@cid] && @cid && @cid not in [@lines.primary, @lines.secondary] &&
+              @session_id != @lines.secondary
+          }
+          class="flex items-center gap-1 text-xs font-mono"
+        >
+          <span class="opacity-55 truncate">{@cid}</span>
+          <.identity_copy_button id={"#{@avatar_id}-extra-copy-ID"} text={@cid} label="ID" />
         </div>
       </div>
     </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :text, :string, required: true
+  attr :label, :string, required: true
+
+  defp identity_copy_button(assigns) do
+    ~H"""
+    <button
+      type="button"
+      id={@id}
+      phx-hook="ClipboardCopy"
+      phx-update="ignore"
+      data-copy-text={@text}
+      aria-label={"Copy #{@label}"}
+      aria-live="polite"
+      title={"Copy #{@label}"}
+      class="inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center rounded p-1 text-xs text-base-content/55 hover:bg-base-content/10 hover:text-base-content focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+    >
+      <.icon name="hero-document-duplicate" class="size-3.5" />
+    </button>
     """
   end
 
