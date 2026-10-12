@@ -16,7 +16,8 @@ if System.get_env("DASHBOARD_FORCE_SSL", "true") != "false" do
     force_ssl: [
       rewrite_on: [:x_forwarded_proto],
       exclude: [
-        # paths: ["/health"],
+        # Kubernetes and load balancer probes call the pod IP over plain HTTP.
+        paths: ["/healthz"],
         hosts: ["localhost", "127.0.0.1"]
       ]
     ]
